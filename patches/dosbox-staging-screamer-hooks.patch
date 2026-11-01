@@ -382,7 +382,7 @@ index 565f06e..a696b27 100644
  if conf_data.get('C_MANYMOUSE') != 0
      third_party_deps += manymouse_dep
 diff --git a/src/gui/sdlmain.cpp b/src/gui/sdlmain.cpp
-index 04b7641..18543b1 100644
+index 04b7641..b7c93c0 100644
 --- a/src/gui/sdlmain.cpp
 +++ b/src/gui/sdlmain.cpp
 @@ -61,6 +61,7 @@
@@ -661,78 +661,82 @@ index 04b7641..18543b1 100644
  bool GFX_Events()
  {
  #if defined(MACOSX)
-@@ -4181,6 +4339,86 @@ bool GFX_Events()
+@@ -4181,6 +4339,90 @@ bool GFX_Events()
  		default: MAPPER_CheckEvent(&event);
  		}
  	}
 +
 +	if (sdl.window) {
-+		static bool joy_subsys_inited = false;
-+		if (!joy_subsys_inited) {
-+			joy_subsys_inited = true;
-+			SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
-+		}
-+		SDL_GameControllerUpdate();
-+		SDL_JoystickUpdate();
++		const auto now_us = GetTicksUs();
++		static int64_t last_pad_update_us = 0;
++		if (now_us - last_pad_update_us >= 4000) {
++			last_pad_update_us = now_us;
++			static bool joy_subsys_inited = false;
++			if (!joy_subsys_inited) {
++				joy_subsys_inited = true;
++				SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
++			}
++			SDL_GameControllerUpdate();
 +
-+		ScreamerHostApi api = {
-+		        MemBase,
-+		        static_cast<size_t>(MEM_TotalPages()) * 4096u,
-+		        [](uint32_t k, bool p) {
-+			        KEYBOARD_AddKey(static_cast<KBD_KEYS>(k), p);
-+		        },
-+		        [](uint8_t w, bool e) { JOYSTICK_Enable(w, e); },
-+		        [](uint8_t w, int16_t v) { JOYSTICK_Move_X(w, v); },
-+		        [](uint8_t w, int16_t v) { JOYSTICK_Move_Y(w, v); },
-+		        [](uint8_t w, int b, bool p) { JOYSTICK_Button(w, b, p); },
-+		        []() -> int { return SDL_NumJoysticks(); },
-+		        [](int idx) -> void* { return SDL_GameControllerOpen(idx); },
-+		        [](void* gc) -> int {
-+			        return SDL_GameControllerGetAttached(
-+			                       static_cast<SDL_GameController*>(gc))
-+			                     ? 1
-+			                     : 0;
-+		        },
-+		        [](void* gc, int axis) -> int16_t {
-+			        return SDL_GameControllerGetAxis(
-+			                static_cast<SDL_GameController*>(gc),
-+			                static_cast<SDL_GameControllerAxis>(axis));
-+		        },
-+		        [](void* gc, int btn) -> uint8_t {
-+			        return SDL_GameControllerGetButton(
-+			                static_cast<SDL_GameController*>(gc),
-+			                static_cast<SDL_GameControllerButton>(btn));
-+		        },
-+		        [](void* gc, uint16_t lo, uint16_t hi, uint32_t ms) -> int {
-+			        return SDL_GameControllerRumble(
-+			                static_cast<SDL_GameController*>(gc), lo, hi, ms);
-+		        },
-+		        [](int idx) -> void* { return SDL_JoystickOpen(idx); },
-+		        [](void* js) -> int {
-+			        return SDL_JoystickGetAttached(static_cast<SDL_Joystick*>(js))
-+			                     ? 1
-+			                     : 0;
-+		        },
-+		        [](void* js, int axis) -> int16_t {
-+			        return SDL_JoystickGetAxis(static_cast<SDL_Joystick*>(js),
-+			                                   axis);
-+		        },
-+		        [](void* js, int btn) -> uint8_t {
-+			        return SDL_JoystickGetButton(static_cast<SDL_Joystick*>(js),
-+			                                     btn);
-+		        },
-+		        [](void* js, int hat) -> uint8_t {
-+			        return SDL_JoystickGetHat(static_cast<SDL_Joystick*>(js),
-+			                                  hat);
-+		        },
-+		        [](void* js, uint16_t lo, uint16_t hi, uint32_t ms) -> int {
-+			        return SDL_JoystickRumble(static_cast<SDL_Joystick*>(js),
-+			                                  lo,
-+			                                  hi,
-+			                                  ms);
-+		        },
-+		};
-+		screamer_hooks_on_tick(&api, static_cast<uint64_t>(GetTicksUs()) * 1000ULL);
++			ScreamerHostApi api = {
++			        MemBase,
++			        static_cast<size_t>(MEM_TotalPages()) * 4096u,
++			        [](uint32_t k, bool p) {
++				        KEYBOARD_AddKey(static_cast<KBD_KEYS>(k), p);
++			        },
++			        [](uint8_t w, bool e) { JOYSTICK_Enable(w, e); },
++			        [](uint8_t w, int16_t v) { JOYSTICK_Move_X(w, v); },
++			        [](uint8_t w, int16_t v) { JOYSTICK_Move_Y(w, v); },
++			        [](uint8_t w, int b, bool p) { JOYSTICK_Button(w, b, p); },
++			        []() -> int { return SDL_NumJoysticks(); },
++			        [](int idx) -> void* { return SDL_GameControllerOpen(idx); },
++			        [](void* gc) -> int {
++				        return SDL_GameControllerGetAttached(
++				                       static_cast<SDL_GameController*>(gc))
++				                     ? 1
++				                     : 0;
++			        },
++			        [](void* gc, int axis) -> int16_t {
++				        return SDL_GameControllerGetAxis(
++				                static_cast<SDL_GameController*>(gc),
++				                static_cast<SDL_GameControllerAxis>(axis));
++			        },
++			        [](void* gc, int btn) -> uint8_t {
++				        return SDL_GameControllerGetButton(
++				                static_cast<SDL_GameController*>(gc),
++				                static_cast<SDL_GameControllerButton>(btn));
++			        },
++			        [](void* gc, uint16_t lo, uint16_t hi, uint32_t ms) -> int {
++				        return SDL_GameControllerRumble(
++				                static_cast<SDL_GameController*>(gc), lo, hi, ms);
++			        },
++			        [](int idx) -> void* { return SDL_JoystickOpen(idx); },
++			        [](void* js) -> int {
++				        return SDL_JoystickGetAttached(static_cast<SDL_Joystick*>(js))
++				                     ? 1
++				                     : 0;
++			        },
++			        [](void* js, int axis) -> int16_t {
++				        return SDL_JoystickGetAxis(static_cast<SDL_Joystick*>(js),
++				                                   axis);
++			        },
++			        [](void* js, int btn) -> uint8_t {
++				        return SDL_JoystickGetButton(static_cast<SDL_Joystick*>(js),
++				                                     btn);
++			        },
++			        [](void* js, int hat) -> uint8_t {
++				        return SDL_JoystickGetHat(static_cast<SDL_Joystick*>(js),
++				                                  hat);
++			        },
++			        [](void* js, uint16_t lo, uint16_t hi, uint32_t ms) -> int {
++				        return SDL_JoystickRumble(static_cast<SDL_Joystick*>(js),
++				                                  lo,
++				                                  hi,
++				                                  ms);
++			        },
++			};
++			screamer_hooks_on_tick(&api, static_cast<uint64_t>(now_us) * 1000ULL);
++		}
 +
 +#if C_OPENGL
 +		if (fg_state.enabled && fg_state.pending_real_present &&

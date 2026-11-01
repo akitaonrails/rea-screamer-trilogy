@@ -699,12 +699,12 @@ impl Window<'_> {
             (
                 Look::Enhanced,
                 "Enhanced",
-                "1080p Hor+, FSR upscaling, 100 FPS.",
+                "1080p Hor+, crisp pixels, native 50 FPS.",
             ),
             (
                 Look::SteamDeck,
                 "Steam Deck",
-                "1280×800 Hor+, FSR upscaling, 100 FPS.",
+                "1280×800 Hor+, crisp pixels, native 50 FPS.",
             ),
             (Look::Custom, "Custom", "Pick each setting in Picture."),
         ];
@@ -803,7 +803,7 @@ impl Window<'_> {
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new(
-                "Note: 3dfx Voodoo renders internally at 1280×960 (2x superscaled) and SVGA at 640×480. FSR (EASU+RCAS) upscales to your display, and 100 FPS Frame Gen uses GPU optical flow while keeping 50 Hz game physics intact.",
+                "Note: 3dfx Voodoo renders internally at 1280×960 (2x supersampled) and SVGA at 640×480. Sharp is the stable pixel-preserving default; FSR, Smooth, and experimental 100 FPS optical-flow Frame Gen remain available.",
             )
             .font(font(13.0))
             .color(MUTED),

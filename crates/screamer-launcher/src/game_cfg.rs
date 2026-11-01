@@ -262,6 +262,7 @@ pub fn build_dosbox_conf(opts: &DosboxConfOptions<'_>) -> String {
     } else {
         format!("{}x{}", opts.resolution.0, opts.resolution.1)
     };
+    let vsync_str = if opts.vsync { "auto" } else { "false" };
     let aspect_str = if opts.widescreen { "stretch" } else { "auto" };
     // Always use standard 4 MB Voodoo 1 (2 MB FBI + 2 MB TMU0, single TMU).
     // 12 MB selects VOODOO_1_DTMU (4 MB TMU0), which overflows S2/SR's 1024-slot
@@ -310,11 +311,12 @@ display             = 0
 fullresolution      = desktop
 windowresolution    = {win_res_str}
 output              = opengl
-vsync               = {vsync}
+vsync               = {vsync_str}
 
 [dosbox]
 machine             = svga_s3
 memsize             = 31
+dos_rate            = 50
 
 [render]
 aspect              = {aspect_str}
@@ -335,8 +337,8 @@ voodoo_bilinear_filtering = {voodoo_bilinear}
 [mixer]
 nosound             = false
 rate                = 48000
-blocksize           = 1024
-prebuffer           = 25
+blocksize           = 512
+prebuffer           = 40
 
 [sblaster]
 sbtype              = sb16
@@ -364,7 +366,7 @@ buttonwrap          = false
 {autoexec}"#,
         fullscreen = opts.fullscreen,
         win_res_str = win_res_str,
-        vsync = opts.vsync,
+        vsync_str = vsync_str,
         aspect_str = aspect_str,
         voodoo_enabled = opts.voodoo_enabled,
         voodoo_mem = voodoo_mem,
@@ -467,7 +469,11 @@ mod tests {
         });
         assert!(conf.contains("windowresolution    = 1920x1080"));
         assert!(conf.contains("fullresolution      = desktop"));
+        assert!(conf.contains("vsync               = auto"));
+        assert!(conf.contains("dos_rate            = 50"));
         assert!(conf.contains("aspect              = stretch"));
+        assert!(conf.contains("blocksize           = 512"));
+        assert!(conf.contains("prebuffer           = 40"));
         assert!(conf.contains("irq                 = 7"));
         assert!(conf.contains("imgmount d \"/tmp/game/game.ins\" -t iso -fs iso"));
         assert!(conf.contains("STARTH.EXE"));

@@ -24,7 +24,7 @@ impl Picture {
         resolution: None,
         widescreen: false,
         texture_filter: TextureFilter::Original,
-        fps_limit: None,
+        fps_limit: Some(30),
         vsync: None,
     };
 
@@ -33,8 +33,11 @@ impl Picture {
             renderer: RendererChoice::Auto,
             resolution: Some((1920, 1080)),
             widescreen: true,
-            texture_filter: TextureFilter::Fsr,
-            fps_limit: Some(100),
+            // The games render low-resolution pixel art and pre-filtered textures.
+            // Nearest-neighbour output keeps that artwork crisp and avoids putting the
+            // comparatively expensive FSR shader on the default presentation path.
+            texture_filter: TextureFilter::Sharp,
+            fps_limit: None,
             vsync: Some(true),
         }
     }
@@ -43,8 +46,8 @@ impl Picture {
         renderer: RendererChoice::Auto,
         resolution: Some(STEAM_DECK_SCREEN),
         widescreen: true,
-        texture_filter: TextureFilter::Fsr,
-        fps_limit: Some(100),
+        texture_filter: TextureFilter::Sharp,
+        fps_limit: None,
         vsync: Some(true),
     };
 }
@@ -157,7 +160,8 @@ pub struct Form {
     pub layout: Layout,
 }
 
-pub const FRAME_RATES: [(Option<u32>, &str); 2] = [
+pub const FRAME_RATES: [(Option<u32>, &str); 3] = [
+    (Some(30), "30 FPS (Original)"),
     (None, "50 FPS (Native)"),
     (Some(100), "100 FPS (Frame Gen)"),
 ];
@@ -263,7 +267,11 @@ impl Form {
             resolution,
             widescreen: s.widescreen_enabled(),
             texture_filter: s.effective_filter(),
-            fps_limit: s.fps_cap().map(|_| 100),
+            fps_limit: match s.fps_cap() {
+                Some(fps) if fps <= 30 => Some(30),
+                Some(fps) if fps >= 60 => Some(100),
+                _ => None,
+            },
             vsync,
         };
         let buttons = s.buttons.unwrap_or(config::DEFAULT_BUTTONS);
@@ -374,7 +382,7 @@ impl Form {
             Some(
                 p.fps_limit
                     .map(|f| f.to_string())
-                    .unwrap_or_else(|| "off".to_string()),
+                    .unwrap_or_else(|| "50".to_string()),
             ),
         );
         put("vsync", p.vsync.map(|v| v.to_string()));
@@ -444,8 +452,8 @@ mod tests {
         assert_eq!(f2.look, Look::Enhanced);
         assert_eq!(f2.picture.resolution, Some((1920, 1080)));
         assert!(f2.picture.widescreen);
-        assert_eq!(f2.picture.texture_filter, TextureFilter::Fsr);
-        assert_eq!(f2.picture.fps_limit, Some(100));
+        assert_eq!(f2.picture.texture_filter, TextureFilter::Sharp);
+        assert_eq!(f2.picture.fps_limit, None);
     }
 
     #[test]

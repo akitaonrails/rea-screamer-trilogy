@@ -495,7 +495,6 @@ pub mod host_hook {
 
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
     static ENABLED: AtomicBool = AtomicBool::new(true);
-    static IS_SCREAMER_1: AtomicBool = AtomicBool::new(false);
     static DEADZONE_PCT: AtomicUsize = AtomicUsize::new(0);
     static RUMBLE_PCT: AtomicUsize = AtomicUsize::new(60);
     static LAST_POLL_NS: AtomicU64 = AtomicU64::new(0);
@@ -559,11 +558,6 @@ pub mod host_hook {
             && let Ok(r) = v.parse::<usize>()
         {
             RUMBLE_PCT.store(r.min(100), Ordering::Relaxed);
-        }
-        if let Ok(game) = std::env::var("SCREAMER_GAME")
-            && game.eq_ignore_ascii_case("screamer")
-        {
-            IS_SCREAMER_1.store(true, Ordering::Relaxed);
         }
         if let Ok(btns) = std::env::var("SCREAMER_BUTTONS") {
             let trimmed = btns.trim();
@@ -821,9 +815,6 @@ pub mod host_hook {
                     .unwrap_or(0);
                 CACHED_DATA_OBJ_BASE.store(base, Ordering::Relaxed);
                 CACHED_SPEC_IDX.store(spec_idx, Ordering::Relaxed);
-                if found_spec.game_env == "screamer" {
-                    IS_SCREAMER_1.store(true, Ordering::Relaxed);
-                }
             } else {
                 return false;
             }
@@ -847,11 +838,9 @@ pub mod host_hook {
         let Some(add_key) = api.keyboard_add_key else {
             return;
         };
-        let cam_key = if IS_SCREAMER_1.load(Ordering::Relaxed) {
-            kbd_keys::KBD_M
-        } else {
-            kbd_keys::KBD_C
-        };
+        // All three games (Screamer 1, Screamer 2, and Screamer Rally) check DOS scancode 50
+        // ('M', kbd_state[0x34]) to toggle the in-race camera view.
+        let cam_key = kbd_keys::KBD_M;
 
         let bindings: &[(usize, u32)] = &[
             (KEY_BIT_UP, kbd_keys::KBD_UP),
@@ -932,7 +921,7 @@ pub mod host_hook {
         // - A button, Start, or digital Accelerate button emit Enter (confirm menu item / driver name)
         // - Cancel (B) and Back/Select emit Esc (back out of menu / pause race)
         // - X button or digital Brake button emit Backspace (delete character on name input)
-        // - Camera (Y) emits Camera toggle ('M' in Screamer 1, 'C' in Screamer 2/Rally)
+        // - Camera (Y) emits the games' camera toggle ('M' in all three games)
         let pedals_idle = !btn_accel
             && !btn_brake
             && !pad.a
@@ -1034,7 +1023,9 @@ pub mod host_hook {
 
         unsafe { emit_edge_keys(api, key_mask) };
 
-        // Optional subtle rumble feedback when braking hard in race
+        // Optional subtle rumble feedback when braking hard in race (throttled to <= 16 Hz
+        // so synchronous USB/Bluetooth HID force-feedback ioctls never stall the main thread).
+        static LAST_RUMBLE_NS: AtomicU64 = AtomicU64::new(0);
         let rumble_pct = RUMBLE_PCT.load(Ordering::Relaxed) as u32;
         if in_race && rumble_pct > 0 {
             let brake_load = if brake_norm > 500 {
@@ -1043,20 +1034,24 @@ pub mod host_hook {
                 0
             };
             let (low, high) = compute_rumble(brake_load, 0, rumble_pct);
-            if low > 0 || high > 0 {
+            let prev_rumble = LAST_RUMBLE_NS.load(Ordering::Relaxed);
+            if (low > 0 || high > 0)
+                && (prev_rumble == 0 || now_ns.wrapping_sub(prev_rumble) >= 60_000_000)
+            {
+                LAST_RUMBLE_NS.store(now_ns.max(1), Ordering::Relaxed);
                 let gc = CONTROLLER_PTR.load(Ordering::Relaxed) as *mut c_void;
                 let js = JOYSTICK_PTR.load(Ordering::Relaxed) as *mut c_void;
                 if !gc.is_null()
                     && let Some(rumble_fn) = api.sdl_gc_rumble
                 {
                     unsafe {
-                        let _ = rumble_fn(gc, low, high, 50);
+                        let _ = rumble_fn(gc, low, high, 80);
                     }
                 } else if !js.is_null()
                     && let Some(rumble_fn) = api.sdl_joy_rumble
                 {
                     unsafe {
-                        let _ = rumble_fn(js, low, high, 50);
+                        let _ = rumble_fn(js, low, high, 80);
                     }
                 }
             }
@@ -1201,6 +1196,7 @@ mod tests {
         use std::ffi::{c_int, c_short, c_void};
         static LAST_KEY: AtomicUsize = AtomicUsize::new(0);
         static LAST_PRESSED: AtomicBool = AtomicBool::new(false);
+        static HELD_MOCK_BUTTON: AtomicUsize = AtomicUsize::new(0);
 
         unsafe extern "C" fn mock_num_joy() -> c_int {
             1
@@ -1219,7 +1215,7 @@ mod tests {
             }
         }
         unsafe extern "C" fn mock_gc_btn(_gc: *mut c_void, btn: c_int) -> u8 {
-            if btn == 0 { 1 } else { 0 } // A button held
+            u8::from(btn as usize == HELD_MOCK_BUTTON.load(Ordering::SeqCst))
         }
         unsafe extern "C" fn mock_kbd(key: u32, pressed: bool) {
             LAST_KEY.store(key as usize, Ordering::SeqCst);
@@ -1275,6 +1271,15 @@ mod tests {
             LAST_KEY.load(Ordering::SeqCst),
             kbd_keys::KBD_ENTER as usize
         );
+        assert!(LAST_PRESSED.load(Ordering::SeqCst));
+
+        // SDL controller button 3 is Y, the default camera action. All three games
+        // use M for their in-race camera toggle.
+        HELD_MOCK_BUTTON.store(3, Ordering::SeqCst);
+        unsafe {
+            screamer_hooks_on_tick(&api, 504_000_000);
+        }
+        assert_eq!(LAST_KEY.load(Ordering::SeqCst), kbd_keys::KBD_M as usize);
         assert!(LAST_PRESSED.load(Ordering::SeqCst));
     }
 }

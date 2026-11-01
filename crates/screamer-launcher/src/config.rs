@@ -216,15 +216,16 @@ resolution = 1920x1080
 # 4/3 inside SetCamera3D instead of stretching the 4:3 image).
 widescreen = true
 
-# Frame-rate target: 100 enables 2x GPU Optical-Flow Frame Generation on top of
-# the 50 Hz DOS physics engine; off keeps native 50 FPS presentation.
-fps_limit = 100
+# Frame-rate target: 30 is the unchanged original timing, 50 is the smooth native
+# enhanced timing, and 100 enables experimental 2x GPU Optical-Flow Frame Generation.
+fps_limit = 50
 
 # Wait for vertical refresh before presenting each frame.
 vsync = true
 
-# Shader / Upscaler: fsr (AMD FSR 1.0 EASU+RCAS), sharp, smooth, or original (CRT).
-texture_filter = fsr
+# Shader / Upscaler: sharp (nearest-neighbour pixel art), smooth (bilinear),
+# fsr (AMD FSR 1.0 EASU+RCAS), or original (CRT).
+texture_filter = sharp
 
 # Modern gamepad analog steering & independent L2/R2 analog triggers.
 gamepad_axes = true
@@ -257,9 +258,9 @@ ScreamerLauncher [1|2|rally] [options]
   --renderer <mode>        auto, 3dfx, svga16, svga8, or vga
   --resolution <WxH>       output resolution, e.g. 3840x2160, or original
   --widescreen on|off      Hor+ 16:9 widescreen 3D camera projection
-  --fps-limit <n>|off      frame-rate cap, e.g. 60 (unlocks 30 FPS lock)
+  --fps-limit <n>|off      30 original, 50 native, or 100 frame generation
   --vsync on|off           wait for the screen's refresh
-  --texture-filter <f>     original, smooth, or sharp
+  --texture-filter <f>     original, fsr, smooth, or sharp
   --gamepad-axes on|off    proportional analog steering & L2/R2 triggers
   --deadzone <0-30>        analog steering deadzone percent (0 removes 7.8% deadzone)
   --rumble <0-100>|off     gamepad rumble strength
@@ -439,7 +440,7 @@ impl Settings {
         match self.fps_limit {
             Some(0) => None,
             Some(f) => Some(f),
-            None => Some(100),
+            None => Some(50),
         }
     }
 
@@ -456,7 +457,7 @@ impl Settings {
     }
 
     pub fn effective_filter(&self) -> TextureFilter {
-        self.texture_filter.unwrap_or(TextureFilter::Fsr)
+        self.texture_filter.unwrap_or(TextureFilter::Sharp)
     }
 
     pub fn button_map(&self) -> [u8; 8] {
@@ -467,7 +468,8 @@ impl Settings {
     pub fn skipped_fixes(&self) -> Vec<&'static str> {
         let mut skip = Vec::new();
         // E1 unlocks the 30 FPS PIT timer wait loop (`fdiv 2.0 -> 1.0`).
-        // Only enable E1 when fps_limit > 30.
+        // E1 is required for both native 50 Hz and optional 100 FPS presentation.
+        // An explicit 30 (or legacy `off`/0) selects unchanged original timing.
         if self.fps_cap().unwrap_or(30) <= 30 {
             skip.push("E1");
         }
@@ -542,7 +544,7 @@ impl Settings {
                     let v = value("--texture-filter")?;
                     s.texture_filter = Some(parse_filter(&v).ok_or_else(|| {
                         format!(
-                            "--texture-filter needs original, smooth, or sharp, not {v}\n\n{USAGE}"
+                            "--texture-filter needs original, fsr, smooth, or sharp, not {v}\n\n{USAGE}"
                         )
                     })?);
                 }
