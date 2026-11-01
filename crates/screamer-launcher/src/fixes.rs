@@ -317,6 +317,32 @@ pub static S1_SETUP_FIXES: FixSet = FixSet {
 pub static S2_3DFX_FIXES: FixSet = FixSet {
     fixes: &[
         Fix {
+            id: "F7",
+            what: "Wrap the 3dfx texture cache before a mipmap reaches the 2 MiB TMU boundary",
+            optional: false,
+            code: &[
+                Piece {
+                    // `jle upload` -> `jl upload`; equality must take the existing
+                    // wrap path because the computed texture end is exclusive.
+                    at: At::Image(0x000c_d857),
+                    expected: &[0x8e],
+                    ops: &[Op::Raw(&[0x8c])],
+                },
+                Piece {
+                    // Do not let a reusable descriptor bypass the TMU-end check.
+                    at: At::Image(0x000c_da58),
+                    expected: &[0x7d, 0x10],
+                    ops: &[Op::Raw(&[0x90, 0x90])],
+                },
+                Piece {
+                    // The second cache-search path has the same bypass.
+                    at: At::Image(0x000c_dc26),
+                    expected: &[0x7d, 0x10],
+                    ops: &[Op::Raw(&[0x90, 0x90])],
+                },
+            ],
+        },
+        Fix {
             id: "E1",
             what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
@@ -472,6 +498,32 @@ pub static S2_SETUP_FIXES: FixSet = FixSet {
 // ============================================================================
 pub static SR_STRT3FX_FIXES: FixSet = FixSet {
     fixes: &[
+        Fix {
+            id: "F7",
+            what: "Wrap the 3dfx texture cache before a mipmap reaches the 2 MiB TMU boundary",
+            optional: false,
+            code: &[
+                Piece {
+                    // `jle upload` -> `jl upload`; equality must take the existing
+                    // wrap path because the computed texture end is exclusive.
+                    at: At::Image(0x000c_bdf7),
+                    expected: &[0x8e],
+                    ops: &[Op::Raw(&[0x8c])],
+                },
+                Piece {
+                    // Do not let a reusable descriptor bypass the TMU-end check.
+                    at: At::Image(0x000c_bff8),
+                    expected: &[0x7d, 0x10],
+                    ops: &[Op::Raw(&[0x90, 0x90])],
+                },
+                Piece {
+                    // The second cache-search path has the same bypass.
+                    at: At::Image(0x000c_c1c6),
+                    expected: &[0x7d, 0x10],
+                    ops: &[Op::Raw(&[0x90, 0x90])],
+                },
+            ],
+        },
         Fix {
             id: "E1",
             what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
@@ -657,12 +709,34 @@ mod tests {
     }
 
     #[test]
-    fn authentic_3dfx_tmu_uses_the_original_texture_managers() {
-        for set in [&S2_3DFX_FIXES, &SR_STRT3FX_FIXES] {
-            assert!(
-                set.fixes.iter().all(|fix| fix.id != "F7" && fix.id != "F8"),
-                "the original 2 MB TMU wrap logic must remain unpatched"
-            );
+    fn all_texture_upload_paths_use_the_original_tmu_boundary_check() {
+        for (set, expected) in [
+            (
+                &S2_3DFX_FIXES,
+                [(0x000c_d857, 1), (0x000c_da58, 2), (0x000c_dc26, 2)],
+            ),
+            (
+                &SR_STRT3FX_FIXES,
+                [(0x000c_bdf7, 1), (0x000c_bff8, 2), (0x000c_c1c6, 2)],
+            ),
+        ] {
+            let writes = set.assemble(0, &[]);
+            let patches = writes
+                .iter()
+                .filter(|write| write.fix == "F7")
+                .collect::<Vec<_>>();
+
+            assert_eq!(patches.len(), expected.len());
+            for (patch, (address, len)) in patches.iter().zip(expected) {
+                assert_eq!(patch.address, address);
+                assert_eq!(patch.bytes.len(), len);
+            }
+            assert_eq!(patches[0].expected, [0x8e]);
+            assert_eq!(patches[0].bytes, [0x8c]);
+            for patch in &patches[1..] {
+                assert_eq!(patch.expected, [0x7d, 0x10]);
+                assert_eq!(patch.bytes, [0x90, 0x90]);
+            }
         }
     }
 }

@@ -94,10 +94,12 @@ This document records notable observations from running the original 1995–1997
   - On a real 1996 3dfx Voodoo 1 (`4 MB` total = `2 MB FBI + 2 MB TMU0`), `2 MB` of TMU RAM fits roughly `32..256` textures before wrapping around `tmu_max_addr`, so `cache_count` never reaches `1,024`.
   - When `voodoo_memsize = 12` (`4 MB FBI + 8 MB TMU0`) was configured, `tmu_max_addr` was `8 MB`, allowing more than `1,024` textures to be uploaded before `next_tmu_addr` wrapped around. On texture #1,025 (`cmp edx, 0x400; jle ...`), the game executed `printf("MAXCACHE\n"); exit(-1);`!
   - A separate software descriptor pool contains **3,064 entries of 56 bytes** (`0xBF8 * 0x38 = 0x29E40`) and has its own fatal exhaustion guard.
-- **Correct configuration and regression finding (2026-11-01)**:
-  1. Keep `voodoo_memsize = 4` (`2 MB FBI + 2 MB TMU0`) so `grTexMaxAddress(GR_TMU0)` reports the authentic Voodoo 1 limit. At 2 MB, normal TMU wrapping occurs long before the original 1,024-entry residency table fills.
-  2. Do **not** patch either texture manager. A headless A/B run using the same DOSBox build, ISO, saved configuration, 2× renderer, and 2 MB TMU showed the original `STRT3FX.EXE` reaching the title screen, while the patched F7 executable immediately returned to DOS with `grTexDownloadMipMap: mipmap cannot span 2 Mbyte boundary`.
-  3. F7's injected branch changed the game's TMU address-wrap control flow and caused the boundary failure it was intended to prevent. F8 addressed a speculative descriptor-exhaustion path that the captured failure never reached. Both patches were removed; the original executable logic plus authentic memory configuration is the fix.
+- **Correct configuration and boundary fix (2026-11-01)**:
+  1. Keep `voodoo_memsize = 4` (`2 MB FBI + 2 MB TMU0`) so `grTexMaxAddress(GR_TMU0)` reports the authentic Voodoo 1 limit. The fixed 1,024-entry residency table and separate 3,064-entry descriptor pool remain unchanged.
+  2. Merely reaching the title screen is not a sufficient cache test. A silent headless run that switched track previews reproduced the real exit with the original executable: `grTexDownloadMipMap: mipmap cannot span 2 Mbyte boundary`.
+  3. The common upload bottleneck computes the exclusive texture end and compares it with `tmu_max_addr`, but its first-allocation path originally uses signed `jle` to continue uploading. Equality therefore submits a mipmap that reaches the 2 MiB boundary, which Glide rejects. Required fix `F7` changes only that condition byte from `jle` (`0x8E`) to `jl` (`0x8C`) at `VA 0x0CD857` in `S2_3DFX.EXE` and `VA 0x0CBDF7` in `STRT3FX.EXE`.
+  4. Two cache-slot-reuse paths have a second bug: when they find a reusable descriptor, `jge` jumps directly to `grTexDownloadMipMap` and bypasses the TMU-end comparison. F7 NOPs those two-byte bypasses at `0x0CDA58` / `0x0CDC26` in Screamer 2 and `0x0CBFF8` / `0x0CC1C6` in Rally. All three paths now use each game's existing boundary check, TMU reset, and re-upload code; no replacement allocator or code cave is introduced.
+  5. The earlier multi-site F7 cache-limit detour was invalid because it altered normal address-wrap control flow and itself caused the same Glide boundary abort. F8 addressed an unobserved descriptor-exhaustion path. Neither approach is retained.
 
 ---
 
