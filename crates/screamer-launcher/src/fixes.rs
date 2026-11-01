@@ -185,13 +185,23 @@ const FLT_0_004: &[u8; 4] = &[0x0b, 0xd7, 0x83, 0x3b];
 pub static S1_STARTH_FIXES: FixSet = FixSet {
     fixes: &[
         Fix {
-            id: "F1",
-            what: "Bypass VerifyCD optical disc file check (xor eax, eax; ret 8)",
+            id: "F2",
+            what: "Clamp DPMI free memory probe to 16 MB to prevent stack & signed 32-bit overflow",
             optional: false,
             code: &[Piece {
-                at: At::Image(0x0001_5460),
-                expected: &[0x56, 0x57, 0x55, 0x89, 0xe5],
-                ops: &[Op::Raw(&[0x31, 0xc0, 0xc2, 0x08, 0x00])],
+                at: At::Image(0x0002_f8ca),
+                expected: &[0x53, 0x51, 0x52, 0x56, 0x57, 0x55],
+                ops: &[Op::Raw(&[0xb8, 0x00, 0x00, 0x00, 0x01, 0xc3])],
+            }],
+        },
+        Fix {
+            id: "F3",
+            what: "Prevent VESA WinGranularity & 7 truncation on modern VBE cards",
+            optional: false,
+            code: &[Piece {
+                at: At::Image(0x0008_be5f),
+                expected: &[0x83, 0xe0, 0x07],
+                ops: &[Op::Raw(&[0x90, 0x90, 0x90])],
             }],
         },
         Fix {
@@ -222,18 +232,18 @@ pub static S1_STARTH_FIXES: FixSet = FixSet {
             optional: true,
             code: &[
                 Piece {
-                    at: At::Image(0x0001_54a6),
+                    at: At::Image(0x0008_b722),
                     expected: &[
-                        0x8d, 0x5d, 0xf2, 0xe8, 0x7e, 0x7e, 0x03, 0x00, 0x83, 0xc4, 0x0c, 0x8d,
-                        0x55, 0x8e, 0x8d, 0x85, 0xda, 0xfe, 0xff, 0xff, 0xe8, 0xce, 0x6b, 0x03,
-                        0x00, 0x85, 0xc0, 0x74, 0x15, 0x8d, 0x85,
+                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
+                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
+                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
                     ],
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
                     at: At::Image(0x0008_acc2),
                     expected: &[0x2b, 0xc0, 0x89, 0x46, 0x24],
-                    ops: &[Op::Call(At::Image(0x0001_54a6))],
+                    ops: &[Op::Call(At::Image(0x0008_b722))],
                 },
             ],
         },
@@ -256,13 +266,13 @@ pub static S1_STARTH_FIXES: FixSet = FixSet {
 pub static S1_STARTL_FIXES: FixSet = FixSet {
     fixes: &[
         Fix {
-            id: "F1",
-            what: "Bypass VerifyCD optical disc file check (xor eax, eax; ret 8)",
+            id: "F2",
+            what: "Clamp DPMI free memory probe to 16 MB to prevent stack & signed 32-bit overflow",
             optional: false,
             code: &[Piece {
-                at: At::Image(0x0001_545c),
-                expected: &[0x56, 0x57, 0x55, 0x89, 0xe5],
-                ops: &[Op::Raw(&[0x31, 0xc0, 0xc2, 0x08, 0x00])],
+                at: At::Image(0x0002_f682),
+                expected: &[0x53, 0x51, 0x52, 0x56, 0x57, 0x55],
+                ops: &[Op::Raw(&[0xb8, 0x00, 0x00, 0x00, 0x01, 0xc3])],
             }],
         },
         Fix {
@@ -293,18 +303,18 @@ pub static S1_STARTL_FIXES: FixSet = FixSet {
             optional: true,
             code: &[
                 Piece {
-                    at: At::Image(0x0001_54a2),
+                    at: At::Image(0x0008_b472),
                     expected: &[
-                        0x8d, 0x5d, 0xf2, 0xe8, 0x3a, 0x7c, 0x03, 0x00, 0x83, 0xc4, 0x0c, 0x8d,
-                        0x55, 0x8e, 0x8d, 0x85, 0xda, 0xfe, 0xff, 0xff, 0xe8, 0x92, 0x69, 0x03,
-                        0x00, 0x85, 0xc0, 0x74, 0x15, 0x8d, 0x85,
+                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
+                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
+                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
                     ],
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
                     at: At::Image(0x0008_aa12),
                     expected: &[0x2b, 0xc0, 0x89, 0x46, 0x24],
-                    ops: &[Op::Call(At::Image(0x0001_54a2))],
+                    ops: &[Op::Call(At::Image(0x0008_b472))],
                 },
             ],
         },
@@ -350,16 +360,6 @@ pub static S1_SETUP_FIXES: FixSet = FixSet {
 pub static S2_3DFX_FIXES: FixSet = FixSet {
     fixes: &[
         Fix {
-            id: "F1",
-            what: "Bypass VerifyCD optical disc file check (xor eax, eax; ret 8)",
-            optional: false,
-            code: &[Piece {
-                at: At::Image(0x0003_9b40),
-                expected: &[0x56, 0x57, 0x55, 0x81, 0xec],
-                ops: &[Op::Raw(&[0x31, 0xc0, 0xc2, 0x08, 0x00])],
-            }],
-        },
-        Fix {
             id: "E1",
             what: "Unlock 60+ FPS spin-wait and lower smoothed_dt 0.02s floor to 0.004s",
             optional: true,
@@ -397,18 +397,18 @@ pub static S2_3DFX_FIXES: FixSet = FixSet {
             optional: true,
             code: &[
                 Piece {
-                    at: At::Image(0x0003_9b82),
+                    at: At::Image(0x0008_481e),
                     expected: &[
-                        0x8d, 0x9c, 0x24, 0x24, 0x05, 0x00, 0x00, 0xe8, 0x44, 0xa8, 0x01, 0x00,
-                        0x83, 0xc4, 0x0c, 0x8d, 0x94, 0x24, 0xb4, 0x04, 0x00, 0x00, 0x8d, 0x84,
-                        0x24, 0x00, 0x04, 0x00, 0x00, 0xe8, 0x71,
+                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
+                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
+                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
                     ],
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
                     at: At::Image(0x0008_3db2),
                     expected: &[0x2b, 0xc0, 0x89, 0x46, 0x24],
-                    ops: &[Op::Call(At::Image(0x0003_9b82))],
+                    ops: &[Op::Call(At::Image(0x0008_481e))],
                 },
             ],
         },
@@ -430,16 +430,6 @@ pub static S2_3DFX_FIXES: FixSet = FixSet {
 // ============================================================================
 pub static S2_START65H_FIXES: FixSet = FixSet {
     fixes: &[
-        Fix {
-            id: "F1",
-            what: "Bypass VerifyCD optical disc file check (xor eax, eax; ret 8)",
-            optional: false,
-            code: &[Piece {
-                at: At::Image(0x0003_237c),
-                expected: &[0x56, 0x57, 0x55, 0x89, 0xe5],
-                ops: &[Op::Raw(&[0x31, 0xc0, 0xc2, 0x08, 0x00])],
-            }],
-        },
         Fix {
             id: "F5",
             what: "Force standard VESA mode 0x111 (640x480x16bpp) on VBE 2.0+ cards",
@@ -488,18 +478,18 @@ pub static S2_START65H_FIXES: FixSet = FixSet {
             optional: true,
             code: &[
                 Piece {
-                    at: At::Image(0x0003_23ce),
+                    at: At::Image(0x0007_eb4e),
                     expected: &[
-                        0x8d, 0x9d, 0x10, 0xff, 0xff, 0xff, 0x8d, 0x95, 0x74, 0xff, 0xff, 0xff,
-                        0x8d, 0x85, 0x5c, 0xfe, 0xff, 0xff, 0xe8, 0xd0, 0xd2, 0x01, 0x00, 0x85,
-                        0xc0, 0x74, 0x15, 0x8d, 0x85, 0x5c, 0xfe,
+                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
+                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
+                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
                     ],
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
                     at: At::Image(0x0007_e0f2),
                     expected: &[0x2b, 0xc0, 0x89, 0x46, 0x24],
-                    ops: &[Op::Call(At::Image(0x0003_23ce))],
+                    ops: &[Op::Call(At::Image(0x0007_eb4e))],
                 },
             ],
         },
@@ -521,16 +511,6 @@ pub static S2_START65H_FIXES: FixSet = FixSet {
 // ============================================================================
 pub static S2_STARTH_FIXES: FixSet = FixSet {
     fixes: &[
-        Fix {
-            id: "F1",
-            what: "Bypass VerifyCD optical disc file check (xor eax, eax; ret 8)",
-            optional: false,
-            code: &[Piece {
-                at: At::Image(0x0003_11a4),
-                expected: &[0x56, 0x57, 0x55, 0x89, 0xe5],
-                ops: &[Op::Raw(&[0x31, 0xc0, 0xc2, 0x08, 0x00])],
-            }],
-        },
         Fix {
             id: "E1",
             what: "Unlock 60+ FPS spin-wait and lower smoothed_dt 0.02s floor to 0.004s",
@@ -569,18 +549,18 @@ pub static S2_STARTH_FIXES: FixSet = FixSet {
             optional: true,
             code: &[
                 Piece {
-                    at: At::Image(0x0003_11f6),
+                    at: At::Image(0x0007_f70e),
                     expected: &[
-                        0x8d, 0x9d, 0x10, 0xff, 0xff, 0xff, 0x8d, 0x95, 0x74, 0xff, 0xff, 0xff,
-                        0x8d, 0x85, 0x5c, 0xfe, 0xff, 0xff, 0xe8, 0x58, 0xdc, 0x01, 0x00, 0x85,
-                        0xc0, 0x74, 0x15, 0x8d, 0x85, 0x5c, 0xfe,
+                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
+                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
+                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
                     ],
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
                     at: At::Image(0x0007_ecb2),
                     expected: &[0x2b, 0xc0, 0x89, 0x46, 0x24],
-                    ops: &[Op::Call(At::Image(0x0003_11f6))],
+                    ops: &[Op::Call(At::Image(0x0007_f70e))],
                 },
             ],
         },
@@ -626,16 +606,6 @@ pub static S2_SETUP_FIXES: FixSet = FixSet {
 pub static SR_STRT3FX_FIXES: FixSet = FixSet {
     fixes: &[
         Fix {
-            id: "F1",
-            what: "Bypass VerifyCD optical disc file check (xor eax, eax; ret 8)",
-            optional: false,
-            code: &[Piece {
-                at: At::Image(0x0003_9e80),
-                expected: &[0x56, 0x57, 0x55, 0x81, 0xec],
-                ops: &[Op::Raw(&[0x31, 0xc0, 0xc2, 0x08, 0x00])],
-            }],
-        },
-        Fix {
             id: "E1",
             what: "Lower smoothed_dt 0.02s floor to 0.004s for true 60+ FPS physics",
             optional: true,
@@ -668,18 +638,18 @@ pub static SR_STRT3FX_FIXES: FixSet = FixSet {
             optional: true,
             code: &[
                 Piece {
-                    at: At::Image(0x0003_9ec2),
+                    at: At::Image(0x0008_2dee),
                     expected: &[
-                        0x8d, 0x9c, 0x24, 0x24, 0x05, 0x00, 0x00, 0xe8, 0x44, 0x8f, 0x01, 0x00,
-                        0x83, 0xc4, 0x0c, 0x8d, 0x94, 0x24, 0xb4, 0x04, 0x00, 0x00, 0x8d, 0x84,
-                        0x24, 0x00, 0x04, 0x00, 0x00, 0xe8, 0xe5,
+                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
+                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
+                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
                     ],
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
                     at: At::Image(0x0008_2382),
                     expected: &[0x2b, 0xc0, 0x89, 0x46, 0x24],
-                    ops: &[Op::Call(At::Image(0x0003_9ec2))],
+                    ops: &[Op::Call(At::Image(0x0008_2dee))],
                 },
             ],
         },
@@ -701,16 +671,6 @@ pub static SR_STRT3FX_FIXES: FixSet = FixSet {
 // ============================================================================
 pub static SR_START65H_FIXES: FixSet = FixSet {
     fixes: &[
-        Fix {
-            id: "F1",
-            what: "Bypass VerifyCD optical disc file check (xor eax, eax; ret 8)",
-            optional: false,
-            code: &[Piece {
-                at: At::Image(0x0002_9cec),
-                expected: &[0x56, 0x57, 0x55, 0x81, 0xec],
-                ops: &[Op::Raw(&[0x31, 0xc0, 0xc2, 0x08, 0x00])],
-            }],
-        },
         Fix {
             id: "E1",
             what: "Lower smoothed_dt 0.02s floor to 0.004s for true 60+ FPS physics",
@@ -744,18 +704,18 @@ pub static SR_START65H_FIXES: FixSet = FixSet {
             optional: true,
             code: &[
                 Piece {
-                    at: At::Image(0x0002_9d2e),
+                    at: At::Image(0x0007_264e),
                     expected: &[
-                        0x8d, 0x9c, 0x24, 0x24, 0x05, 0x00, 0x00, 0xe8, 0xc8, 0x8e, 0x01, 0x00,
-                        0x83, 0xc4, 0x0c, 0x8d, 0x94, 0x24, 0xb4, 0x04, 0x00, 0x00, 0x8d, 0x84,
-                        0x24, 0x00, 0x04, 0x00, 0x00, 0xe8, 0x69,
+                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
+                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
+                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
                     ],
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
                     at: At::Image(0x0007_1bf2),
                     expected: &[0x2b, 0xc0, 0x89, 0x46, 0x24],
-                    ops: &[Op::Call(At::Image(0x0002_9d2e))],
+                    ops: &[Op::Call(At::Image(0x0007_264e))],
                 },
             ],
         },
@@ -777,16 +737,6 @@ pub static SR_START65H_FIXES: FixSet = FixSet {
 // ============================================================================
 pub static SR_STARTH_FIXES: FixSet = FixSet {
     fixes: &[
-        Fix {
-            id: "F1",
-            what: "Bypass VerifyCD optical disc file check (xor eax, eax; ret 8)",
-            optional: false,
-            code: &[Piece {
-                at: At::Image(0x0002_8ec0),
-                expected: &[0x56, 0x57, 0x55, 0x81, 0xec],
-                ops: &[Op::Raw(&[0x31, 0xc0, 0xc2, 0x08, 0x00])],
-            }],
-        },
         Fix {
             id: "E1",
             what: "Lower smoothed_dt 0.02s floor to 0.004s for true 60+ FPS physics",
@@ -820,18 +770,18 @@ pub static SR_STARTH_FIXES: FixSet = FixSet {
             optional: true,
             code: &[
                 Piece {
-                    at: At::Image(0x0002_8f02),
+                    at: At::Image(0x0007_7afe),
                     expected: &[
-                        0x8d, 0x9c, 0x24, 0x24, 0x05, 0x00, 0x00, 0xe8, 0x2f, 0x93, 0x01, 0x00,
-                        0x83, 0xc4, 0x0c, 0x8d, 0x94, 0x24, 0xb4, 0x04, 0x00, 0x00, 0x8d, 0x84,
-                        0x24, 0x00, 0x04, 0x00, 0x00, 0xe8, 0xd1,
+                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
+                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
+                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
                     ],
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
                     at: At::Image(0x0007_70a2),
                     expected: &[0x2b, 0xc0, 0x89, 0x46, 0x24],
-                    ops: &[Op::Call(At::Image(0x0002_8f02))],
+                    ops: &[Op::Call(At::Image(0x0007_7afe))],
                 },
             ],
         },
@@ -908,8 +858,9 @@ mod tests {
 
     #[test]
     fn skip_filters_only_optional_fixes() {
-        let writes = S1_STARTH_FIXES.assemble(0, &["F1", "E1", "E2", "E5"]);
-        assert_eq!(writes.len(), 1, "required F1 cannot be skipped");
-        assert_eq!(writes[0].fix, "F1");
+        let writes = S1_STARTH_FIXES.assemble(0, &["F2", "F3", "E1", "E2", "E5"]);
+        assert_eq!(writes.len(), 2, "required F2 and F3 cannot be skipped");
+        assert_eq!(writes[0].fix, "F2");
+        assert_eq!(writes[1].fix, "F3");
     }
 }

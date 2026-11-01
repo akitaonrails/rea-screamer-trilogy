@@ -59,12 +59,10 @@ fn run() -> Result<ExitCode, String> {
     match mode {
         Mode::Check => run_check(&settings),
         Mode::Controllers { seconds } => run_controllers(seconds),
-        Mode::SettingsOnly { linux } => {
-            match ui::show(&cfg_path, &cfg_text, linux)? {
-                ui::Outcome::Play => Ok(ExitCode::SUCCESS),
-                ui::Outcome::Closed => Ok(ExitCode::from(3)),
-            }
-        }
+        Mode::SettingsOnly { linux } => match ui::show(&cfg_path, &cfg_text, linux)? {
+            ui::Outcome::Play => Ok(ExitCode::SUCCESS),
+            ui::Outcome::Closed => Ok(ExitCode::from(3)),
+        },
         Mode::Play { show_window } => {
             let final_settings = if show_window {
                 match ui::show(&cfg_path, &cfg_text, cfg!(target_os = "linux"))? {
@@ -231,8 +229,7 @@ fn run_controllers(_seconds: u32) -> Result<ExitCode, String> {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             if name.starts_with("js") {
-                let dev_name =
-                    fs::read_to_string(e.path().join("device/name")).unwrap_or_default();
+                let dev_name = fs::read_to_string(e.path().join("device/name")).unwrap_or_default();
                 println!("  /dev/input/{name}: {}", dev_name.trim());
                 found += 1;
             }

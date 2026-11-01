@@ -192,11 +192,7 @@ impl<'a> Window<'a> {
                     .iter()
                     .map(|e| e.file_name.as_str())
                     .collect();
-                FolderStatus::Valid(format!(
-                    "{} ({})",
-                    disc.game.title(),
-                    exes.join(", ")
-                ))
+                FolderStatus::Valid(format!("{} ({})", disc.game.title(), exes.join(", ")))
             }
             Err(e) => FolderStatus::Invalid(e),
         }
@@ -302,7 +298,9 @@ impl Window<'_> {
         }
 
         ui.add_space(16.0);
-        ui.label(egui::RichText::new("Saves Folder (optional)").font(named("barlow-semibold", 16.0)));
+        ui.label(
+            egui::RichText::new("Saves Folder (optional)").font(named("barlow-semibold", 16.0)),
+        );
         ui.add(
             egui::TextEdit::singleline(&mut self.form.saves)
                 .desired_width(f32::INFINITY)
@@ -310,7 +308,9 @@ impl Window<'_> {
         );
 
         ui.add_space(20.0);
-        ui.label(egui::RichText::new("Graphics & Gameplay Preset").font(named("barlow-semibold", 16.0)));
+        ui.label(
+            egui::RichText::new("Graphics & Gameplay Preset").font(named("barlow-semibold", 16.0)),
+        );
         ui.horizontal(|ui| {
             for (look, title, desc) in [
                 (
@@ -355,9 +355,11 @@ impl Window<'_> {
         ui.horizontal_wrapped(|ui| {
             for r in RendererChoice::ALL {
                 let sel = self.form.picture.renderer == r;
-                let btn = egui::Button::new(
-                    egui::RichText::new(r.label()).color(if sel { ON_GOLD } else { INK }),
-                )
+                let btn = egui::Button::new(egui::RichText::new(r.label()).color(if sel {
+                    ON_GOLD
+                } else {
+                    INK
+                }))
                 .fill(if sel { GOLD } else { PANEL });
                 if ui.add(btn).clicked() {
                     self.form.picture.renderer = r;
@@ -371,9 +373,11 @@ impl Window<'_> {
         ui.horizontal_wrapped(|ui| {
             for (res, label) in form::resolutions(self.screen) {
                 let sel = self.form.picture.resolution == res;
-                let btn = egui::Button::new(
-                    egui::RichText::new(label).color(if sel { ON_GOLD } else { INK }),
-                )
+                let btn = egui::Button::new(egui::RichText::new(label).color(if sel {
+                    ON_GOLD
+                } else {
+                    INK
+                }))
                 .fill(if sel { GOLD } else { PANEL });
                 if ui.add(btn).clicked() {
                     self.form.picture.resolution = res;
@@ -398,9 +402,11 @@ impl Window<'_> {
         ui.horizontal(|ui| {
             for (fps, label) in form::FRAME_RATES {
                 let sel = self.form.picture.fps_limit == fps;
-                let btn = egui::Button::new(
-                    egui::RichText::new(label).color(if sel { ON_GOLD } else { INK }),
-                )
+                let btn = egui::Button::new(egui::RichText::new(label).color(if sel {
+                    ON_GOLD
+                } else {
+                    INK
+                }))
                 .fill(if sel { GOLD } else { PANEL });
                 if ui.add(btn).clicked() {
                     self.form.picture.fps_limit = fps;
@@ -414,9 +420,11 @@ impl Window<'_> {
         ui.horizontal(|ui| {
             for (flt, label) in form::FILTERS {
                 let sel = self.form.picture.texture_filter == flt;
-                let btn = egui::Button::new(
-                    egui::RichText::new(label).color(if sel { ON_GOLD } else { INK }),
-                )
+                let btn = egui::Button::new(egui::RichText::new(label).color(if sel {
+                    ON_GOLD
+                } else {
+                    INK
+                }))
                 .fill(if sel { GOLD } else { PANEL });
                 if ui.add(btn).clicked() {
                     self.form.picture.texture_filter = flt;
@@ -427,13 +435,17 @@ impl Window<'_> {
 
         if self.linux {
             ui.add_space(12.0);
-            ui.label(egui::RichText::new("Gamescope Upscaler").font(named("barlow-semibold", 16.0)));
+            ui.label(
+                egui::RichText::new("Gamescope Upscaler").font(named("barlow-semibold", 16.0)),
+            );
             ui.horizontal(|ui| {
                 for (sc, label, _) in form::SCALERS {
                     let sel = self.form.scaler == sc;
-                    let btn = egui::Button::new(
-                        egui::RichText::new(label).color(if sel { ON_GOLD } else { INK }),
-                    )
+                    let btn = egui::Button::new(egui::RichText::new(label).color(if sel {
+                        ON_GOLD
+                    } else {
+                        INK
+                    }))
                     .fill(if sel { GOLD } else { PANEL });
                     if ui.add(btn).clicked() {
                         self.form.scaler = sc;
@@ -455,9 +467,11 @@ impl Window<'_> {
         ui.horizontal(|ui| {
             for (dz, label) in form::DEADZONES {
                 let sel = self.form.deadzone == dz;
-                let btn = egui::Button::new(
-                    egui::RichText::new(label).color(if sel { ON_GOLD } else { INK }),
-                )
+                let btn = egui::Button::new(egui::RichText::new(label).color(if sel {
+                    ON_GOLD
+                } else {
+                    INK
+                }))
                 .fill(if sel { GOLD } else { PANEL });
                 if ui.add(btn).clicked() {
                     self.form.deadzone = dz;
@@ -470,9 +484,11 @@ impl Window<'_> {
         ui.horizontal(|ui| {
             for (r, label) in form::RUMBLES {
                 let sel = self.form.rumble == r;
-                let btn = egui::Button::new(
-                    egui::RichText::new(label).color(if sel { ON_GOLD } else { INK }),
-                )
+                let btn = egui::Button::new(egui::RichText::new(label).color(if sel {
+                    ON_GOLD
+                } else {
+                    INK
+                }))
                 .fill(if sel { GOLD } else { PANEL });
                 if ui.add(btn).clicked() {
                     self.form.rumble = r;
@@ -490,9 +506,11 @@ impl Window<'_> {
                 (Layout::Custom, "Custom"),
             ] {
                 let sel = self.form.layout == lay;
-                let btn = egui::Button::new(
-                    egui::RichText::new(label).color(if sel { ON_GOLD } else { INK }),
-                )
+                let btn = egui::Button::new(egui::RichText::new(label).color(if sel {
+                    ON_GOLD
+                } else {
+                    INK
+                }))
                 .fill(if sel { GOLD } else { PANEL });
                 if ui.add(btn).clicked() {
                     self.form.set_layout(lay);
@@ -510,9 +528,11 @@ impl Window<'_> {
                 let current = self.form.pad_button(action_idx);
                 for (btn_num, btn_label) in form::PAD_BUTTONS {
                     let sel = current == btn_num;
-                    let b = egui::Button::new(
-                        egui::RichText::new(btn_label).color(if sel { ON_GOLD } else { INK }),
-                    )
+                    let b = egui::Button::new(egui::RichText::new(btn_label).color(if sel {
+                        ON_GOLD
+                    } else {
+                        INK
+                    }))
                     .fill(if sel { GOLD } else { PANEL });
                     if ui.add(b).clicked() {
                         self.form.set_pad_button(action_idx, btn_num);

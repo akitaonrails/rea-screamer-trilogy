@@ -1,0 +1,144 @@
+#!/bin/sh
+# Plays Screamer (1995), Screamer 2 (1996), or Screamer Rally (1997) on Linux.
+#
+#   screamer-play           show the settings window, then start the game
+#   screamer-play --play    start the game with saved settings (no window)
+#   screamer-play stop      end the game
+#   screamer-play status    running or idle
+#
+# Optional environment:
+#   SCREAMER_LAUNCHER   path to ScreamerLauncher binary
+#   SCREAMER_DOSBOX     path to dosbox-staging binary
+#   SCREAMER_HOOKS_LIB  path to libscreamer_hooks.so
+#   SCREAMER_WAIT       set: wait for the game to end (used by AppImage)
+set -u
+HERE=$(dirname "$(readlink -f "$0")")
+LAUNCHER=${SCREAMER_LAUNCHER:-}
+if [ -z "$LAUNCHER" ]; then
+  for p in \
+    "$HERE/ScreamerLauncher" \
+    "$HERE/../ScreamerLauncher" \
+    "$HERE/../target/release/ScreamerLauncher" \
+    "$HERE/../target/debug/ScreamerLauncher"; do
+    [ -x "$p" ] && LAUNCHER=$(readlink -f "$p") && break
+  done
+fi
+
+HOOKS=${SCREAMER_HOOKS_LIB:-}
+if [ -z "$HOOKS" ]; then
+  for p in \
+    "$HERE/libscreamer_hooks.so" \
+    "$HERE/../libscreamer_hooks.so" \
+    "$HERE/../target/release/libscreamer_hooks.so" \
+    "$HERE/../target/debug/libscreamer_hooks.so"; do
+    [ -f "$p" ] && HOOKS=$(readlink -f "$p") && break
+  done
+fi
+
+STATE=${XDG_CONFIG_HOME:-$HOME/.config}/screamer-launcher
+mkdir -p "$STATE"
+CFG=$STATE/launcher.cfg
+LOCK=$STATE/running.pid
+
+get_key() { [ -f "$CFG" ] && sed -n "s|^$1 *= *||p" "$CFG" | tail -1; }
+
+running() {
+  [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK")" 2>/dev/null
+}
+
+has_nv_lib() {
+  if [ -n "${SCREAMER_NV_LIB_CHECK:-}" ]; then
+    "$SCREAMER_NV_LIB_CHECK"
+  else
+    ldconfig -p 2>/dev/null | grep -q libGLX_nvidia.so.0
+  fi
+}
+
+gpu_env() {
+  [ -n "${DRI_PRIME:-}${__NV_PRIME_RENDER_OFFLOAD:-}" ] && return
+  sys=${SCREAMER_SYSFS:-/sys}
+  n=0 nvidia= boot= boot_vram=0 other_vram=0
+  for d in "$sys"/class/drm/card*; do
+    case "${d##*/}" in *-*) continue ;; esac
+    [ -r "$d/device/vendor" ] || continue
+    n=$((n + 1))
+    vram=$(cat "$d/device/mem_info_vram_total" 2>/dev/null || echo 0)
+    [ "$(basename "$(readlink "$d/device/driver" 2>/dev/null)" 2>/dev/null)" = nvidia ] && nvidia=1
+    if [ "$(cat "$d/device/boot_vga" 2>/dev/null)" = 1 ]; then
+      boot=$(cat "$d/device/vendor"); boot_vram=$vram
+    elif [ "$vram" -gt "$other_vram" ]; then
+      other_vram=$vram
+    fi
+  done
+  if [ -n "$nvidia" ] && has_nv_lib; then
+    echo "__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia __VK_LAYER_NV_optimus=NVIDIA_only"
+  elif [ "$n" -ge 2 ] && { [ "$boot" = 0x8086 ] || [ "$other_vram" -gt "$boot_vram" ]; }; then
+    echo "DRI_PRIME=1"
+  fi
+}
+
+has_gamescope() {
+  if [ -n "${SCREAMER_GAMESCOPE_CHECK:-}" ]; then
+    "$SCREAMER_GAMESCOPE_CHECK"
+  else
+    command -v gamescope >/dev/null 2>&1
+  fi
+}
+
+launch() {
+  if [ -n "${SCREAMER_LAUNCH_CMD:-}" ]; then
+    "$SCREAMER_LAUNCH_CMD" "$@"
+  elif [ -n "${SCREAMER_WAIT:-}" ]; then
+    env SCREAMER_HOOKS_LIB="$HOOKS" $GPU "$@" > "$STATE/play.log" 2>&1
+  else
+    setsid env SCREAMER_HOOKS_LIB="$HOOKS" $GPU "$@" > "$STATE/play.log" 2>&1 < /dev/null &
+    echo $! > "$LOCK"
+  fi
+}
+
+start() {
+  if [ -z "$LAUNCHER" ] || [ ! -x "$LAUNCHER" ]; then
+    echo "ScreamerLauncher not found next to screamer-play (or set SCREAMER_LAUNCHER)"; exit 1
+  fi
+  res=$(get_key resolution); W=1920; H=1080
+  if [ -n "$res" ] && [ "$res" != "original" ]; then W=${res%x*}; H=${res#*x}; fi
+  F=$(get_key scaler); F=${F:-nearest}
+  if [ -n "${GAMESCOPE_WAYLAND_DISPLAY:-}" ] || ! has_gamescope; then
+    launch "$LAUNCHER" --no-window "$@"
+  else
+    launch gamescope -w "$W" -h "$H" -f -S fit -F "$F" -- "$LAUNCHER" --no-window "$@"
+  fi
+}
+
+settings() {
+  env $GPU "$LAUNCHER" --settings --linux 2>/dev/null
+  rc=$?
+  case $rc in
+    0|4) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+[ -n "${SCREAMER_PLAY_FUNCTIONS_ONLY:-}" ] && return 0
+GPU=$(gpu_env)
+
+case "${1:-}" in
+  "")
+    if running; then echo "already running"; exit 0; fi
+    if [ -z "$LAUNCHER" ] || [ ! -x "$LAUNCHER" ]; then
+      echo "ScreamerLauncher not found next to screamer-play (or set SCREAMER_LAUNCHER)"; exit 1
+    fi
+    settings || exit 0
+    start ;;
+  --play|start)
+    shift
+    if running; then echo "already running"; else start "$@"; fi ;;
+  status)
+    if running; then echo running; else echo idle; fi ;;
+  stop)
+    [ -f "$LOCK" ] && kill "$(cat "$LOCK")" 2>/dev/null
+    rm -f "$LOCK"
+    echo stopped ;;
+  *)
+    exec "$LAUNCHER" "$@" ;;
+esac

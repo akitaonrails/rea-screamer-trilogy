@@ -123,8 +123,7 @@ impl<'a> Image<'a> {
                 let p_idx = (first_page_index.saturating_sub(1) + p) as usize;
                 let p_off = pmap_off + p_idx * 4;
                 let b = file.get(p_off..p_off + 4).ok_or(LeError::Truncated)?;
-                let physical_page =
-                    ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | (b[2] as u32);
+                let physical_page = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | (b[2] as u32);
                 pages.push(PageEntry {
                     physical_page,
                     flags: b[3],
@@ -224,8 +223,7 @@ impl<'a> Image<'a> {
         let obj = self.objects.iter().find(|o| {
             o.executable
                 && address >= o.reloc_base
-                && address.saturating_add(len as u32)
-                    <= o.reloc_base.saturating_add(o.virtual_size)
+                && address.saturating_add(len as u32) <= o.reloc_base.saturating_add(o.virtual_size)
         })?;
         let _ = obj;
         let off = self.va_to_file_offset(address, len)?;
@@ -413,7 +411,11 @@ pub(crate) mod tests {
         let img = Image::parse(&file).unwrap();
         assert_eq!(img.objects.len(), 2);
         assert_eq!(img.code_at(0x0001_0001, 2), Some(&[0x89, 0xe5][..]));
-        assert_eq!(img.code_at(0x0010_0000, 2), None, "data object is not executable");
+        assert_eq!(
+            img.code_at(0x0010_0000, 2),
+            None,
+            "data object is not executable"
+        );
         assert_eq!(img.bytes_at(0x0010_0001, 3), Some(&[0x22, 0x33, 0x44][..]));
         let f_off = img.va_to_file_offset(0x0001_0002, 2).unwrap();
         assert_eq!(img.file_offset_to_va(f_off), Some(0x0001_0002));
@@ -424,10 +426,22 @@ pub(crate) mod tests {
         let code = [0xa1, 0x00, 0x00, 0x00, 0x00, 0xc3]; // mov eax, [reloc]; ret
         let file = synthetic(&code, &[0u8; 8], Some(1));
         let img = Image::parse(&file).unwrap();
-        assert!(!img.has_fixup_overlap(0x0001_0000, 1).unwrap(), "opcode byte before fixup");
-        assert!(img.has_fixup_overlap(0x0001_0001, 4).unwrap(), "overlaps relocated address");
-        assert!(img.has_fixup_overlap(0x0001_0004, 2).unwrap(), "overlaps last byte of fixup");
-        assert!(!img.has_fixup_overlap(0x0001_0005, 1).unwrap(), "ret byte after fixup");
+        assert!(
+            !img.has_fixup_overlap(0x0001_0000, 1).unwrap(),
+            "opcode byte before fixup"
+        );
+        assert!(
+            img.has_fixup_overlap(0x0001_0001, 4).unwrap(),
+            "overlaps relocated address"
+        );
+        assert!(
+            img.has_fixup_overlap(0x0001_0004, 2).unwrap(),
+            "overlaps last byte of fixup"
+        );
+        assert!(
+            !img.has_fixup_overlap(0x0001_0005, 1).unwrap(),
+            "ret byte after fixup"
+        );
     }
 
     #[test]

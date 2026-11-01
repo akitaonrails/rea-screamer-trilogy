@@ -28,16 +28,16 @@ impl KeyBindings {
                 brake: 80,
                 steer_left: 75,
                 steer_right: 77,
-                gear_up: 54,     // RShift
-                gear_down: 29,   // LCtrl
+                gear_up: 54,   // RShift
+                gear_down: 29, // LCtrl
             },
             Game::ScreamerRally => Self {
                 accelerate: 72,
                 brake: 80,
                 steer_left: 75,
                 steer_right: 77,
-                gear_up: 29,     // LCtrl
-                gear_down: 56,   // Alt
+                gear_up: 29,   // LCtrl
+                gear_down: 56, // Alt
             },
         }
     }
@@ -63,7 +63,7 @@ pub fn build_setup_cfg(game: Game, sound_irq: u32) -> Vec<u8> {
             put_u32(&mut buf, 0x00, 0x0000_E016); // Sound Blaster 16 Digital ID
             put_u32(&mut buf, 0x04, 0x0000_0012); // Capabilities / rate
             put_u32(&mut buf, 0x08, 0x0000_0220); // Port 0x220
-            put_u32(&mut buf, 0x0C, sound_irq);   // IRQ 7 (matches dosbox default)
+            put_u32(&mut buf, 0x0C, sound_irq); // IRQ 7 (matches dosbox default)
             put_u32(&mut buf, 0x10, 0x0000_0001); // DMA 1
             put_u32(&mut buf, 0x20, 0x0000_0388); // AdLib / OPL3 port 0x388
             put_u32(&mut buf, 0x40, 0x0000_0009); // Serial port setting
@@ -79,7 +79,7 @@ pub fn build_setup_cfg(game: Game, sound_irq: u32) -> Vec<u8> {
             put_u32(&mut buf, 0x08, 0x0000_E016); // Sound Blaster 16 Digital ID
             put_u32(&mut buf, 0x0C, 0x0000_0012);
             put_u32(&mut buf, 0x10, 0x0000_0220); // Port 0x220
-            put_u32(&mut buf, 0x14, sound_irq);   // IRQ 7
+            put_u32(&mut buf, 0x14, sound_irq); // IRQ 7
             put_u32(&mut buf, 0x18, 0x0000_0001); // DMA 1
             put_u32(&mut buf, 0x1C, 0x0000_0000);
             put_u32(&mut buf, 0x3C, 0x0000_2580); // 9600 baud
@@ -98,7 +98,7 @@ pub fn build_setup_cfg(game: Game, sound_irq: u32) -> Vec<u8> {
             put_u32(&mut buf, 0x08, 0x0000_E016); // Sound Blaster 16 Digital ID
             put_u32(&mut buf, 0x0C, 0x0000_0012);
             put_u32(&mut buf, 0x10, 0x0000_0220); // Port 0x220
-            put_u32(&mut buf, 0x14, sound_irq);   // IRQ 7
+            put_u32(&mut buf, 0x14, sound_irq); // IRQ 7
             put_u32(&mut buf, 0x18, 0x0000_0001); // DMA 1
             put_u32(&mut buf, 0x1C, 0x0000_0225);
             put_u32(&mut buf, 0x3C, 0x0000_2580); // 9600 baud
@@ -142,7 +142,15 @@ pub fn build_controls_cfg(game: Game, keys: KeyBindings) -> Vec<u8> {
             put_rec(
                 &mut buf,
                 6,
-                [0, 12, 333, 5, 513, 0x42CC_999Au32 as i32, 0x42CC_999Au32 as i32],
+                [
+                    0,
+                    12,
+                    333,
+                    5,
+                    513,
+                    0x42CC_999Au32 as i32,
+                    0x42CC_999Au32 as i32,
+                ],
             );
             put_rec(&mut buf, 7, [1, 0, 333, 4, 515, 0, 0]);
             put_rec(&mut buf, 8, [1, 0, 333, 4, 517, 0, 0]);
@@ -151,7 +159,15 @@ pub fn build_controls_cfg(game: Game, keys: KeyBindings) -> Vec<u8> {
             put_rec(
                 &mut buf,
                 16,
-                [0, 142, 227, 4, 513, 0x40F6_22A6u32 as i32, 0x40F6_22A6u32 as i32],
+                [
+                    0,
+                    142,
+                    227,
+                    4,
+                    513,
+                    0x40F6_22A6u32 as i32,
+                    0x40F6_22A6u32 as i32,
+                ],
             );
             put_rec(&mut buf, 17, [1, 0, 226, 3, 515, 0, 0]);
             put_rec(&mut buf, 18, [1, 0, 226, 3, 517, 0, 0]);
@@ -242,13 +258,20 @@ pub fn build_dosbox_conf(opts: &DosboxConfOptions<'_>) -> String {
         format!("{}x{}", opts.resolution.0, opts.resolution.1)
     };
     let viewport_line = if opts.widescreen && opts.resolution.0 > 0 && opts.resolution.1 > 0 {
-        format!("viewport_resolution = {}x{}\n", opts.resolution.0, opts.resolution.1)
+        format!(
+            "viewport            = {}x{}\n",
+            opts.resolution.0, opts.resolution.1
+        )
     } else {
         String::new()
     };
     let aspect_str = if opts.widescreen { "stretch" } else { "auto" };
     let voodoo_mem = if opts.voodoo_enabled { "12" } else { "4" };
-    let voodoo_bilinear = if opts.texture_filtering { "true" } else { "false" };
+    let voodoo_bilinear = if opts.texture_filtering {
+        "true"
+    } else {
+        "false"
+    };
 
     let mut autoexec = String::new();
     autoexec.push_str("@echo off\n");
@@ -259,7 +282,10 @@ pub fn build_dosbox_conf(opts: &DosboxConfOptions<'_>) -> String {
     if let Some(cd) = opts.cd_image_path {
         autoexec.push_str(&format!("imgmount d \"{}\" -t iso -fs iso\n", cd.display()));
     } else {
-        autoexec.push_str(&format!("mount d \"{}\" -t cdrom\n", opts.c_drive_dir.display()));
+        autoexec.push_str(&format!(
+            "mount d \"{}\" -t cdrom\n",
+            opts.c_drive_dir.display()
+        ));
     }
     autoexec.push_str("c:\n");
     autoexec.push_str(&format!("{}\n", opts.exe_name));
@@ -274,26 +300,27 @@ fullscreen          = {fullscreen}
 display             = 0
 fullresolution      = {res_str}
 windowresolution    = {res_str}
-{viewport_line}output              = opengl
+output              = opengl
 vsync               = {vsync}
 
 [dosbox]
 machine             = svga_s3
-memsize             = 32
+memsize             = 31
 
 [render]
 aspect              = {aspect_str}
-glshader            = sharp
+{viewport_line}glshader            = sharp
 
 [cpu]
 core                = auto
-cputype             = pentium_slow
-cycles              = max
+cputype             = pentium
+cpu_cycles          = max
+cpu_cycles_protected = max
 
 [voodoo]
 voodoo              = {voodoo_enabled}
 voodoo_memsize      = {voodoo_mem}
-voodoo_multithreading = true
+voodoo_threads      = auto
 voodoo_bilinear_filtering = {voodoo_bilinear}
 
 [mixer]
@@ -346,27 +373,45 @@ mod tests {
     fn screamer_cfg_bytes_match_expected() {
         assert_eq!(build_screamer_cfg(Game::Screamer), b"C:\tD:\tC:\tc");
         assert_eq!(build_screamer_cfg(Game::Screamer2), b"C:\\\tD:\tC:\\\tc");
-        assert_eq!(build_screamer_cfg(Game::ScreamerRally), b"C:\\\tD:\tC:\\\tc");
+        assert_eq!(
+            build_screamer_cfg(Game::ScreamerRally),
+            b"C:\\\tD:\tC:\\\tc"
+        );
     }
 
     #[test]
     fn setup_cfg_sizes_and_sb16_settings() {
         let s1 = build_setup_cfg(Game::Screamer, 7);
         assert_eq!(s1.len(), 144);
-        assert_eq!(u32::from_le_bytes(s1[0x00..0x04].try_into().unwrap()), 0xE016);
-        assert_eq!(u32::from_le_bytes(s1[0x08..0x0C].try_into().unwrap()), 0x220);
+        assert_eq!(
+            u32::from_le_bytes(s1[0x00..0x04].try_into().unwrap()),
+            0xE016
+        );
+        assert_eq!(
+            u32::from_le_bytes(s1[0x08..0x0C].try_into().unwrap()),
+            0x220
+        );
         assert_eq!(u32::from_le_bytes(s1[0x0C..0x10].try_into().unwrap()), 7);
         assert_eq!(u32::from_le_bytes(s1[0x10..0x14].try_into().unwrap()), 1);
 
         let s2 = build_setup_cfg(Game::Screamer2, 7);
         assert_eq!(s2.len(), 160);
-        assert_eq!(u32::from_le_bytes(s2[0x08..0x0C].try_into().unwrap()), 0xE016);
-        assert_eq!(u32::from_le_bytes(s2[0x10..0x14].try_into().unwrap()), 0x220);
+        assert_eq!(
+            u32::from_le_bytes(s2[0x08..0x0C].try_into().unwrap()),
+            0xE016
+        );
+        assert_eq!(
+            u32::from_le_bytes(s2[0x10..0x14].try_into().unwrap()),
+            0x220
+        );
         assert_eq!(u32::from_le_bytes(s2[0x14..0x18].try_into().unwrap()), 7);
 
         let sr = build_setup_cfg(Game::ScreamerRally, 7);
         assert_eq!(sr.len(), 160);
-        assert_eq!(u32::from_le_bytes(sr[0x04..0x08].try_into().unwrap()), 0x00A3_01EA);
+        assert_eq!(
+            u32::from_le_bytes(sr[0x04..0x08].try_into().unwrap()),
+            0x00A3_01EA
+        );
     }
 
     #[test]
@@ -374,18 +419,27 @@ mod tests {
         let s1 = build_controls_cfg(Game::Screamer, KeyBindings::default_for(Game::Screamer));
         assert_eq!(s1.len(), 1328);
         assert_eq!(i32::from_le_bytes(s1[0x18..0x1C].try_into().unwrap()), 72);
-        assert_eq!(i32::from_le_bytes(s1[0x508..0x50C].try_into().unwrap()), 513);
+        assert_eq!(
+            i32::from_le_bytes(s1[0x508..0x50C].try_into().unwrap()),
+            513
+        );
 
         let s2 = build_controls_cfg(Game::Screamer2, KeyBindings::default_for(Game::Screamer2));
         assert_eq!(s2.len(), 1496);
-        assert_eq!(i32::from_le_bytes(s2[0x5B0..0x5B4].try_into().unwrap()), 513);
+        assert_eq!(
+            i32::from_le_bytes(s2[0x5B0..0x5B4].try_into().unwrap()),
+            513
+        );
 
         let sr = build_controls_cfg(
             Game::ScreamerRally,
             KeyBindings::default_for(Game::ScreamerRally),
         );
         assert_eq!(sr.len(), 1496);
-        assert_eq!(i32::from_le_bytes(sr[0x5B0..0x5B4].try_into().unwrap()), 513);
+        assert_eq!(
+            i32::from_le_bytes(sr[0x5B0..0x5B4].try_into().unwrap()),
+            513
+        );
     }
 
     #[test]
@@ -403,7 +457,7 @@ mod tests {
             exit_after_run: true,
         });
         assert!(conf.contains("windowresolution    = 3840x2160"));
-        assert!(conf.contains("viewport_resolution = 3840x2160"));
+        assert!(conf.contains("viewport            = 3840x2160"));
         assert!(conf.contains("aspect              = stretch"));
         assert!(conf.contains("irq                 = 7"));
         assert!(conf.contains("imgmount d \"/tmp/game/game.ins\" -t iso -fs iso"));

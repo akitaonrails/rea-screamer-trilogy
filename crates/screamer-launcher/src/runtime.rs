@@ -9,8 +9,8 @@ use crate::edition::{
     self, Edition, Game, Renderer, S2_GLIDE2X_DOS_SHA256, S2_GLIDE2X_WIN_STUB_SHA256,
 };
 use crate::game_cfg::{
-    build_controls_cfg, build_dosbox_conf, build_screamer_cfg, build_setup_cfg, DosboxConfOptions,
-    KeyBindings,
+    DosboxConfOptions, KeyBindings, build_controls_cfg, build_dosbox_conf, build_screamer_cfg,
+    build_setup_cfg,
 };
 use crate::le::Image;
 
@@ -31,6 +31,7 @@ pub struct DiscoveredGame {
     pub game: Game,
     pub executables: Vec<DiscoveredExe>,
     pub cd_image: Option<PathBuf>,
+    pub glide2x_ovl_source: Option<PathBuf>,
     pub has_genuine_dos_glide2x: bool,
     pub has_windows_stub_glide2x: bool,
 }
@@ -99,7 +100,8 @@ pub fn scan_game_dir(dir: &Path) -> Result<DiscoveredGame, String> {
         .map(|e| e.edition.game)
         .ok_or_else(|| "No recognized edition found".to_string())?;
 
-    let (has_genuine_dos_glide2x, has_windows_stub_glide2x) = check_glide2x_ovl(&exe_dir);
+    let (has_genuine_dos_glide2x, has_windows_stub_glide2x, glide2x_ovl_source) =
+        check_glide2x_ovl(dir, &exe_dir);
     let cd_image = find_cd_image(dir, &exe_dir);
 
     Ok(DiscoveredGame {
@@ -108,6 +110,7 @@ pub fn scan_game_dir(dir: &Path) -> Result<DiscoveredGame, String> {
         game,
         executables,
         cd_image,
+        glide2x_ovl_source,
         has_genuine_dos_glide2x,
         has_windows_stub_glide2x,
     })
@@ -143,28 +146,56 @@ fn scan_exes_in_dir(dir: &Path) -> Result<Vec<DiscoveredExe>, String> {
     Ok(out)
 }
 
-fn check_glide2x_ovl(exe_dir: &Path) -> (bool, bool) {
-    let Ok(entries) = fs::read_dir(exe_dir) else {
-        return (false, false);
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if name.eq_ignore_ascii_case("glide2x.ovl")
-            && let Ok(bytes) = fs::read(&path)
-        {
-            let d = edition::sha256(&bytes);
-            if d == S2_GLIDE2X_DOS_SHA256 || bytes.len() > 100_000 {
-                return (true, false);
-            }
-            if d == S2_GLIDE2X_WIN_STUB_SHA256 || bytes.len() < 50_000 {
-                return (false, true);
+fn check_glide2x_ovl(root_dir: &Path, exe_dir: &Path) -> (bool, bool, Option<PathBuf>) {
+    let mut has_win_stub = false;
+    if let Ok(entries) = fs::read_dir(exe_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if name.eq_ignore_ascii_case("glide2x.ovl")
+                && let Ok(bytes) = fs::read(&path)
+            {
+                let d = edition::sha256(&bytes);
+                if d == S2_GLIDE2X_DOS_SHA256 || bytes.len() > 100_000 {
+                    return (true, false, Some(path));
+                }
+                if d == S2_GLIDE2X_WIN_STUB_SHA256 || bytes.len() < 50_000 {
+                    has_win_stub = true;
+                }
             }
         }
     }
-    (false, false)
+
+    // Check explicit SCREAMER_GLIDE2X_OVL env var or sibling Screamer Rally installation.
+    let mut fallback_candidates = Vec::new();
+    if let Ok(env_ovl) = std::env::var("SCREAMER_GLIDE2X_OVL") {
+        fallback_candidates.push(PathBuf::from(env_ovl));
+    }
+    for anc in [root_dir.parent(), exe_dir.parent().and_then(|p| p.parent())]
+        .into_iter()
+        .flatten()
+    {
+        fallback_candidates.push(
+            anc.join("screamer-rally")
+                .join("hdd")
+                .join("SR")
+                .join("GLIDE2X.OVL"),
+        );
+        fallback_candidates.push(anc.join("screamer-rally").join("SR").join("GLIDE2X.OVL"));
+        fallback_candidates.push(anc.join("screamer-rally").join("GLIDE2X.OVL"));
+    }
+    for cand in fallback_candidates {
+        if cand.is_file()
+            && let Ok(bytes) = fs::read(&cand)
+            && (edition::sha256(&bytes) == S2_GLIDE2X_DOS_SHA256 || bytes.len() > 100_000)
+        {
+            return (true, has_win_stub, Some(cand));
+        }
+    }
+
+    (false, has_win_stub, None)
 }
 
 fn find_cd_image(root_dir: &Path, exe_dir: &Path) -> Option<PathBuf> {
@@ -252,14 +283,30 @@ impl DiscoveredGame {
                 }
                 Err("No playable racing executable found in game folder".into())
             }
-            RendererChoice::Voodoo => find_renderer(Renderer::Glide3dfx)
-                .ok_or_else(|| format!("{} does not have a 3dfx Voodoo executable", self.game.title())),
-            RendererChoice::Svga16Bit => find_renderer(Renderer::Svga16Bit)
-                .ok_or_else(|| format!("{} does not have a 16-bit SVGA executable", self.game.title())),
-            RendererChoice::Svga8Bit => find_renderer(Renderer::Svga8Bit)
-                .ok_or_else(|| format!("{} does not have an 8-bit SVGA executable", self.game.title())),
-            RendererChoice::Vga => find_renderer(Renderer::VgaLow)
-                .ok_or_else(|| format!("{} does not have a low-res VGA executable", self.game.title())),
+            RendererChoice::Voodoo => find_renderer(Renderer::Glide3dfx).ok_or_else(|| {
+                format!(
+                    "{} does not have a 3dfx Voodoo executable",
+                    self.game.title()
+                )
+            }),
+            RendererChoice::Svga16Bit => find_renderer(Renderer::Svga16Bit).ok_or_else(|| {
+                format!(
+                    "{} does not have a 16-bit SVGA executable",
+                    self.game.title()
+                )
+            }),
+            RendererChoice::Svga8Bit => find_renderer(Renderer::Svga8Bit).ok_or_else(|| {
+                format!(
+                    "{} does not have an 8-bit SVGA executable",
+                    self.game.title()
+                )
+            }),
+            RendererChoice::Vga => find_renderer(Renderer::VgaLow).ok_or_else(|| {
+                format!(
+                    "{} does not have a low-res VGA executable",
+                    self.game.title()
+                )
+            }),
         }
     }
 }
@@ -299,6 +346,12 @@ pub fn prepare_runtime(
 
     // Stage top-level entries from exe_dir into runtime_dir without modifying exe_dir.
     stage_source_tree(&discovered.exe_dir, runtime_dir)?;
+    if let Some(ovl_src) = &discovered.glide2x_ovl_source {
+        let ovl_dst = runtime_dir.join("GLIDE2X.OVL");
+        if !ovl_dst.exists() && ovl_dst.symlink_metadata().is_err() {
+            link_or_copy(ovl_src, &ovl_dst)?;
+        }
+    }
 
     // Patch and write all recognized executables into runtime_dir.
     let skip = settings.skipped_fixes();
@@ -332,8 +385,11 @@ pub fn prepare_runtime(
     let controls_cfg_path = config_dir.join("CONTROLS.CFG");
     if !controls_cfg_path.exists() {
         let keys = KeyBindings::default_for(discovered.game);
-        fs::write(&controls_cfg_path, build_controls_cfg(discovered.game, keys))
-            .map_err(|e| format!("{}: {e}", controls_cfg_path.display()))?;
+        fs::write(
+            &controls_cfg_path,
+            build_controls_cfg(discovered.game, keys),
+        )
+        .map_err(|e| format!("{}: {e}", controls_cfg_path.display()))?;
     }
 
     // Sync user saves in if a saves directory is configured.
@@ -441,7 +497,10 @@ fn link_or_copy(src: &Path, dst: &Path) -> Result<(), String> {
 fn link_or_copy(src: &Path, dst: &Path) -> Result<(), String> {
     if src.is_dir() {
         fs::create_dir_all(dst).map_err(|e| format!("{}: {e}", dst.display()))?;
-        for entry in fs::read_dir(src).map_err(|e| format!("{}: {e}", src.display()))?.flatten() {
+        for entry in fs::read_dir(src)
+            .map_err(|e| format!("{}: {e}", src.display()))?
+            .flatten()
+        {
             let p = entry.path();
             if let Some(name) = p.file_name() {
                 link_or_copy(&p, &dst.join(name))?;

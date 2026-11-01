@@ -428,7 +428,9 @@ impl Settings {
                 "--renderer" => {
                     let v = value("--renderer")?;
                     s.renderer = Some(RendererChoice::parse(&v).ok_or_else(|| {
-                        format!("--renderer needs auto, 3dfx, svga16, svga8, or vga, not {v}\n\n{USAGE}")
+                        format!(
+                            "--renderer needs auto, 3dfx, svga16, svga8, or vga, not {v}\n\n{USAGE}"
+                        )
                     })?);
                 }
                 "--resolution" => {
@@ -453,9 +455,9 @@ impl Settings {
                 }
                 "--deadzone" => {
                     let v = value("--deadzone")?;
-                    let d = parse_percent(&v).filter(|&d| d <= 30).ok_or_else(|| {
-                        format!("--deadzone needs 0 to 30, not {v}\n\n{USAGE}")
-                    })?;
+                    let d = parse_percent(&v)
+                        .filter(|&d| d <= 30)
+                        .ok_or_else(|| format!("--deadzone needs 0 to 30, not {v}\n\n{USAGE}"))?;
                     s.deadzone = Some(d);
                 }
                 "--texture-filter" => {

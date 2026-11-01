@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Screamer Launcher
+Comment=Compatibility launcher for Screamer (1995), Screamer 2 (1996), and Screamer Rally (1997)
+Exec=AppRun
+Icon=screamer-launcher
+Categories=Game;
+Terminal=false

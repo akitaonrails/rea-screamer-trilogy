@@ -112,6 +112,7 @@ mod unix_hook {
 
     type ClockGettimeFn = unsafe extern "C" fn(c_int, *mut Timespec) -> c_int;
     type SdlSwapWindowFn = unsafe extern "C" fn(*mut c_void);
+    type SdlWasInitFn = unsafe extern "C" fn(c_uint) -> c_uint;
     type SdlGameControllerOpenFn = unsafe extern "C" fn(c_int) -> *mut c_void;
     type SdlGameControllerGetAxisFn = unsafe extern "C" fn(*mut c_void, c_int) -> c_short;
     type SdlGameControllerGetButtonFn = unsafe extern "C" fn(*mut c_void, c_int) -> u8;
@@ -167,6 +168,15 @@ mod unix_hook {
         init_once();
         if !ENABLED.load(Ordering::Relaxed) {
             return;
+        }
+
+        let was_init_ptr = unsafe { dlsym_default(b"SDL_WasInit\0") };
+        if !was_init_ptr.is_null() {
+            let was_init_fn: SdlWasInitFn = unsafe { std::mem::transmute(was_init_ptr) };
+            // Wait until SDL_INIT_VIDEO (0x20) and SDL_INIT_GAMECONTROLLER (0x2000) or JOYSTICK (0x200) are initialized
+            if unsafe { was_init_fn(0x220) } != 0x220 {
+                return;
+            }
         }
 
         let open_ptr = unsafe { dlsym_default(b"SDL_GameControllerOpen\0") };

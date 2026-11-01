@@ -1,0 +1,66 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-packages:
+    name: Test and build Linux & Windows packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies and MinGW toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 zip libgl1-mesa-dev libxkbcommon-dev libwayland-dev
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup target add x86_64-pc-windows-gnu
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Unit tests (host)
+        run: cargo test --workspace
+
+      - name: Linux helper tests (GPU choice, scalers)
+        run: sh linux/tests/gpu-env.sh && sh linux/tests/scaler.sh
+
+      - name: Lint (Linux & Windows targets)
+        run: |
+          cargo clippy --release --workspace -- -D warnings
+          cargo clippy --release --target x86_64-pc-windows-gnu --workspace -- -D warnings
+
+      - name: Build Linux & Windows binaries
+        run: |
+          cargo build --release --workspace
+          cargo build --release --target x86_64-pc-windows-gnu --workspace
+
+      - name: Package
+        run: |
+          name=ScreamerLauncher-${GITHUB_REF_NAME//\//-}
+          mkdir -p "dist/$name" "dist/$name-linux"
+          cp target/x86_64-pc-windows-gnu/release/ScreamerLauncher.exe \
+             target/x86_64-pc-windows-gnu/release/screamer_hooks.dll \
+             README.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
+          (cd dist && zip -r "$name-windows-x86_64.zip" "$name")
+          cp target/release/ScreamerLauncher \
+             target/release/libscreamer_hooks.so \
+             README.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "dist/$name-linux/"
+          cp -r linux "dist/$name-linux/linux"
+          (cd dist && zip -r "$name-linux-x86_64.zip" "$name-linux")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreamerLauncher-packages
+          path: dist/*.zip
