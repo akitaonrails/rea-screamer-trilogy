@@ -142,7 +142,9 @@ jobs:
             | cut -d ' ' -f 3 \
             | grep -E -i '(mingw|clang)(32|64)' \
             | sed -e 's|\\|/|g' \
-            | xargs -r cp --target-directory="$package/"
+            | while IFS= read -r dll; do
+                cp "$dll" "$package/"
+              done
           (cd dist && zip -r "${name}-windows-x86_64.zip" "${name}-windows-x86_64")
           echo "WINDOWS_ZIP=dist/${name}-windows-x86_64.zip" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
