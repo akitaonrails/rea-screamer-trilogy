@@ -247,13 +247,24 @@ impl Form {
         if !renderer.is_supported_for(which, true) {
             renderer = RendererChoice::Auto;
         }
+        let resolution =
+            if s.resolution.is_none() && screen.and_then(landscape) == Some(STEAM_DECK_SCREEN) {
+                Some(STEAM_DECK_SCREEN)
+            } else {
+                s.race_resolution()
+            };
+        let vsync = if s.resolution == Some(config::ORIGINAL) && s.vsync.is_none() {
+            None
+        } else {
+            Some(s.vsync.unwrap_or(true))
+        };
         let picture = Picture {
             renderer,
-            resolution: s.race_resolution(),
-            widescreen: s.widescreen == Some(true),
-            texture_filter: s.texture_filter.unwrap_or(TextureFilter::Original),
+            resolution,
+            widescreen: s.widescreen_enabled(),
+            texture_filter: s.effective_filter(),
             fps_limit: s.fps_cap().map(|_| 100),
-            vsync: s.vsync,
+            vsync,
         };
         let buttons = s.buttons.unwrap_or(config::DEFAULT_BUTTONS);
         Form {
@@ -265,7 +276,7 @@ impl Form {
             rumble: s.rumble_strength(),
             deadzone: s.deadzone.unwrap_or(0),
             gamepad_axes: s.gamepad_axes != Some(false),
-            scaler: s.scaler.unwrap_or(Scaler::Nearest),
+            scaler: s.scaler.unwrap_or(Scaler::Fsr),
             buttons,
             layout: Form::layout_of(&buttons),
         }
@@ -351,27 +362,35 @@ impl Form {
         put("renderer", Some(p.renderer.key().into()));
         put(
             "resolution",
-            p.resolution.map(|(w, h)| {
-                if (w, h) == config::FULLSCREEN {
-                    "fullscreen".to_string()
-                } else {
-                    format!("{w}x{h}")
-                }
+            Some(match p.resolution {
+                None => "original".to_string(),
+                Some((w, h)) if (w, h) == config::FULLSCREEN => "fullscreen".to_string(),
+                Some((w, h)) => format!("{w}x{h}"),
             }),
         );
-        put("widescreen", p.widescreen.then(|| "true".into()));
-        put("fps_limit", p.fps_limit.map(|f| f.to_string()));
+        put("widescreen", Some(p.widescreen.to_string()));
+        put(
+            "fps_limit",
+            Some(
+                p.fps_limit
+                    .map(|f| f.to_string())
+                    .unwrap_or_else(|| "off".to_string()),
+            ),
+        );
         put("vsync", p.vsync.map(|v| v.to_string()));
         put(
             "texture_filter",
-            match p.texture_filter {
-                TextureFilter::Original => None,
-                TextureFilter::Fsr => Some("fsr".into()),
-                TextureFilter::Smooth => Some("smooth".into()),
-                TextureFilter::Sharp => Some("sharp".into()),
-            },
+            Some(
+                match p.texture_filter {
+                    TextureFilter::Original => "original",
+                    TextureFilter::Fsr => "fsr",
+                    TextureFilter::Smooth => "smooth",
+                    TextureFilter::Sharp => "sharp",
+                }
+                .into(),
+            ),
         );
-        put("rumble", (self.rumble > 0).then(|| self.rumble.to_string()));
+        put("rumble", Some(self.rumble.to_string()));
         put("deadzone", Some(self.deadzone.to_string()));
         put("gamepad_axes", Some(self.gamepad_axes.to_string()));
         put("scaler", Some(self.scaler.key().into()));
@@ -394,20 +413,32 @@ mod tests {
     }
 
     #[test]
-    fn default_template_starts_as_original_look() {
+    fn default_template_starts_as_smart_enhanced_look() {
         let f = form(config::TEMPLATE);
         assert_eq!(f.which, Game::Screamer);
-        assert_eq!(f.look, Look::Original);
-        assert_eq!(f.picture, Picture::ORIGINAL);
+        assert_eq!(f.look, Look::Enhanced);
+        assert_eq!(f.picture, Picture::enhanced(SCREEN));
         assert!(f.gamepad_axes);
+        assert_eq!(f.rumble, 60);
+
+        // Steam Deck screen auto-selects Look::SteamDeck when resolution is unset
+        let deck_f = Form::new(&Settings::default(), Some(STEAM_DECK_SCREEN));
+        assert_eq!(deck_f.look, Look::SteamDeck);
+        assert_eq!(deck_f.picture, Picture::STEAM_DECK);
     }
 
     #[test]
-    fn enhanced_look_roundtrips_through_save() {
+    fn enhanced_and_original_looks_roundtrip_through_save() {
         let mut f = form(config::TEMPLATE);
         f.set_which(Game::ScreamerRally, true, SCREEN);
+        f.set_look(Look::Original, SCREEN);
+        let saved_orig = f.save(config::TEMPLATE);
+        let f_orig = form(&saved_orig);
+        assert_eq!(f_orig.look, Look::Original);
+        assert_eq!(f_orig.picture, Picture::ORIGINAL);
+
         f.set_look(Look::Enhanced, SCREEN);
-        let saved = f.save(config::TEMPLATE);
+        let saved = f.save(&saved_orig);
         let f2 = form(&saved);
         assert_eq!(f2.which, Game::ScreamerRally);
         assert_eq!(f2.look, Look::Enhanced);

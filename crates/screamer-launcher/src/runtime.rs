@@ -521,10 +521,10 @@ pub fn prepare_runtime(
         None | Some(crate::config::FULLSCREEN) => (1280, 960),
         Some(wh) => wh,
     };
-    let widescreen = settings.widescreen.unwrap_or(false);
+    let widescreen = settings.widescreen_enabled();
     let vsync = settings.vsync.unwrap_or(true);
     let voodoo_enabled = selected.edition.role == Renderer::Glide3dfx;
-    let filter = settings.texture_filter.unwrap_or(TextureFilter::Original);
+    let filter = settings.effective_filter();
     let texture_filtering = matches!(filter, TextureFilter::Smooth | TextureFilter::Fsr);
     let glshader = match filter {
         TextureFilter::Original => "crt-auto",

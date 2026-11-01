@@ -209,37 +209,37 @@ game =
 # Graphics renderer: auto, 3dfx, svga16, svga8, or vga.
 renderer = auto
 
-# Display resolution, e.g. 1920x1080, 2560x1440, 3840x2160, or original.
-#resolution = 1920x1080
+# Display resolution, e.g. 1920x1080, fullscreen, or original.
+resolution = 1920x1080
 
 # True 16:9 Hor+ widescreen 3D camera projection (expands horizontal FOV by
 # 4/3 inside SetCamera3D instead of stretching the 4:3 image).
-#widescreen = true
+widescreen = true
 
-# Frame-rate cap in frames per second (e.g. 60 unlocks the 30 FPS PIT timer
-# lock while keeping car physics at 1.0x speed); off or unset keeps 30 FPS.
-#fps_limit = 60
+# Frame-rate target: 100 enables 2x GPU Optical-Flow Frame Generation on top of
+# the 50 Hz DOS physics engine; off keeps native 50 FPS presentation.
+fps_limit = 100
 
 # Wait for vertical refresh before presenting each frame.
-#vsync = true
+vsync = true
 
-# Texture filtering: original, smooth (bilinear), or sharp (nearest-neighbor).
-#texture_filter = smooth
+# Shader / Upscaler: fsr (AMD FSR 1.0 EASU+RCAS), sharp, smooth, or original (CRT).
+texture_filter = fsr
 
 # Modern gamepad analog steering & independent L2/R2 analog triggers.
 gamepad_axes = true
 
 # Gamepad steering deadzone in percent (0 removes the hardcoded 7.8% deadzone).
-#deadzone = 0
+deadzone = 0
 
 # Gamepad rumble strength on kerbs, gravel, skids, and wall impacts (0-100).
-#rumble = 60
+rumble = 60
 
 # Pad buttons: modern, original, or 8 comma-separated button numbers.
-#buttons = modern
+buttons = modern
 
 # Linux (screamer-play) only: gamescope upscaling filter (nearest, pixel, fsr, linear).
-#scaler = nearest
+scaler = fsr
 ";
 
 pub const USAGE: &str = concat!(
@@ -432,15 +432,31 @@ impl Settings {
     }
 
     pub fn rumble_strength(&self) -> u32 {
-        self.rumble.unwrap_or(0).min(100)
+        self.rumble.unwrap_or(60).min(100)
     }
 
     pub fn fps_cap(&self) -> Option<u32> {
-        self.fps_limit.filter(|&f| f > 0)
+        match self.fps_limit {
+            Some(0) => None,
+            Some(f) => Some(f),
+            None => Some(100),
+        }
     }
 
     pub fn race_resolution(&self) -> Option<(u32, u32)> {
-        self.resolution.filter(|&r| r != ORIGINAL)
+        match self.resolution {
+            Some(ORIGINAL) => None,
+            Some(r) => Some(r),
+            None => Some((1920, 1080)),
+        }
+    }
+
+    pub fn widescreen_enabled(&self) -> bool {
+        self.widescreen.unwrap_or(true)
+    }
+
+    pub fn effective_filter(&self) -> TextureFilter {
+        self.texture_filter.unwrap_or(TextureFilter::Fsr)
     }
 
     pub fn button_map(&self) -> [u8; 8] {
@@ -456,7 +472,7 @@ impl Settings {
             skip.push("E1");
         }
         // E2 scales horizontal camera basis M00, M01, M02 by 3/4 for 16:9 Hor+.
-        if self.widescreen != Some(true) {
+        if !self.widescreen_enabled() {
             skip.push("E2");
         }
         // E5 zeroes the hardcoded 20/256 (7.8%) analog steering deadzone.
@@ -602,11 +618,12 @@ mod tests {
 
     #[test]
     fn skipped_fixes_follow_settings() {
+        // Smart defaults enable E1, E2, E5 out of the box
         let def = Settings::default();
-        assert_eq!(def.skipped_fixes(), vec!["E1", "E2"]);
+        assert!(def.skipped_fixes().is_empty());
 
         let enhanced = Settings {
-            fps_limit: Some(60),
+            fps_limit: Some(100),
             widescreen: Some(true),
             gamepad_axes: Some(true),
             deadzone: Some(0),
@@ -615,7 +632,7 @@ mod tests {
         assert!(enhanced.skipped_fixes().is_empty());
 
         let orig = Settings {
-            fps_limit: Some(30),
+            fps_limit: Some(0),
             widescreen: Some(false),
             gamepad_axes: Some(false),
             ..Settings::default()
@@ -644,4 +661,193 @@ impl Settings {
     pub fn renderer_choice(&self) -> RendererChoice {
         self.renderer.unwrap_or(RendererChoice::Auto)
     }
+}
+
+/// Hardware capabilities auto-detected from the user's machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MachineCapabilities {
+    pub gpu_name: String,
+    pub has_nvidia_dgpu: bool,
+    pub has_amd_dgpu: bool,
+    pub display_res: (u32, u32),
+    pub refresh_hz: u32,
+    pub is_steam_deck: bool,
+}
+
+impl MachineCapabilities {
+    pub fn detect() -> Self {
+        let (gpu_name, has_nvidia_dgpu, has_amd_dgpu) = detect_gpu_info();
+        let (display_res, refresh_hz) = detect_display_mode();
+        let is_steam_deck = display_res == (1280, 800) || is_steam_deck_dmi();
+        Self {
+            gpu_name,
+            has_nvidia_dgpu,
+            has_amd_dgpu,
+            display_res,
+            refresh_hz,
+            is_steam_deck,
+        }
+    }
+
+    pub fn summary_line(&self, is_3dfx: bool) -> String {
+        let voodoo_str = if is_3dfx {
+            "2× Voodoo (1280×960) + "
+        } else {
+            ""
+        };
+        format!(
+            "Auto-detected: {} · {}×{} @ {} Hz — {}FSR Super Res + 100 FPS Optical-Flow Frame Gen ready",
+            self.gpu_name, self.display_res.0, self.display_res.1, self.refresh_hz, voodoo_str
+        )
+    }
+}
+
+fn is_steam_deck_dmi() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(board) = std::fs::read_to_string("/sys/class/dmi/id/board_name") {
+            let b = board.trim();
+            if b.eq_ignore_ascii_case("Jupiter") || b.eq_ignore_ascii_case("Galileo") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn detect_gpu_info() -> (String, bool, bool) {
+    #[cfg(target_os = "linux")]
+    {
+        let mut has_nvidia = false;
+        let mut has_amd = false;
+        let mut nvidia_model: Option<String> = None;
+
+        if let Ok(entries) = std::fs::read_dir("/proc/driver/nvidia/gpus") {
+            for e in entries.flatten() {
+                if let Ok(info) = std::fs::read_to_string(e.path().join("information")) {
+                    for line in info.lines() {
+                        if let Some(rest) = line.strip_prefix("Model:") {
+                            let m = rest.trim();
+                            if !m.is_empty() {
+                                has_nvidia = true;
+                                nvidia_model = Some(format!("NVIDIA {m}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Ok(out) = std::process::Command::new("lspci").output()
+            && out.status.success()
+        {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut best_name: Option<String> = None;
+            for line in text.lines() {
+                let lower = line.to_ascii_lowercase();
+                if !(lower.contains("vga compatible controller")
+                    || lower.contains("3d controller")
+                    || lower.contains("display controller"))
+                {
+                    continue;
+                }
+                if lower.contains("nvidia") {
+                    has_nvidia = true;
+                    if let Some(bracket) = extract_last_bracket(line) {
+                        best_name = Some(format!("NVIDIA {bracket}"));
+                    } else if best_name.is_none() {
+                        best_name = Some("NVIDIA GeForce GPU".to_string());
+                    }
+                } else if lower.contains("amd") || lower.contains("ati") {
+                    // Distinguish discrete Radeon RX from integrated Radeon 610M / Raphael
+                    if !lower.contains("610m") && !lower.contains("raphael") {
+                        has_amd = true;
+                    }
+                    if best_name.is_none() {
+                        if let Some(bracket) = extract_last_bracket(line) {
+                            best_name = Some(format!("AMD {bracket}"));
+                        } else {
+                            best_name = Some("AMD Radeon GPU".to_string());
+                        }
+                    }
+                } else if lower.contains("intel") && best_name.is_none() {
+                    if let Some(bracket) = extract_last_bracket(line) {
+                        best_name = Some(format!("Intel {bracket}"));
+                    } else {
+                        best_name = Some("Intel Graphics".to_string());
+                    }
+                }
+            }
+            if let Some(nv) = nvidia_model.clone().or(best_name) {
+                return (nv, has_nvidia, has_amd);
+            }
+        }
+
+        if let Some(nv) = nvidia_model {
+            return (nv, has_nvidia, has_amd);
+        }
+    }
+    ("OpenGL 2.0+ GPU".to_string(), false, false)
+}
+
+#[cfg(target_os = "linux")]
+fn extract_last_bracket(line: &str) -> Option<String> {
+    let end = line.rfind(']')?;
+    let start = line[..end].rfind('[')?;
+    let inside = line[start + 1..end].trim();
+    (!inside.is_empty()).then(|| inside.to_string())
+}
+
+fn detect_display_mode() -> ((u32, u32), u32) {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(out) = std::process::Command::new("xrandr")
+            .arg("--current")
+            .output()
+            && out.status.success()
+        {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut best_res = (1920u32, 1080u32);
+            let mut best_hz = 60u32;
+            let mut best_score = 0u64;
+
+            for line in text.lines() {
+                if !line.contains('*') {
+                    continue;
+                }
+                let mut parts = line.split_whitespace();
+                let Some(res_tok) = parts.next() else {
+                    continue;
+                };
+                let Some((w_str, h_str)) = res_tok.split_once('x') else {
+                    continue;
+                };
+                let (Ok(w), Ok(h)) = (w_str.parse::<u32>(), h_str.parse::<u32>()) else {
+                    continue;
+                };
+                for tok in parts {
+                    if tok.contains('*') {
+                        let cleaned: String = tok
+                            .chars()
+                            .take_while(|c| c.is_ascii_digit() || *c == '.')
+                            .collect();
+                        if let Ok(hz_f) = cleaned.parse::<f32>() {
+                            let hz = hz_f.round() as u32;
+                            let is_landscape = if w >= h { 1_000_000u64 } else { 0 };
+                            let score = is_landscape + (hz as u64) * 1000 + (w as u64);
+                            if score > best_score {
+                                best_score = score;
+                                best_res = (w, h);
+                                best_hz = hz.max(30);
+                            }
+                        }
+                    }
+                }
+            }
+            if best_score > 0 {
+                return (best_res, best_hz);
+            }
+        }
+    }
+    ((1920, 1080), 60)
 }

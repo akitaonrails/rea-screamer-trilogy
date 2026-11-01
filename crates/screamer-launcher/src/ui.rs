@@ -15,7 +15,7 @@ use eframe::egui::{
     Rect, Sense, Shape, Stroke, StrokeKind, TextureHandle, Vec2, pos2, vec2,
 };
 
-use screamer_launcher::config::{RendererChoice, Settings};
+use screamer_launcher::config::{MachineCapabilities, RendererChoice, Settings};
 use screamer_launcher::edition::Game;
 use screamer_launcher::form::{self, Form, Layout, Look, PadAction};
 use screamer_launcher::runtime::{self, DiscoveredTrilogy};
@@ -156,6 +156,7 @@ struct Window<'a> {
     pad: PadPoller,
     trilogy: DiscoveredTrilogy,
     checked: String,
+    machine: MachineCapabilities,
     screen: Option<(u32, u32)>,
     resolutions: Vec<(Option<(u32, u32)>, String)>,
     controllers: Vec<String>,
@@ -177,7 +178,8 @@ impl<'a> Window<'a> {
         outcome: &'a mut Outcome,
     ) -> Self {
         let (settings, _) = Settings::parse_file(&text);
-        let screen = Some((1920, 1080));
+        let machine = MachineCapabilities::detect();
+        let screen = Some(machine.display_res);
         let mut form = Form::new(&settings, screen);
         let trilogy = check_trilogy(&form.game);
 
@@ -217,6 +219,7 @@ impl<'a> Window<'a> {
             tab: initial_tab,
             focus_row: 0,
             pad: PadPoller::default(),
+            machine,
             screen,
             resolutions: form::resolutions(screen),
             controllers: detect_controllers(),
@@ -754,7 +757,16 @@ impl Window<'_> {
             );
         });
 
-        ui.add_space(10.0);
+        ui.add_space(8.0);
+        let is_3dfx = which != Game::Screamer
+            && has_glide
+            && matches!(p.renderer, RendererChoice::Auto | RendererChoice::Voodoo);
+        ui.label(
+            egui::RichText::new(self.machine.summary_line(is_3dfx))
+                .font(font(13.0))
+                .color(GOLD),
+        );
+        ui.add_space(4.0);
         ui.label(
             egui::RichText::new(
                 "Note: 3dfx Voodoo renders internally at 1280×960 (2x superscaled) and SVGA at 640×480. FSR (EASU+RCAS) upscales to your display, and 100 FPS Frame Gen uses GPU optical flow while keeping 50 Hz game physics intact.",

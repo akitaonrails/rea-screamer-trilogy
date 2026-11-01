@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use screamer_launcher::config::{self, Settings};
+use screamer_launcher::config::{self, MachineCapabilities, Settings};
 use screamer_launcher::edition::Game;
 use screamer_launcher::runtime;
 
@@ -196,6 +196,24 @@ fn default_saves_dir(game_slug: &str) -> PathBuf {
 }
 
 fn run_check(settings: &Settings, filter_game: Option<Game>) -> Result<ExitCode, String> {
+    let machine = MachineCapabilities::detect();
+    println!(
+        "Hardware:   {} · Display {}×{} @ {} Hz",
+        machine.gpu_name, machine.display_res.0, machine.display_res.1, machine.refresh_hz
+    );
+    println!(
+        "Defaults:   Renderer={}, Widescreen={}, Upscaler={:?}, FrameGen={}",
+        settings.renderer_choice().key(),
+        settings.widescreen_enabled(),
+        settings.effective_filter(),
+        if settings.fps_cap().is_some_and(|f| f >= 60) {
+            "100 FPS (2x Optical Flow)"
+        } else {
+            "50 FPS (Native)"
+        }
+    );
+    println!();
+
     let game_dir = settings
         .game
         .as_deref()
@@ -314,6 +332,7 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
         .arg("-conf")
         .arg(&prepared.conf_path);
 
+    let machine = MachineCapabilities::detect();
     let is_3dfx = prepared.selected_exe.eq_ignore_ascii_case("S2_3DFX.EXE")
         || prepared.selected_exe.eq_ignore_ascii_case("STRT3FX.EXE");
     let voodoo_scale = if is_3dfx && settings.race_resolution().is_some() {
@@ -326,6 +345,13 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
     } else {
         "0"
     };
+
+    if machine.has_nvidia_dgpu {
+        cmd.env("__NV_PRIME_RENDER_OFFLOAD", "1")
+            .env("__GLX_VENDOR_LIBRARY_NAME", "nvidia");
+    } else if machine.has_amd_dgpu {
+        cmd.env("DRI_PRIME", "1");
+    }
 
     // Pass settings to the statically linked screamer-hooks and Voodoo renderer inside dosbox via environment variables.
     cmd.env("SCREAMER_GAME", disc.game.slug())

@@ -382,7 +382,7 @@ index 565f06e..a696b27 100644
  if conf_data.get('C_MANYMOUSE') != 0
      third_party_deps += manymouse_dep
 diff --git a/src/gui/sdlmain.cpp b/src/gui/sdlmain.cpp
-index 04b7641..2ea2669 100644
+index 04b7641..6dca3de 100644
 --- a/src/gui/sdlmain.cpp
 +++ b/src/gui/sdlmain.cpp
 @@ -61,6 +61,7 @@
@@ -510,7 +510,23 @@ index 04b7641..2ea2669 100644
  		delete[] emptytex;
  
  		if (sdl.opengl.framebuffer_is_srgb_encoded) {
-@@ -2699,6 +2767,20 @@ static bool present_frame_texture()
+@@ -2231,6 +2299,15 @@ uint8_t GFX_SetSize(const int render_width_px, const int render_height_px,
+ 	notify_new_mouse_screen_params();
+ 	update_vsync_mode();
+ 
++#if C_OPENGL
++	if (sdl.rendering_backend == RenderingBackend::OpenGl && fg_state.enabled) {
++		render_pacer->SetTimeout(0);
++		if (get_host_refresh_rate() < 100.0 || SDL_GL_SetSwapInterval(-1) != 0) {
++			SDL_GL_SetSwapInterval(0);
++		}
++	}
++#endif
++
+ 	if (sdl.draw.has_changed) {
+ 		log_display_properties(sdl.draw.render_width_px,
+ 		                       sdl.draw.render_height_px,
+@@ -2699,6 +2776,20 @@ static bool present_frame_texture()
  static void update_frame_gl(const uint16_t* changedLines)
  {
  	if (changedLines) {
@@ -531,7 +547,7 @@ index 04b7641..2ea2669 100644
  		const auto framebuf = static_cast<uint8_t *>(sdl.opengl.framebuf);
  		const auto pitch = sdl.opengl.pitch;
  		int y = 0;
-@@ -2716,6 +2798,16 @@ static void update_frame_gl(const uint16_t* changedLines)
+@@ -2716,6 +2807,16 @@ static void update_frame_gl(const uint16_t* changedLines)
  			}
  			index++;
  		}
@@ -548,7 +564,7 @@ index 04b7641..2ea2669 100644
  	} else {
  		sdl.opengl.actual_frame_count++;
  	}
-@@ -2727,6 +2819,12 @@ static bool present_frame_gl()
+@@ -2727,6 +2828,12 @@ static bool present_frame_gl()
  	if (is_presenting) {
  		glClear(GL_COLOR_BUFFER_BIT);
  		if (sdl.opengl.program_object) {
@@ -561,7 +577,7 @@ index 04b7641..2ea2669 100644
  			glUniform1i(sdl.opengl.ruby.frame_count,
  			            sdl.opengl.actual_frame_count++);
  			glDrawArrays(GL_TRIANGLES, 0, 3);
-@@ -3347,8 +3445,12 @@ static void set_output(Section* sec, const bool wants_aspect_ratio_correction)
+@@ -3347,8 +3454,12 @@ static void set_output(Section* sec, const bool wants_aspect_ratio_correction)
  			        "glShaderSource");
  			glUniform2f = (PFNGLUNIFORM2FPROC)SDL_GL_GetProcAddress(
  			        "glUniform2f");
@@ -574,7 +590,36 @@ index 04b7641..2ea2669 100644
  			glUseProgram = (PFNGLUSEPROGRAMPROC)SDL_GL_GetProcAddress(
  			        "glUseProgram");
  			glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC)
-@@ -3813,6 +3915,30 @@ static void handle_user_event(const SDL_Event& event)
+@@ -3542,8 +3653,27 @@ static void read_gui_config(Section* sec)
+ 	                                       Pacer::LogLevel::TIMEOUTS);
+ 
+ 	const int display = section->Get_int("display");
+-	if ((display >= 0) && (display < SDL_GetNumVideoDisplays())) {
++	const int num_displays = SDL_GetNumVideoDisplays();
++	if ((display >= 0) && (display < num_displays)) {
+ 		sdl.display_number = display;
++		if (display == 0 && num_displays > 1) {
++			// Prefer a landscape display with the highest refresh rate if display 0
++			// is portrait or lower refresh rate.
++			int best_idx = 0;
++			int best_score = -1;
++			for (int i = 0; i < num_displays; ++i) {
++				SDL_DisplayMode dm = {};
++				if (SDL_GetDesktopDisplayMode(i, &dm) == 0) {
++					const int is_landscape = (dm.w >= dm.h) ? 10000 : 0;
++					const int score = is_landscape + dm.refresh_rate;
++					if (score > best_score) {
++						best_score = score;
++						best_idx = i;
++					}
++				}
++			}
++			sdl.display_number = best_idx;
++		}
+ 	} else {
+ 		LOG_WARNING("SDL: Display number out of bounds, using display 0");
+ 		sdl.display_number = 0;
+@@ -3813,6 +3943,30 @@ static void handle_user_event(const SDL_Event& event)
  	}
  }
  
@@ -605,7 +650,7 @@ index 04b7641..2ea2669 100644
  bool GFX_Events()
  {
  #if defined(MACOSX)
-@@ -4181,6 +4307,86 @@ bool GFX_Events()
+@@ -4181,6 +4335,86 @@ bool GFX_Events()
  		default: MAPPER_CheckEvent(&event);
  		}
  	}
