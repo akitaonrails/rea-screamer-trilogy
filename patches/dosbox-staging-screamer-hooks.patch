@@ -382,7 +382,7 @@ index 565f06e..a696b27 100644
  if conf_data.get('C_MANYMOUSE') != 0
      third_party_deps += manymouse_dep
 diff --git a/src/gui/sdlmain.cpp b/src/gui/sdlmain.cpp
-index 04b7641..6dca3de 100644
+index 04b7641..18543b1 100644
 --- a/src/gui/sdlmain.cpp
 +++ b/src/gui/sdlmain.cpp
 @@ -61,6 +61,7 @@
@@ -577,7 +577,18 @@ index 04b7641..6dca3de 100644
  			glUniform1i(sdl.opengl.ruby.frame_count,
  			            sdl.opengl.actual_frame_count++);
  			glDrawArrays(GL_TRIANGLES, 0, 3);
-@@ -3347,8 +3454,12 @@ static void set_output(Section* sec, const bool wants_aspect_ratio_correction)
+@@ -3160,6 +3267,10 @@ DosBox::Rect GFX_CalcDrawRectInPixels(const DosBox::Rect& canvas_size_px,
+ {
+ 	const auto viewport_px = RENDER_CalcRestrictedViewportSizeInPixels(canvas_size_px);
+ 
++	if (RENDER_GetAspectRatioCorrectionMode() == AspectRatioCorrectionMode::Stretch) {
++		return viewport_px.Copy().CenterTo(canvas_size_px.cx(), canvas_size_px.cy());
++	}
++
+ 	const auto draw_size_fit_px =
+ 	        render_size_px.Copy()
+ 	                .ScaleWidth(render_pixel_aspect_ratio.ToFloat())
+@@ -3347,8 +3458,12 @@ static void set_output(Section* sec, const bool wants_aspect_ratio_correction)
  			        "glShaderSource");
  			glUniform2f = (PFNGLUNIFORM2FPROC)SDL_GL_GetProcAddress(
  			        "glUniform2f");
@@ -590,7 +601,7 @@ index 04b7641..6dca3de 100644
  			glUseProgram = (PFNGLUSEPROGRAMPROC)SDL_GL_GetProcAddress(
  			        "glUseProgram");
  			glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC)
-@@ -3542,8 +3653,27 @@ static void read_gui_config(Section* sec)
+@@ -3542,8 +3657,27 @@ static void read_gui_config(Section* sec)
  	                                       Pacer::LogLevel::TIMEOUTS);
  
  	const int display = section->Get_int("display");
@@ -619,7 +630,7 @@ index 04b7641..6dca3de 100644
  	} else {
  		LOG_WARNING("SDL: Display number out of bounds, using display 0");
  		sdl.display_number = 0;
-@@ -3813,6 +3943,30 @@ static void handle_user_event(const SDL_Event& event)
+@@ -3813,6 +3947,30 @@ static void handle_user_event(const SDL_Event& event)
  	}
  }
  
@@ -650,7 +661,7 @@ index 04b7641..6dca3de 100644
  bool GFX_Events()
  {
  #if defined(MACOSX)
-@@ -4181,6 +4335,86 @@ bool GFX_Events()
+@@ -4181,6 +4339,86 @@ bool GFX_Events()
  		default: MAPPER_CheckEvent(&event);
  		}
  	}
@@ -752,7 +763,7 @@ index d932a1e..9174eee 100644
  
  	// Map legacy shader names
 diff --git a/src/hardware/voodoo.cpp b/src/hardware/voodoo.cpp
-index 9661f47..a70e586 100644
+index 9661f47..6b85d56 100644
 --- a/src/hardware/voodoo.cpp
 +++ b/src/hardware/voodoo.cpp
 @@ -815,6 +815,7 @@ struct fbi_state
@@ -1100,3 +1111,43 @@ index 9661f47..a70e586 100644
  
  	v->fbi.rowpixels = v->fbi.width;
  
+@@ -7517,13 +7626,29 @@ static void Voodoo_UpdateScreen()
+ 			const auto width  = check_cast<uint16_t>(v->fbi.width);
+ 			const auto height = check_cast<uint16_t>(v->fbi.height);
+ 
++			Fraction pixel_aspect_ratio = {1};
++			if (RENDER_GetAspectRatioCorrectionMode() ==
++			    AspectRatioCorrectionMode::Stretch) {
++				const auto viewport_px = GFX_GetViewportSizeInPixels();
++				if (viewport_px.w > 0 && viewport_px.h > 0 &&
++				    width > 0 && height > 0) {
++					const Fraction viewport_ar = {
++					        iroundf(viewport_px.w),
++					        iroundf(viewport_px.h)};
++					const Fraction render_ar = {width, height};
++					pixel_aspect_ratio = viewport_ar / render_ar;
++				} else {
++					pixel_aspect_ratio = {4, 3};
++				}
++			}
++
+ 			image_info.width                = width;
+ 			image_info.height               = height;
+ 			image_info.double_width         = false;
+ 			image_info.double_height        = false;
+ 			image_info.forced_single_scan   = false;
+ 			image_info.rendered_double_scan = false;
+-			image_info.pixel_aspect_ratio   = {1};
++			image_info.pixel_aspect_ratio   = pixel_aspect_ratio;
+ 			image_info.pixel_format = PixelFormat::RGB565_Packed16;
+ 
+ 			VideoMode video_mode = {};
+@@ -7533,7 +7658,7 @@ static void Voodoo_UpdateScreen()
+ 			video_mode.is_graphics_mode   = true;
+ 			video_mode.width              = width;
+ 			video_mode.height             = height;
+-			video_mode.pixel_aspect_ratio = {1};
++			video_mode.pixel_aspect_ratio = pixel_aspect_ratio;
+ 			video_mode.graphics_standard  = GraphicsStandard::Svga;
+ 			video_mode.color_depth = ColorDepth::HighColor16Bit;
+ 			video_mode.is_double_scanned_mode = false;

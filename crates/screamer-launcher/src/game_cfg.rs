@@ -254,7 +254,11 @@ pub struct DosboxConfOptions<'a> {
 /// Generates a clean `dosbox-staging` configuration file for running Screamer 1, 2, or Rally.
 pub fn build_dosbox_conf(opts: &DosboxConfOptions<'_>) -> String {
     let win_res_str = if opts.resolution.0 <= 1 || opts.resolution.1 <= 1 {
-        "1280x960".to_string()
+        if opts.widescreen {
+            "1920x1080".to_string()
+        } else {
+            "1280x960".to_string()
+        }
     } else {
         format!("{}x{}", opts.resolution.0, opts.resolution.1)
     };
