@@ -177,15 +177,6 @@ const UNUSED_CAM_CAVE_31: &[u8; 31] = &[
     0x52,
 ];
 
-/// IEEE-754 double `0.02` (`20 ms` = 50 FPS floor).
-const DBL_0_02: &[u8; 8] = &[0x7b, 0x14, 0xae, 0x47, 0xe1, 0x7a, 0x94, 0x3f];
-/// IEEE-754 double `0.004` (`4 ms` = 250 FPS floor).
-const DBL_0_004: &[u8; 8] = &[0x62, 0x10, 0x58, 0x39, 0xb4, 0xc8, 0x70, 0x3f];
-/// IEEE-754 float `0.02f` (`20 ms` = 50 FPS floor).
-const FLT_0_02: &[u8; 4] = &[0x0a, 0xd7, 0xa3, 0x3c];
-/// IEEE-754 float `0.004f` (`4 ms` = 250 FPS floor).
-const FLT_0_004: &[u8; 4] = &[0x0b, 0xd7, 0x83, 0x3b];
-
 // ============================================================================
 // Screamer (1995) — STARTH.EXE (SVGA 640x480)
 // ============================================================================
@@ -213,13 +204,9 @@ pub static S1_STARTH_FIXES: FixSet = FixSet {
         },
         Fix {
             id: "E1",
-            what: "Unlock 60+ FPS spin-wait (keep 0.02s floor intact for 50-entry physics table)",
+            what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
-            code: &[Piece {
-                at: At::Image(0x0001_fc48),
-                expected: &[0x02],
-                ops: &[Op::Raw(&[0x01])],
-            }],
+            code: &[],
         },
         Fix {
             id: "E2",
@@ -268,13 +255,9 @@ pub static S1_STARTL_FIXES: FixSet = FixSet {
         },
         Fix {
             id: "E1",
-            what: "Unlock 60+ FPS spin-wait (keep 0.02s floor intact for 50-entry physics table)",
+            what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
-            code: &[Piece {
-                at: At::Image(0x0001_fc38),
-                expected: &[0x02],
-                ops: &[Op::Raw(&[0x01])],
-            }],
+            code: &[],
         },
         Fix {
             id: "E2",
@@ -336,35 +319,9 @@ pub static S2_3DFX_FIXES: FixSet = FixSet {
     fixes: &[
         Fix {
             id: "E1",
-            what: "Unlock 60+ FPS spin-wait and lower smoothed_dt 0.02s floor to 0.004s",
+            what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
-            code: &[
-                Piece {
-                    at: At::Image(0x0005_19bc),
-                    expected: &[0x02],
-                    ops: &[Op::Raw(&[0x01])],
-                },
-                Piece {
-                    at: At::Image(0x0013_1c50),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0013_1c8c),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0005_0c48),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0005_0d30),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-            ],
+            code: &[],
         },
         Fix {
             id: "E2",
@@ -413,35 +370,9 @@ pub static S2_START65H_FIXES: FixSet = FixSet {
         },
         Fix {
             id: "E1",
-            what: "Unlock 60+ FPS spin-wait and lower smoothed_dt 0.02s floor to 0.004s",
+            what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
-            code: &[
-                Piece {
-                    at: At::Image(0x0004_d21c),
-                    expected: &[0x02],
-                    ops: &[Op::Raw(&[0x01])],
-                },
-                Piece {
-                    at: At::Image(0x0013_1f5c),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0013_1f98),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0004_c4a8),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0004_c590),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-            ],
+            code: &[],
         },
         Fix {
             id: "E2",
@@ -480,35 +411,9 @@ pub static S2_STARTH_FIXES: FixSet = FixSet {
     fixes: &[
         Fix {
             id: "E1",
-            what: "Unlock 60+ FPS spin-wait and lower smoothed_dt 0.02s floor to 0.004s",
+            what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
-            code: &[
-                Piece {
-                    at: At::Image(0x0004_d08c),
-                    expected: &[0x02],
-                    ops: &[Op::Raw(&[0x01])],
-                },
-                Piece {
-                    at: At::Image(0x0011_1b8c),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0011_1bc8),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0004_b13c),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0004_b224),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-            ],
+            code: &[],
         },
         Fix {
             id: "E2",
@@ -570,30 +475,13 @@ pub static SR_STRT3FX_FIXES: FixSet = FixSet {
     fixes: &[
         Fix {
             id: "E1",
-            what: "Lower smoothed_dt 0.02s floor to 0.004s for true 60+ FPS physics",
+            what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
-            code: &[
-                Piece {
-                    at: At::Image(0x0012_1c58),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0012_1c94),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0004_f76e),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0004_f856),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-            ],
+            code: &[Piece {
+                at: At::Image(0x0005_04e4),
+                expected: &[0x01],
+                ops: &[Op::Raw(&[0x02])],
+            }],
         },
         Fix {
             id: "E2",
@@ -632,30 +520,13 @@ pub static SR_START65H_FIXES: FixSet = FixSet {
     fixes: &[
         Fix {
             id: "E1",
-            what: "Lower smoothed_dt 0.02s floor to 0.004s for true 60+ FPS physics",
+            what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
-            code: &[
-                Piece {
-                    at: At::Image(0x0012_1c58),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0012_1c94),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0003_f55e),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0003_f646),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-            ],
+            code: &[Piece {
+                at: At::Image(0x0004_02d4),
+                expected: &[0x01],
+                ops: &[Op::Raw(&[0x02])],
+            }],
         },
         Fix {
             id: "E2",
@@ -694,30 +565,13 @@ pub static SR_STARTH_FIXES: FixSet = FixSet {
     fixes: &[
         Fix {
             id: "E1",
-            what: "Lower smoothed_dt 0.02s floor to 0.004s for true 60+ FPS physics",
+            what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
-            code: &[
-                Piece {
-                    at: At::Image(0x0011_1888),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0011_18c4),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0003_e8ce),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0003_e9b6),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-            ],
+            code: &[Piece {
+                at: At::Image(0x0004_04bc),
+                expected: &[0x01],
+                ops: &[Op::Raw(&[0x02])],
+            }],
         },
         Fix {
             id: "E2",

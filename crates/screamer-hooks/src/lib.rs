@@ -184,49 +184,68 @@ pub fn locate_data_object(mem: &[u8]) -> Option<usize> {
 }
 
 /// Locates both the Data Object base offset in `mem` and the matching
-/// [`BinaryControlSpec`], disambiguating binaries that share an anchor offset
-/// (`S1_STARTH` vs `S1_STARTL`, `SR_STRT3FX` vs `SR_START65H`) via optional
-/// `game_hint` / `exe_hint` or by inspecting `record[0]` at `controls_base_offset`.
+/// [`BinaryControlSpec`] at any byte alignment in guest RAM, disambiguating
+/// binaries that share an anchor offset (`S1_STARTH` vs `S1_STARTL`,
+/// `SR_STRT3FX` vs `SR_START65H`) via optional `game_hint` / `exe_hint` or by
+/// inspecting `record[0]` at `controls_base_offset`.
 pub fn locate_binary_data_object(
     mem: &[u8],
     game_hint: Option<&str>,
     exe_hint: Option<&str>,
 ) -> Option<(usize, &'static BinaryControlSpec)> {
-    let page_size = 4096usize;
     let sig_len = ANCHOR_SIGNATURE.len();
-    let mut page_base = 0usize;
-    while page_base + page_size <= mem.len() {
+    if mem.len() < sig_len {
+        return None;
+    }
+
+    let mut fallback: Option<(usize, &'static BinaryControlSpec)> = None;
+    let mut search_from = 0usize;
+    let first_byte_lower = ANCHOR_SIGNATURE[0].to_ascii_lowercase();
+    let first_byte_upper = ANCHOR_SIGNATURE[0].to_ascii_uppercase();
+
+    while search_from + sig_len <= mem.len() {
+        let rel = mem[search_from..mem.len() - sig_len + 1]
+            .iter()
+            .position(|&b| b == first_byte_lower || b == first_byte_upper);
+        let Some(offset) = rel else {
+            break;
+        };
+        let pos = search_from + offset;
+        search_from = pos + 1;
+
+        if !mem[pos..pos + sig_len].eq_ignore_ascii_case(ANCHOR_SIGNATURE) {
+            continue;
+        }
+
         for spec in BINARY_CONTROL_SPECS {
-            let pos = page_base + spec.anchor_offset;
-            if pos + sig_len <= mem.len()
-                && mem[pos..pos + sig_len].eq_ignore_ascii_case(ANCHOR_SIGNATURE)
+            if pos < spec.anchor_offset {
+                continue;
+            }
+            let base = pos - spec.anchor_offset;
+            let rem = &mem[base..];
+
+            if let Some(exe) = exe_hint
+                && (!spec.exe_env.eq_ignore_ascii_case(exe)
+                    || game_hint.is_some_and(|g| !spec.game_env.eq_ignore_ascii_case(g)))
             {
-                let rem = &mem[page_base..];
-                // Disambiguate specs sharing the same anchor_offset
-                if let Some(exe) = exe_hint
-                    && let Some(matched) = BINARY_CONTROL_SPECS.iter().find(|s| {
-                        s.anchor_offset == spec.anchor_offset
-                            && s.exe_env.eq_ignore_ascii_case(exe)
-                            && game_hint.is_none_or(|g| s.game_env.eq_ignore_ascii_case(g))
-                    })
-                {
-                    return Some((page_base, matched));
-                }
-                if let Some(matched) = BINARY_CONTROL_SPECS.iter().find(|s| {
-                    s.anchor_offset == spec.anchor_offset
-                        && (is_valid_control_block(rem, s.controls_base_offset)
-                            || (s.block_count == 4
-                                && s.controls_base_offset >= 0x180
-                                && is_valid_control_block(rem, s.controls_base_offset - 0x180)))
-                }) {
-                    return Some((page_base, matched));
-                }
-                return Some((page_base, spec));
+                continue;
+            }
+
+            let is_live = is_valid_control_block(rem, spec.controls_base_offset)
+                || (spec.block_count == 4
+                    && spec.controls_base_offset >= 0x180
+                    && is_valid_control_block(rem, spec.controls_base_offset - 0x180));
+            if is_live {
+                return Some((base, spec));
+            }
+            if base.is_multiple_of(4096) {
+                fallback = Some((base, spec));
+            } else if fallback.is_none() {
+                fallback = Some((base, spec));
             }
         }
-        page_base += page_size;
     }
-    None
+    fallback
 }
 
 fn is_synth_scancode(scancode: i32, synth_key_mask: usize) -> bool {
@@ -252,13 +271,21 @@ fn inject_single_control_block(
         return false;
     }
 
+    // In the real DOS/4GW binary, the 130-byte keyboard state array (`0` or `1` per
+    // scancode) lives in its own preceding 0x82-byte BSS LE object, while `data_obj[0..130]`
+    // contains initialized ASCII strings (`> 1`). Guard `has_clean_kbd_array` so ASCII
+    // string bytes in `data_obj[0..130]` are never mistaken for held keyboard keys.
+    let has_clean_kbd_array = data_obj
+        .get(2..90)
+        .is_some_and(|b| b.iter().all(|&x| x <= 1));
+
     let is_key_down = |buf: &[u8], scancode: i32| -> bool {
-        if is_synth_scancode(scancode, synth_key_mask) {
+        if !has_clean_kbd_array || is_synth_scancode(scancode, synth_key_mask) {
             return false;
         }
-        if (1..128).contains(&scancode) {
+        if (1..90).contains(&scancode) {
             let idx = 2 + scancode as usize;
-            idx < buf.len() && buf[idx] != 0
+            idx < buf.len() && buf[idx] == 1
         } else {
             false
         }
@@ -269,7 +296,7 @@ fn inject_single_control_block(
 
     // 0: Accelerate (0..=1023, ctrl_type=1, mode=0 so MenuPollInput ignores norm[0] in menus)
     let sc0 = read_i32_le(data_obj, rec_off(0) + 0x18);
-    if is_key_down(data_obj, sc0) {
+    if gp.throttle == 0 && is_key_down(data_obj, sc0) {
         write_i32_le(data_obj, rec_off(0), 1);
         write_i32_le(data_obj, rec_off(0) + 0x04, 0);
         write_i32_le(data_obj, rec_off(0) + 0x08, 1);
@@ -283,7 +310,7 @@ fn inject_single_control_block(
 
     // 1: Brake (0..=1023, ctrl_type=1, mode=0 for direct proportional analog brake)
     let sc1 = read_i32_le(data_obj, rec_off(1) + 0x18);
-    if is_key_down(data_obj, sc1) {
+    if gp.brake == 0 && is_key_down(data_obj, sc1) {
         write_i32_le(data_obj, rec_off(1), 1);
         write_i32_le(data_obj, rec_off(1) + 0x04, 0);
         write_i32_le(data_obj, rec_off(1) + 0x08, 1);
@@ -298,7 +325,7 @@ fn inject_single_control_block(
     // 2 & 3: Steering (-1023..=1023 in norm[2] with ctrl_type=1, mode=0 for full analog steering)
     let sc2 = read_i32_le(data_obj, rec_off(2) + 0x18);
     let sc3 = read_i32_le(data_obj, rec_off(3) + 0x18);
-    if is_key_down(data_obj, sc2) || is_key_down(data_obj, sc3) {
+    if gp.steer == 0 && (is_key_down(data_obj, sc2) || is_key_down(data_obj, sc3)) {
         write_i32_le(data_obj, rec_off(2), 1);
         write_i32_le(data_obj, rec_off(2) + 0x04, 0);
         write_i32_le(data_obj, rec_off(2) + 0x08, 1);
@@ -321,7 +348,7 @@ fn inject_single_control_block(
 
     // 4: Gear Up (0 or 1023, ctrl_type=1, mode=0)
     let sc4 = read_i32_le(data_obj, rec_off(4) + 0x18);
-    if is_key_down(data_obj, sc4) {
+    if !gp.gear_up && is_key_down(data_obj, sc4) {
         write_i32_le(data_obj, rec_off(4), 1);
         write_i32_le(data_obj, rec_off(4) + 0x04, 0);
         write_i32_le(data_obj, rec_off(4) + 0x08, 1);
@@ -335,7 +362,7 @@ fn inject_single_control_block(
 
     // 5: Gear Down (0 or 1023, ctrl_type=1, mode=0)
     let sc5 = read_i32_le(data_obj, rec_off(5) + 0x18);
-    if is_key_down(data_obj, sc5) {
+    if !gp.gear_down && is_key_down(data_obj, sc5) {
         write_i32_le(data_obj, rec_off(5), 1);
         write_i32_le(data_obj, rec_off(5) + 0x04, 0);
         write_i32_le(data_obj, rec_off(5) + 0x08, 1);
@@ -352,8 +379,8 @@ fn inject_single_control_block(
 
 /// Injects `gp` into Player 1's control block inside `data_obj` (starting at
 /// `spec.controls_base_offset`), yielding individual controls to the physical
-/// keyboard whenever `data_obj[2 + scancode] != 0` (excluding synthetic keys in
-/// `synth_key_mask`).
+/// keyboard whenever `data_obj[2 + scancode] == 1` in a clean keyboard array
+/// (excluding synthetic keys in `synth_key_mask`).
 pub fn inject_race_controls_with_synth_mask(
     data_obj: &mut [u8],
     spec: &BinaryControlSpec,
@@ -364,6 +391,8 @@ pub fn inject_race_controls_with_synth_mask(
     let mut injected = inject_single_control_block(data_obj, base, gp, synth_key_mask);
     if spec.block_count == 4 && base >= 0x180 {
         injected |= inject_single_control_block(data_obj, base - 0x180, gp, synth_key_mask);
+        injected |= inject_single_control_block(data_obj, base - 0x0C0, gp, synth_key_mask);
+        injected |= inject_single_control_block(data_obj, base + 0x0C0, gp, synth_key_mask);
     }
     injected
 }
@@ -653,6 +682,11 @@ mod unix_hook {
         }
 
         if !gc.is_null() {
+            let upd_ptr = unsafe { dlsym_default(b"SDL_GameControllerUpdate\0") };
+            if !upd_ptr.is_null() {
+                let upd_fn: unsafe extern "C" fn() = unsafe { std::mem::transmute(upd_ptr) };
+                unsafe { upd_fn() };
+            }
             let axis_ptr = unsafe { dlsym_default(b"SDL_GameControllerGetAxis\0") };
             let btn_ptr = unsafe { dlsym_default(b"SDL_GameControllerGetButton\0") };
             if axis_ptr.is_null() || btn_ptr.is_null() {
@@ -680,6 +714,11 @@ mod unix_hook {
                 dpad_right: unsafe { btn_fn(gc, 14) } != 0,
             })
         } else if !js.is_null() {
+            let upd_ptr = unsafe { dlsym_default(b"SDL_JoystickUpdate\0") };
+            if !upd_ptr.is_null() {
+                let upd_fn: unsafe extern "C" fn() = unsafe { std::mem::transmute(upd_ptr) };
+                unsafe { upd_fn() };
+            }
             let axis_ptr = unsafe { dlsym_default(b"SDL_JoystickGetAxis\0") };
             let btn_ptr = unsafe { dlsym_default(b"SDL_JoystickGetButton\0") };
             let hat_ptr = unsafe { dlsym_default(b"SDL_JoystickGetHat\0") };
@@ -890,22 +929,33 @@ mod unix_hook {
         }
 
         // Synthesize edge-triggered keyboard keys for Menus / Name Input / Intro / Pause / Camera:
-        // - D-Pad & Left Stick navigate Up/Down/Left/Right (including Screamer 1's 3-slot letter wheel)
+        // - D-Pad always navigates Up/Down/Left/Right; Left Stick also navigates menus when
+        //   no race throttle/brake button or trigger is held and the stick is pushed along
+        //   a dominant cardinal axis (preventing accidental Up/Down keystrokes while steering)
         // - A (South) and Start emit Enter (confirm menu item / confirm driver name / start race)
         // - B (East) and Back/Select emit Esc (back out of menu / pause race)
         // - X (West) emits Backspace (delete character on Screamer 2/Rally name input)
         // - Y (North) emits Camera toggle ('M' in Screamer 1, 'C' in Screamer 2/Rally)
+        let pedals_idle =
+            !pad.a && !pad.x && pad.r2 < 2000 && pad.l2 < 2000 && (pad.ry as i32).abs() < 8000;
+        let lx_abs = (pad.lx as i32).abs();
+        let ly_abs = (pad.ly as i32).abs();
+        let stick_menu_up = pedals_idle && pad.ly < -22000 && lx_abs < 10000;
+        let stick_menu_down = pedals_idle && pad.ly > 22000 && lx_abs < 10000;
+        let stick_menu_left = pedals_idle && pad.lx < -22000 && ly_abs < 10000;
+        let stick_menu_right = pedals_idle && pad.lx > 22000 && ly_abs < 10000;
+
         let mut key_mask = 0usize;
-        if pad.dpad_up || pad.ly < -16384 {
+        if pad.dpad_up || stick_menu_up {
             key_mask |= KEY_BIT_UP;
         }
-        if pad.dpad_down || pad.ly > 16384 {
+        if pad.dpad_down || stick_menu_down {
             key_mask |= KEY_BIT_DOWN;
         }
-        if pad.dpad_left || pad.lx < -16384 {
+        if pad.dpad_left || stick_menu_left {
             key_mask |= KEY_BIT_LEFT;
         }
-        if pad.dpad_right || pad.lx > 16384 {
+        if pad.dpad_right || stick_menu_right {
             key_mask |= KEY_BIT_RIGHT;
         }
         if pad.a || pad.start {
@@ -1126,10 +1176,18 @@ mod tests {
         inject_race_controls_with_synth_mask(&mut data_obj, spec, &gp, SYNTH_KEY_BIT_UP);
         assert_eq!(read_i32_le(&data_obj, base), 2);
 
-        // When physical keyboard Up arrow is pressed (synth_key_mask = 0),
-        // record[0].enabled is restored to 1 so PollControls handles keyboard Up arrow natively.
-        inject_race_controls_with_synth_mask(&mut data_obj, spec, &gp, 0);
+        // When gamepad throttle is idle (0) and physical keyboard Up arrow is pressed
+        // (synth_key_mask = 0) in a clean 0/1 keyboard array, record[0].enabled is
+        // restored to 1 so PollControls handles keyboard Up arrow natively.
+        let gp_idle = GamepadRaceState::default();
+        inject_race_controls_with_synth_mask(&mut data_obj, spec, &gp_idle, 0);
         assert_eq!(read_i32_le(&data_obj, base), 1);
+
+        // When data_obj[2..90] contains ASCII string bytes (> 1, as in the real DOS/4GW
+        // Data Object), those bytes are never mistaken for held keyboard keys.
+        data_obj[2 + 72] = b'f';
+        inject_race_controls_with_synth_mask(&mut data_obj, spec, &gp_idle, 0);
+        assert_eq!(read_i32_le(&data_obj, base), 2);
     }
 
     #[test]
