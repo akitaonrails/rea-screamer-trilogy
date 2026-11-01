@@ -751,9 +751,10 @@ pub fn find_dosbox(explicit: Option<&Path>) -> Option<PathBuf> {
     find_dosbox_with_hint(explicit, None)
 }
 
-/// Locates the `dosbox-staging` (or `dosbox`) executable, checking `explicit`,
-/// `SCREAMER_DOSBOX`, relative `dosbox-staging/` folders next to `game_dir`,
-/// the launcher's own directory, and `PATH`.
+/// Locates the `dosbox` (or `dosbox-staging`) executable, checking `explicit`,
+/// `SCREAMER_DOSBOX`, the launcher's own directory (for the bundled `dosbox`
+/// built with `libscreamer_hooks.a`), relative `dosbox-staging/` folders next
+/// to `game_dir`, and `PATH`.
 pub fn find_dosbox_with_hint(explicit: Option<&Path>, game_dir: Option<&Path>) -> Option<PathBuf> {
     if let Some(p) = explicit
         && p.is_file()
@@ -764,6 +765,22 @@ pub fn find_dosbox_with_hint(explicit: Option<&Path>, game_dir: Option<&Path>) -
         let p = PathBuf::from(env_p);
         if p.is_file() {
             return Some(p);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        for cand in [
+            "dosbox",
+            "dosbox.exe",
+            "dosbox-staging",
+            "dosbox-staging/dosbox",
+            "dosbox-staging/dosbox.exe",
+        ] {
+            let p = dir.join(cand);
+            if p.is_file() {
+                return Some(p);
+            }
         }
     }
     if let Some(mut cur) = game_dir {
@@ -784,22 +801,6 @@ pub fn find_dosbox_with_hint(explicit: Option<&Path>, game_dir: Option<&Path>) -
                 cur = parent;
             } else {
                 break;
-            }
-        }
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        for cand in [
-            "dosbox-staging",
-            "dosbox",
-            "dosbox.exe",
-            "dosbox-staging/dosbox",
-            "dosbox-staging/dosbox.exe",
-        ] {
-            let p = dir.join(cand);
-            if p.is_file() {
-                return Some(p);
             }
         }
     }

@@ -281,26 +281,6 @@ fn run_controllers(_seconds: u32) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn locate_hooks_library() -> Option<PathBuf> {
-    if let Ok(env_p) = std::env::var("SCREAMER_HOOKS_LIB") {
-        let p = PathBuf::from(env_p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        for cand in ["libscreamer_hooks.so", "screamer_hooks.dll"] {
-            let p = dir.join(cand);
-            if p.is_file() {
-                return Some(p);
-            }
-        }
-    }
-    None
-}
-
 fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
     let game_dir = settings
         .game
@@ -322,7 +302,7 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
     let dosbox =
         runtime::find_dosbox_with_hint(settings.dosbox.as_deref(), Some(game_dir)).ok_or_else(
             || {
-                "Could not find dosbox-staging (or dosbox). Install dosbox-staging or pass --dosbox <path>."
+                "Could not find bundled dosbox (or dosbox-staging). Run ./scripts/build-dosbox.sh or pass --dosbox <path>."
                     .to_string()
             },
         )?;
@@ -334,7 +314,7 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
         .arg("-conf")
         .arg(&prepared.conf_path);
 
-    // Pass settings to libscreamer_hooks via environment variables.
+    // Pass settings to the statically linked screamer-hooks inside dosbox via environment variables.
     cmd.env("SCREAMER_GAME", disc.game.slug())
         .env("SCREAMER_EXE", &prepared.selected_exe)
         .env(
@@ -354,19 +334,6 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
             "SCREAMER_BUTTONS",
             config::buttons_value(&settings.button_map()),
         );
-
-    if let Some(hooks_lib) = locate_hooks_library() {
-        #[cfg(target_os = "linux")]
-        {
-            let preload = match std::env::var("LD_PRELOAD") {
-                Ok(existing) if !existing.is_empty() => {
-                    format!("{}:{existing}", hooks_lib.display())
-                }
-                _ => hooks_lib.display().to_string(),
-            };
-            cmd.env("LD_PRELOAD", preload);
-        }
-    }
 
     let status = cmd
         .status()

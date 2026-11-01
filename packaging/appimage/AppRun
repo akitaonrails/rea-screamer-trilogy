@@ -1,12 +1,14 @@
 #!/bin/sh
-# The AppImage entry: bundled dosbox-staging first on the PATH, then
-# screamer-play (the settings window, then the game in gamescope when installed).
+# The AppImage entry: bundled dosbox first on the PATH, bundled shared libs in
+# LD_LIBRARY_PATH, then screamer-play (the settings window, then the game).
 HERE=$(dirname "$(readlink -f "$0")")
-export PATH="$HERE/usr/lib/dosbox-staging:$HERE/usr/lib/screamer:$PATH"
+export PATH="$HERE/usr/lib/screamer:$PATH"
+if [ -d "$HERE/usr/lib/screamer/lib" ]; then
+  export LD_LIBRARY_PATH="$HERE/usr/lib/screamer/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 export SCREAMER_LAUNCHER="$HERE/usr/lib/screamer/ScreamerLauncher"
-export SCREAMER_HOOKS_LIB="$HERE/usr/lib/screamer/libscreamer_hooks.so"
-if [ -x "$HERE/usr/lib/dosbox-staging/dosbox" ]; then
-  export SCREAMER_DOSBOX="$HERE/usr/lib/dosbox-staging/dosbox"
+if [ -x "$HERE/usr/lib/screamer/dosbox" ]; then
+  export SCREAMER_DOSBOX="$HERE/usr/lib/screamer/dosbox"
 fi
 export SCREAMER_WAIT=1
 exec "$HERE/usr/lib/screamer/screamer-play" "$@"

@@ -1,0 +1,155 @@
+diff --git a/meson.build b/meson.build
+index 565f06e..a696b27 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1267,6 +1267,16 @@ subdir('src/misc')
+ subdir('src/libs/zmbv')
+ subdir('src/libs/tal-chorus')
+ 
++screamer_hooks_dep = cxx.find_library(
++    'screamer_hooks',
++    dirs: [
++        meson.project_source_root() / '../../target/release',
++        meson.project_source_root() / '../../target/x86_64-pc-windows-gnu/release',
++    ],
++    static: true,
++    required: true,
++)
++
+ # A list of DOSBox's bundled 3rd party dependencies,
+ # as defined by the above subdir includes. Used for
+ # both the executable and libdosbox (unit testing).
+@@ -1281,7 +1291,15 @@ third_party_deps = [
+     tracy_dep,
+     libwhereami_dep,
+     libtalchorus_dep,
++    screamer_hooks_dep,
+ ]
++if host_machine.system() in ['windows', 'cygwin']
++    third_party_deps += [
++        cxx.find_library('ntdll', required: true),
++        cxx.find_library('userenv', required: true),
++        cxx.find_library('bcrypt', required: true),
++    ]
++endif
+ 
+ if conf_data.get('C_MANYMOUSE') != 0
+     third_party_deps += manymouse_dep
+diff --git a/src/gui/sdlmain.cpp b/src/gui/sdlmain.cpp
+index 04b7641..7599d65 100644
+--- a/src/gui/sdlmain.cpp
++++ b/src/gui/sdlmain.cpp
+@@ -61,6 +61,7 @@
+ #include "keyboard.h"
+ #include "mapper.h"
+ #include "math_utils.h"
++#include "mem.h"
+ #include "mixer.h"
+ #include "mouse.h"
+ #include "pacer.h"
+@@ -3813,6 +3814,30 @@ static void handle_user_event(const SDL_Event& event)
+ 	}
+ }
+ 
++struct ScreamerHostApi {
++	uint8_t* mem_base;
++	size_t mem_bytes;
++	void (*keyboard_add_key)(uint32_t key, bool pressed);
++	void (*joystick_enable)(uint8_t which, bool enabled);
++	void (*joystick_move_x)(uint8_t which, int16_t val);
++	void (*joystick_move_y)(uint8_t which, int16_t val);
++	void (*joystick_button)(uint8_t which, int button, bool pressed);
++	int (*sdl_num_joysticks)();
++	void* (*sdl_gc_open)(int idx);
++	int (*sdl_gc_get_attached)(void* gc);
++	int16_t (*sdl_gc_get_axis)(void* gc, int axis);
++	uint8_t (*sdl_gc_get_button)(void* gc, int btn);
++	int (*sdl_gc_rumble)(void* gc, uint16_t low, uint16_t high, uint32_t ms);
++	void* (*sdl_joy_open)(int idx);
++	int (*sdl_joy_get_attached)(void* js);
++	int16_t (*sdl_joy_get_axis)(void* js, int axis);
++	uint8_t (*sdl_joy_get_button)(void* js, int btn);
++	uint8_t (*sdl_joy_get_hat)(void* js, int hat);
++	int (*sdl_joy_rumble)(void* js, uint16_t low, uint16_t high, uint32_t ms);
++};
++
++extern "C" void screamer_hooks_on_tick(const ScreamerHostApi* api, uint64_t now_ns);
++
+ bool GFX_Events()
+ {
+ #if defined(MACOSX)
+@@ -4181,6 +4206,74 @@ bool GFX_Events()
+ 		default: MAPPER_CheckEvent(&event);
+ 		}
+ 	}
++
++	if (sdl.window) {
++		static bool joy_subsys_inited = false;
++		if (!joy_subsys_inited) {
++			joy_subsys_inited = true;
++			SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
++		}
++
++		ScreamerHostApi api = {
++		        MemBase,
++		        static_cast<size_t>(MEM_TotalPages()) * 4096u,
++		        [](uint32_t k, bool p) {
++			        KEYBOARD_AddKey(static_cast<KBD_KEYS>(k), p);
++		        },
++		        [](uint8_t w, bool e) { JOYSTICK_Enable(w, e); },
++		        [](uint8_t w, int16_t v) { JOYSTICK_Move_X(w, v); },
++		        [](uint8_t w, int16_t v) { JOYSTICK_Move_Y(w, v); },
++		        [](uint8_t w, int b, bool p) { JOYSTICK_Button(w, b, p); },
++		        []() -> int { return SDL_NumJoysticks(); },
++		        [](int idx) -> void* { return SDL_GameControllerOpen(idx); },
++		        [](void* gc) -> int {
++			        return SDL_GameControllerGetAttached(
++			                       static_cast<SDL_GameController*>(gc))
++			                     ? 1
++			                     : 0;
++		        },
++		        [](void* gc, int axis) -> int16_t {
++			        return SDL_GameControllerGetAxis(
++			                static_cast<SDL_GameController*>(gc),
++			                static_cast<SDL_GameControllerAxis>(axis));
++		        },
++		        [](void* gc, int btn) -> uint8_t {
++			        return SDL_GameControllerGetButton(
++			                static_cast<SDL_GameController*>(gc),
++			                static_cast<SDL_GameControllerButton>(btn));
++		        },
++		        [](void* gc, uint16_t lo, uint16_t hi, uint32_t ms) -> int {
++			        return SDL_GameControllerRumble(
++			                static_cast<SDL_GameController*>(gc), lo, hi, ms);
++		        },
++		        [](int idx) -> void* { return SDL_JoystickOpen(idx); },
++		        [](void* js) -> int {
++			        return SDL_JoystickGetAttached(static_cast<SDL_Joystick*>(js))
++			                     ? 1
++			                     : 0;
++		        },
++		        [](void* js, int axis) -> int16_t {
++			        return SDL_JoystickGetAxis(static_cast<SDL_Joystick*>(js),
++			                                   axis);
++		        },
++		        [](void* js, int btn) -> uint8_t {
++			        return SDL_JoystickGetButton(static_cast<SDL_Joystick*>(js),
++			                                     btn);
++		        },
++		        [](void* js, int hat) -> uint8_t {
++			        return SDL_JoystickGetHat(static_cast<SDL_Joystick*>(js),
++			                                  hat);
++		        },
++		        [](void* js, uint16_t lo, uint16_t hi, uint32_t ms) -> int {
++			        return SDL_JoystickRumble(static_cast<SDL_Joystick*>(js),
++			                                  lo,
++			                                  hi,
++			                                  ms);
++		        },
++		};
++		screamer_hooks_on_tick(&api, static_cast<uint64_t>(GetTicksUs()) * 1000ULL);
++	}
++
+ 	return !shutdown_requested;
+ }
+ 

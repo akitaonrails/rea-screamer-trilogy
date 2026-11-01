@@ -66,10 +66,9 @@ This document records notable observations from running the original 1995–1997
     - In the Watcom `LE` object table, the 130-byte (`0x82`-byte) keyboard scancode state array lives in a separate preceding BSS `LE` object (`Object 2` in Screamer 1, `Object 5` in 3dfx binaries, `Object 3` in SVGA binaries), whereas `data_obj[0..130]` contains initialized ASCII strings (for example, `data_obj[2 + 72] == 'f'` = `102 != 0`).
     - Checking `data_obj[2 + scancode] != 0` without verifying `has_clean_kbd_array` (`data_obj[2..90].iter().all(|&b| b <= 1)`) mistakes the ASCII byte `'f'` at `data_obj[74]` for a held physical Up Arrow key (`scancode 72`), causing `inject_single_control_block` to reset `record[0].enabled = 1` and cut out gamepad `A`/`R2` throttle!
     - `inject_single_control_block` therefore checks `gp.throttle == 0 && is_key_down(...)` and requires `has_clean_kbd_array` (`data_obj[2..90]` all `0` or `1`) before yielding to keyboard scancodes.
-  - **CRITICAL — `clock_gettime` Thread Safety & Page-Aligned Scanning**:
-    - In `dosbox-staging`, `clock_gettime` is invoked from background threads (mixer, OPL, Voodoo threads) as well as re-entrantly from the main thread during `SDL_PollEvent`.
-    - Never call `SDL_GameControllerUpdate()` or `SDL_JoystickUpdate()` inside `clock_gettime` (`dosbox-staging`'s main thread already pumps `SDL_PollEvent`, and calling `SDL_JoystickUpdate()` from `clock_gettime` deadlocks SDL2's non-reentrant joystick mutex on window creation).
-    - Always guard `poll_gamepad_and_inject` with an atomic non-blocking `IN_POLL` try-lock, step by `4096`-byte pages in `locate_binary_data_object`, and throttle uncached RAM scans to at most once every `100 ms` (`LAST_SCAN_ATTEMPT_NS`) so `dosbox-staging` is never CPU-starved while DOS/4GW is booting.
+  - **CRITICAL — Source-Level Hook in `vendor/dosbox-staging` (`GFX_Events()`) & Page-Aligned Scanning**:
+    - Instead of `LD_PRELOAD` + `dlsym` + `clock_gettime` interception (which ran across background mixer/OPL/Voodoo threads and could deadlock SDL's non-reentrant joystick mutex if `SDL_JoystickUpdate` was called), `dosbox-staging` (`v0.82.2`) is included as a git submodule at `vendor/dosbox-staging` and patched in `src/gui/sdlmain.cpp` (`patches/dosbox-staging-screamer-hooks.patch`) to statically link `libscreamer_hooks.a` and invoke `screamer_hooks_on_tick(&api, now_ns)` on the main thread at the end of `GFX_Events()` right after `while (SDL_PollEvent(&event))`.
+    - Always step by `4096`-byte pages in `locate_binary_data_object` and throttle uncached RAM scans to at most once every `100 ms` (`LAST_SCAN_ATTEMPT_NS`) so `dosbox-staging` is never CPU-starved while DOS/4GW is booting.
 
 ---
 

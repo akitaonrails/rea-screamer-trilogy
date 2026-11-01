@@ -9,8 +9,7 @@
 #
 # Optional environment:
 #   SCREAMER_LAUNCHER   path to ScreamerLauncher binary
-#   SCREAMER_DOSBOX     path to dosbox-staging binary
-#   SCREAMER_HOOKS_LIB  path to libscreamer_hooks.so
+#   SCREAMER_DOSBOX     path to bundled dosbox binary
 #   SCREAMER_WAIT       set: wait for the game to end (used by AppImage)
 set -u
 HERE=$(dirname "$(readlink -f "$0")")
@@ -22,17 +21,6 @@ if [ -z "$LAUNCHER" ]; then
     "$HERE/../target/release/ScreamerLauncher" \
     "$HERE/../target/debug/ScreamerLauncher"; do
     [ -x "$p" ] && LAUNCHER=$(readlink -f "$p") && break
-  done
-fi
-
-HOOKS=${SCREAMER_HOOKS_LIB:-}
-if [ -z "$HOOKS" ]; then
-  for p in \
-    "$HERE/libscreamer_hooks.so" \
-    "$HERE/../libscreamer_hooks.so" \
-    "$HERE/../target/release/libscreamer_hooks.so" \
-    "$HERE/../target/debug/libscreamer_hooks.so"; do
-    [ -f "$p" ] && HOOKS=$(readlink -f "$p") && break
   done
 fi
 
@@ -90,9 +78,9 @@ launch() {
   if [ -n "${SCREAMER_LAUNCH_CMD:-}" ]; then
     "$SCREAMER_LAUNCH_CMD" "$@"
   elif [ -n "${SCREAMER_WAIT:-}" ]; then
-    env SCREAMER_HOOKS_LIB="$HOOKS" $GPU "$@" > "$STATE/play.log" 2>&1
+    env $GPU "$@" > "$STATE/play.log" 2>&1
   else
-    setsid env SCREAMER_HOOKS_LIB="$HOOKS" $GPU "$@" > "$STATE/play.log" 2>&1 < /dev/null &
+    setsid env $GPU "$@" > "$STATE/play.log" 2>&1 < /dev/null &
     echo $! > "$LOCK"
   fi
 }

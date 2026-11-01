@@ -294,7 +294,13 @@ fn parse_resolution(v: &str) -> Option<(u32, u32)> {
     let (w, h) = lower.split_once('x')?;
     let w: u32 = w.trim().parse().ok()?;
     let h: u32 = h.trim().parse().ok()?;
-    ((320..=7680).contains(&w) && (200..=4320).contains(&h)).then_some((w, h))
+    if !(320..=7680).contains(&w) || !(200..=4320).contains(&h) {
+        return None;
+    }
+    if w > 1920 || h > 1080 {
+        return Some(FULLSCREEN);
+    }
+    Some((w, h))
 }
 
 fn parse_percent(v: &str) -> Option<u32> {
@@ -614,13 +620,17 @@ mod tests {
     #[test]
     fn parses_file_and_args() {
         let (s, warn) = Settings::parse_file(
-            "game = /games/screamer\nrenderer = 3dfx\nresolution = 3840x2160\nwidescreen = true\nfps_limit = 60\n",
+            "game = /games/screamer\nrenderer = 3dfx\nresolution = 1920x1080\nwidescreen = true\nfps_limit = 60\n",
         );
         assert!(warn.is_empty());
         assert_eq!(s.renderer_choice(), RendererChoice::Voodoo);
-        assert_eq!(s.resolution, Some((3840, 2160)));
+        assert_eq!(s.resolution, Some((1920, 1080)));
         assert_eq!(s.widescreen, Some(true));
         assert_eq!(s.fps_limit, Some(60));
+
+        // Legacy 4K/1440p values map cleanly to FULLSCREEN ("desktop")
+        let (s_legacy, _) = Settings::parse_file("resolution = 3840x2160\n");
+        assert_eq!(s_legacy.resolution, Some(FULLSCREEN));
     }
 }
 

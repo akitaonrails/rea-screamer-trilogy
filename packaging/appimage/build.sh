@@ -1,6 +1,6 @@
 #!/bin/sh
-# Builds the Linux AppImage: ScreamerLauncher, libscreamer_hooks.so,
-# screamer-play, and portable dosbox-staging v0.82.2.
+# Builds the Linux AppImage: ScreamerLauncher, bundled dosbox (compiled from
+# vendor/dosbox-staging with static libscreamer_hooks.a), and screamer-play.
 #
 #   packaging/appimage/build.sh <package-folder> <output-folder>
 set -eu
@@ -8,9 +8,6 @@ PKG=$(readlink -f "$1"); OUT=$(readlink -f "$2")
 HERE=$(dirname "$(readlink -f "$0")")
 CACHE=${SCREAMER_CACHE:-$HOME/.cache/screamer-appimage}
 
-DOSBOX_VERSION=0.82.2
-DOSBOX_URL=https://github.com/dosbox-staging/dosbox-staging/releases/download/v$DOSBOX_VERSION/dosbox-staging-linux-x86_64-v$DOSBOX_VERSION.tar.xz
-DOSBOX_SHA=c1abef833a44abce00e3d0f7bb9faeddc7fb66294b4ea4bcfe1b1c5a46ec6e36
 TOOL_URL=https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
 TOOL_SHA=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
 
@@ -23,23 +20,36 @@ fetch() { # url sha file
   echo "$2  $CACHE/$3" | sha256sum -c --quiet || { echo "checksum mismatch: $3"; rm -f "$CACHE/$3"; exit 1; }
 }
 
-fetch "$DOSBOX_URL" "$DOSBOX_SHA" dosbox-staging.tar.xz
 fetch "$TOOL_URL" "$TOOL_SHA" appimagetool
 chmod +x "$CACHE/appimagetool"
 
 APPDIR=$(mktemp -d)/ScreamerLauncher.AppDir
 trap 'rm -rf "$(dirname "$APPDIR")"' EXIT
-mkdir -p "$APPDIR/usr/lib/screamer" "$APPDIR/usr/lib/dosbox-staging"
-tar -xJf "$CACHE/dosbox-staging.tar.xz" -C "$APPDIR/usr/lib/dosbox-staging" --strip-components=1
+mkdir -p "$APPDIR/usr/lib/screamer/lib"
 
-cp "$PKG/ScreamerLauncher" "$PKG/libscreamer_hooks.so" "$PKG/linux/screamer-play" "$APPDIR/usr/lib/screamer/"
+cp "$PKG/ScreamerLauncher" "$PKG/dosbox" "$PKG/linux/screamer-play" "$APPDIR/usr/lib/screamer/"
+if [ -d "$PKG/resources" ]; then
+  cp -r "$PKG/resources" "$APPDIR/usr/lib/screamer/resources"
+fi
+
+# Bundle non-base shared libraries needed by dosbox (SDL2, opusfile, speexdsp, libpng, ogg, opus)
+# while leaving host glibc, libGL/mesa/nvidia, X11/Wayland, and ALSA/PipeWire/PulseAudio to the host OS.
+for libpath in $(ldd "$PKG/dosbox" | awk '/=> \// {print $3}'); do
+  libname=$(basename "$libpath")
+  case "$libname" in
+    libSDL2*|libopus*|libogg*|libspeexdsp*|libpng*|libz-ng*)
+      cp -L "$libpath" "$APPDIR/usr/lib/screamer/lib/$libname"
+      ;;
+  esac
+done
+
 cp "$HERE/AppRun" "$APPDIR/AppRun"
 cp "$HERE/screamer-launcher.desktop" "$APPDIR/"
 if [ -f "$HERE/screamer-launcher.png" ]; then
   cp "$HERE/screamer-launcher.png" "$APPDIR/"
 fi
-chmod +x "$APPDIR/AppRun" "$APPDIR/usr/lib/screamer/screamer-play" "$APPDIR/usr/lib/screamer/ScreamerLauncher"
+chmod +x "$APPDIR/AppRun" "$APPDIR/usr/lib/screamer/screamer-play" "$APPDIR/usr/lib/screamer/ScreamerLauncher" "$APPDIR/usr/lib/screamer/dosbox"
 mkdir -p "$OUT"
 ARCH=x86_64 "$CACHE/appimagetool" --appimage-extract-and-run --no-appstream \
   "$APPDIR" "$OUT/ScreamerLauncher-x86_64.AppImage"
-echo "built $OUT/ScreamerLauncher-x86_64.AppImage (dosbox-staging $DOSBOX_VERSION)"
+echo "built $OUT/ScreamerLauncher-x86_64.AppImage"

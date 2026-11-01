@@ -433,8 +433,7 @@ impl eframe::App for Window<'_> {
                 self.form.which = first;
             }
             let has_glide = self.has_dos_glide_for_current();
-            self.form
-                .set_which(self.form.which, has_glide, self.screen);
+            self.form.set_which(self.form.which, has_glide, self.screen);
         }
     }
 }
@@ -676,8 +675,7 @@ impl Window<'_> {
                 ) {
                     self.form.set_look(look, self.screen);
                     let has_glide = self.has_dos_glide_for_current();
-                    self.form
-                        .set_which(self.form.which, has_glide, self.screen);
+                    self.form.set_which(self.form.which, has_glide, self.screen);
                     if look == Look::Custom {
                         self.tab = Tab::Picture;
                     }
@@ -793,15 +791,13 @@ impl Window<'_> {
                 self.controllers.join(", ")
             )
         };
-        ui.label(
-            egui::RichText::new(pad_status)
-                .font(font(13.0))
-                .color(if self.controllers.is_empty() {
-                    MUTED
-                } else {
-                    GOLD
-                }),
-        );
+        ui.label(egui::RichText::new(pad_status).font(font(13.0)).color(
+            if self.controllers.is_empty() {
+                MUTED
+            } else {
+                GOLD
+            },
+        ));
 
         ui.add_space(10.0);
         ui.label(
@@ -884,12 +880,9 @@ impl Window<'_> {
             "Settings are saved when you press Play ({}).",
             self.form.which.display_name()
         );
-        let galley = ui.painter().layout(
-            hint,
-            font(13.0),
-            MUTED,
-            button.left() - rect.left() - 20.0,
-        );
+        let galley =
+            ui.painter()
+                .layout(hint, font(13.0), MUTED, button.left() - rect.left() - 20.0);
         let y = rect.center().y - galley.size().y / 2.0;
         ui.painter().galley(pos2(rect.left(), y), galley, MUTED);
 

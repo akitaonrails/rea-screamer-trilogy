@@ -1,17 +1,20 @@
-//! `libscreamer_hooks`: Runtime `dosbox-staging` bridge for Screamer (1995),
+//! `libscreamer_hooks`: Source-level `dosbox-staging` hook library for Screamer (1995),
 //! Screamer 2 (1996), and Screamer Rally (1997).
 //!
-//! Resolves `MemBase`, `KEYBOARD_AddKey`, `JOYSTICK_*`, `SDL_GameController*`,
-//! and `SDL_Joystick*` symbols from the host `dosbox-staging` process to provide:
+//! Statically linked directly into `dosbox-staging` (`vendor/dosbox-staging`) and
+//! invoked on the main thread at the end of `GFX_Events()` via [`screamer_hooks_on_tick`]
+//! with a explicit [`ScreamerHostApi`] table (`MemBase`, `MEM_TotalPages()`,
+//! `KEYBOARD_AddKey`, `JOYSTICK_*`, `SDL_GameController*`, and `SDL_Joystick*`):
+//! - Deterministic single-threaded execution after `SDL_PollEvent` with zero
+//!   `LD_PRELOAD`, `dlsym`, or `clock_gettime` interception
 //! - Automatic support for both SDL GameController DB controllers and unmapped
 //!   Linux/Windows XInput joysticks (e.g., 8BitDo Ultimate 2 Wireless)
 //! - Direct guest RAM (`MemBase`) injection into the Screamer Data Object
 //!   (`record[0..5]` + `normalized_controls[0..5]`), bypassing DOS port `0x201`
 //!   timing loops for true proportional `-1023..+1023` steering and `0..1023`
 //!   independent L2/R2 analog triggers
-//! - Automatic in-race vs menu heartbeat detection via `normalized_controls[3]`
-//!   so D-Pad, Left Stick, A/B, and Start/Select navigate all game menus and
-//!   skip intros out of the box without manual mapper setup
+//! - Automatic menu/intro/name-input navigation via edge-triggered `KEYBOARD_AddKey`
+//!   while neutralizing `MenuPollInput`'s secondary `PollControls` pass
 //! - Simultaneous native keyboard + gamepad operation
 //! - Telemetry/load-driven controller rumble (`SDL_GameControllerRumble` /
 //!   `SDL_JoystickRumble`)
@@ -445,52 +448,52 @@ pub fn compute_rumble(impact_delta: u32, skid_level: u32, rumble_pct: u32) -> (u
     (low, high)
 }
 
-#[cfg(unix)]
-mod unix_hook {
+pub use host_hook::{ScreamerHostApi, screamer_hooks_on_tick};
+
+pub mod host_hook {
     use super::*;
-    use std::ffi::{CStr, c_char, c_int, c_long, c_short, c_uint, c_ushort, c_void};
+    use std::ffi::{c_int, c_short, c_uint, c_ushort, c_void};
 
+    /// Explicit C ABI host callback and guest memory table passed by `dosbox-staging`
+    /// on the main thread at the end of `GFX_Events()`.
     #[repr(C)]
-    pub struct Timespec {
-        pub tv_sec: c_long,
-        pub tv_nsec: c_long,
+    pub struct ScreamerHostApi {
+        pub mem_base: *mut u8,
+        pub mem_bytes: usize,
+        pub keyboard_add_key: Option<unsafe extern "C" fn(key: u32, pressed: bool)>,
+        pub joystick_enable: Option<unsafe extern "C" fn(which: u8, enabled: bool)>,
+        pub joystick_move_x: Option<unsafe extern "C" fn(which: u8, val: i16)>,
+        pub joystick_move_y: Option<unsafe extern "C" fn(which: u8, val: i16)>,
+        pub joystick_button: Option<unsafe extern "C" fn(which: u8, button: c_int, pressed: bool)>,
+        pub sdl_num_joysticks: Option<unsafe extern "C" fn() -> c_int>,
+        pub sdl_gc_open: Option<unsafe extern "C" fn(idx: c_int) -> *mut c_void>,
+        pub sdl_gc_get_attached: Option<unsafe extern "C" fn(gc: *mut c_void) -> c_int>,
+        pub sdl_gc_get_axis: Option<unsafe extern "C" fn(gc: *mut c_void, axis: c_int) -> c_short>,
+        pub sdl_gc_get_button: Option<unsafe extern "C" fn(gc: *mut c_void, btn: c_int) -> u8>,
+        pub sdl_gc_rumble: Option<
+            unsafe extern "C" fn(
+                gc: *mut c_void,
+                low: c_ushort,
+                high: c_ushort,
+                ms: c_uint,
+            ) -> c_int,
+        >,
+        pub sdl_joy_open: Option<unsafe extern "C" fn(idx: c_int) -> *mut c_void>,
+        pub sdl_joy_get_attached: Option<unsafe extern "C" fn(js: *mut c_void) -> c_int>,
+        pub sdl_joy_get_axis: Option<unsafe extern "C" fn(js: *mut c_void, axis: c_int) -> c_short>,
+        pub sdl_joy_get_button: Option<unsafe extern "C" fn(js: *mut c_void, btn: c_int) -> u8>,
+        pub sdl_joy_get_hat: Option<unsafe extern "C" fn(js: *mut c_void, hat: c_int) -> u8>,
+        pub sdl_joy_rumble: Option<
+            unsafe extern "C" fn(
+                js: *mut c_void,
+                low: c_ushort,
+                high: c_ushort,
+                ms: c_uint,
+            ) -> c_int,
+        >,
     }
-
-    const RTLD_DEFAULT: *mut c_void = std::ptr::null_mut();
-    const RTLD_NEXT: *mut c_void = (-1isize) as *mut c_void;
-
-    /// Size of guest DOS RAM allocated by `memsize = 31` (`31 MiB`).
-    const GUEST_MEM_SCAN_BYTES: usize = 31 * 1024 * 1024;
-
-    unsafe extern "C" {
-        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
-    }
-
-    type ClockGettimeFn = unsafe extern "C" fn(c_int, *mut Timespec) -> c_int;
-    type SdlSwapWindowFn = unsafe extern "C" fn(*mut c_void);
-    type SdlWasInitFn = unsafe extern "C" fn(c_uint) -> c_uint;
-    type SdlInitSubSystemFn = unsafe extern "C" fn(c_uint) -> c_int;
-    type SdlNumJoysticksFn = unsafe extern "C" fn() -> c_int;
-    type SdlGameControllerOpenFn = unsafe extern "C" fn(c_int) -> *mut c_void;
-    type SdlGameControllerGetAttachedFn = unsafe extern "C" fn(*mut c_void) -> c_int;
-    type SdlGameControllerGetAxisFn = unsafe extern "C" fn(*mut c_void, c_int) -> c_short;
-    type SdlGameControllerGetButtonFn = unsafe extern "C" fn(*mut c_void, c_int) -> u8;
-    type SdlGameControllerRumbleFn =
-        unsafe extern "C" fn(*mut c_void, c_ushort, c_ushort, c_uint) -> c_int;
-    type SdlJoystickOpenFn = unsafe extern "C" fn(c_int) -> *mut c_void;
-    type SdlJoystickGetAttachedFn = unsafe extern "C" fn(*mut c_void) -> c_int;
-    type SdlJoystickGetAxisFn = unsafe extern "C" fn(*mut c_void, c_int) -> c_short;
-    type SdlJoystickGetButtonFn = unsafe extern "C" fn(*mut c_void, c_int) -> u8;
-    type SdlJoystickGetHatFn = unsafe extern "C" fn(*mut c_void, c_int) -> u8;
-    type SdlJoystickRumbleFn =
-        unsafe extern "C" fn(*mut c_void, c_ushort, c_ushort, c_uint) -> c_int;
-    type JoystickEnableFn = unsafe extern "C" fn(u8, bool);
-    type JoystickMoveFn = unsafe extern "C" fn(u8, i16);
-    type JoystickButtonFn = unsafe extern "C" fn(u8, c_int, bool);
-    type KeyboardAddKeyFn = unsafe extern "C" fn(u32, bool);
 
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
-    static SUBSYSTEM_INIT_DONE: AtomicBool = AtomicBool::new(false);
     static ENABLED: AtomicBool = AtomicBool::new(true);
     static IS_SCREAMER_1: AtomicBool = AtomicBool::new(false);
     static DEADZONE_PCT: AtomicUsize = AtomicUsize::new(0);
@@ -537,20 +540,6 @@ mod unix_hook {
     const KEY_BIT_ESC: usize = SYNTH_KEY_BIT_ESC;
     const KEY_BIT_CAMERA: usize = SYNTH_KEY_BIT_CAMERA;
     const KEY_BIT_BACKSPACE: usize = SYNTH_KEY_BIT_BACKSPACE;
-
-    unsafe fn dlsym_default(name: &[u8]) -> *mut c_void {
-        let Ok(cstr) = CStr::from_bytes_with_nul(name) else {
-            return std::ptr::null_mut();
-        };
-        unsafe { dlsym(RTLD_DEFAULT, cstr.as_ptr() as *const c_char) }
-    }
-
-    unsafe fn dlsym_next(name: &[u8]) -> *mut c_void {
-        let Ok(cstr) = CStr::from_bytes_with_nul(name) else {
-            return std::ptr::null_mut();
-        };
-        unsafe { dlsym(RTLD_NEXT, cstr.as_ptr() as *const c_char) }
-    }
 
     fn init_once() {
         if INITIALIZED.swap(true, Ordering::SeqCst) {
@@ -633,51 +622,44 @@ mod unix_hook {
         }
     }
 
-    unsafe fn read_controller_or_joystick(now_ns: u64) -> Option<RawPadState> {
+    unsafe fn read_controller_or_joystick(
+        api: &ScreamerHostApi,
+        now_ns: u64,
+    ) -> Option<RawPadState> {
         let mut gc = CONTROLLER_PTR.load(Ordering::Relaxed) as *mut c_void;
         let mut js = JOYSTICK_PTR.load(Ordering::Relaxed) as *mut c_void;
 
         // Verify existing handle is still attached
-        if !gc.is_null() {
-            let att_ptr = unsafe { dlsym_default(b"SDL_GameControllerGetAttached\0") };
-            if !att_ptr.is_null() {
-                let att_fn: SdlGameControllerGetAttachedFn = unsafe { std::mem::transmute(att_ptr) };
-                if unsafe { att_fn(gc) } == 0 {
-                    CONTROLLER_PTR.store(0, Ordering::Relaxed);
-                    gc = std::ptr::null_mut();
-                }
-            }
+        if !gc.is_null()
+            && let Some(att_fn) = api.sdl_gc_get_attached
+            && unsafe { att_fn(gc) } == 0
+        {
+            CONTROLLER_PTR.store(0, Ordering::Relaxed);
+            gc = std::ptr::null_mut();
         }
-        if !js.is_null() {
-            let att_ptr = unsafe { dlsym_default(b"SDL_JoystickGetAttached\0") };
-            if !att_ptr.is_null() {
-                let att_fn: SdlJoystickGetAttachedFn = unsafe { std::mem::transmute(att_ptr) };
-                if unsafe { att_fn(js) } == 0 {
-                    JOYSTICK_PTR.store(0, Ordering::Relaxed);
-                    js = std::ptr::null_mut();
-                }
-            }
+        if !js.is_null()
+            && let Some(att_fn) = api.sdl_joy_get_attached
+            && unsafe { att_fn(js) } == 0
+        {
+            JOYSTICK_PTR.store(0, Ordering::Relaxed);
+            js = std::ptr::null_mut();
         }
 
         // Try opening a controller or joystick at most once every 250 ms if none is open
         if gc.is_null() && js.is_null() {
             let last_try = LAST_OPEN_ATTEMPT_NS.load(Ordering::Relaxed);
-            if now_ns != 0 && now_ns.wrapping_sub(last_try) < 250_000_000 {
+            if now_ns != 0 && last_try != 0 && now_ns.wrapping_sub(last_try) < 250_000_000 {
                 return None;
             }
-            LAST_OPEN_ATTEMPT_NS.store(now_ns, Ordering::Relaxed);
+            LAST_OPEN_ATTEMPT_NS.store(now_ns.max(1), Ordering::Relaxed);
 
-            let num_ptr = unsafe { dlsym_default(b"SDL_NumJoysticks\0") };
-            let count = if !num_ptr.is_null() {
-                let num_fn: SdlNumJoysticksFn = unsafe { std::mem::transmute(num_ptr) };
+            let count = if let Some(num_fn) = api.sdl_num_joysticks {
                 unsafe { num_fn() }.max(1)
             } else {
                 1
             };
 
-            let gc_open_ptr = unsafe { dlsym_default(b"SDL_GameControllerOpen\0") };
-            if !gc_open_ptr.is_null() {
-                let gc_open: SdlGameControllerOpenFn = unsafe { std::mem::transmute(gc_open_ptr) };
+            if let Some(gc_open) = api.sdl_gc_open {
                 for idx in 0..count {
                     let h = unsafe { gc_open(idx) };
                     if !h.is_null() {
@@ -688,40 +670,32 @@ mod unix_hook {
                 }
             }
 
-            if gc.is_null() {
-                let js_open_ptr = unsafe { dlsym_default(b"SDL_JoystickOpen\0") };
-                if !js_open_ptr.is_null() {
-                    let js_open: SdlJoystickOpenFn = unsafe { std::mem::transmute(js_open_ptr) };
-                    for idx in 0..count {
-                        let h = unsafe { js_open(idx) };
-                        if !h.is_null() {
-                            js = h;
-                            SEEN_L2_NONZERO.store(false, Ordering::Relaxed);
-                            SEEN_R2_NONZERO.store(false, Ordering::Relaxed);
-                            JOYSTICK_PTR.store(js as usize, Ordering::Relaxed);
-                            break;
-                        }
+            if gc.is_null()
+                && let Some(js_open) = api.sdl_joy_open
+            {
+                for idx in 0..count {
+                    let h = unsafe { js_open(idx) };
+                    if !h.is_null() {
+                        js = h;
+                        SEEN_L2_NONZERO.store(false, Ordering::Relaxed);
+                        SEEN_R2_NONZERO.store(false, Ordering::Relaxed);
+                        JOYSTICK_PTR.store(js as usize, Ordering::Relaxed);
+                        break;
                     }
                 }
             }
 
-            if !gc.is_null() || !js.is_null() {
-                let joy_en_ptr = unsafe { dlsym_default(b"_Z15JOYSTICK_Enablehb\0") };
-                if !joy_en_ptr.is_null() {
-                    let en_fn: JoystickEnableFn = unsafe { std::mem::transmute(joy_en_ptr) };
-                    unsafe { en_fn(0, true) };
-                }
+            if (!gc.is_null() || !js.is_null())
+                && let Some(en_fn) = api.joystick_enable
+            {
+                unsafe { en_fn(0, true) };
             }
         }
 
         if !gc.is_null() {
-            let axis_ptr = unsafe { dlsym_default(b"SDL_GameControllerGetAxis\0") };
-            let btn_ptr = unsafe { dlsym_default(b"SDL_GameControllerGetButton\0") };
-            if axis_ptr.is_null() || btn_ptr.is_null() {
+            let (Some(axis_fn), Some(btn_fn)) = (api.sdl_gc_get_axis, api.sdl_gc_get_button) else {
                 return None;
-            }
-            let axis_fn: SdlGameControllerGetAxisFn = unsafe { std::mem::transmute(axis_ptr) };
-            let btn_fn: SdlGameControllerGetButtonFn = unsafe { std::mem::transmute(btn_ptr) };
+            };
             Some(RawPadState {
                 lx: unsafe { axis_fn(gc, 0) },
                 ly: unsafe { axis_fn(gc, 1) },
@@ -742,16 +716,11 @@ mod unix_hook {
                 dpad_right: unsafe { btn_fn(gc, 14) } != 0,
             })
         } else if !js.is_null() {
-            let axis_ptr = unsafe { dlsym_default(b"SDL_JoystickGetAxis\0") };
-            let btn_ptr = unsafe { dlsym_default(b"SDL_JoystickGetButton\0") };
-            let hat_ptr = unsafe { dlsym_default(b"SDL_JoystickGetHat\0") };
-            if axis_ptr.is_null() || btn_ptr.is_null() {
+            let (Some(axis_fn), Some(btn_fn)) = (api.sdl_joy_get_axis, api.sdl_joy_get_button)
+            else {
                 return None;
-            }
-            let axis_fn: SdlJoystickGetAxisFn = unsafe { std::mem::transmute(axis_ptr) };
-            let btn_fn: SdlJoystickGetButtonFn = unsafe { std::mem::transmute(btn_ptr) };
-            let hat = if !hat_ptr.is_null() {
-                let hat_fn: SdlJoystickGetHatFn = unsafe { std::mem::transmute(hat_ptr) };
+            };
+            let hat = if let Some(hat_fn) = api.sdl_joy_get_hat {
                 unsafe { hat_fn(js, 0) }
             } else {
                 0
@@ -766,7 +735,7 @@ mod unix_hook {
             SEEN_L2_NONZERO.store(seen_l2, Ordering::Relaxed);
             SEEN_R2_NONZERO.store(seen_r2, Ordering::Relaxed);
 
-            // Standard Linux XInput / 8BitDo / Xbox / Steam Deck evdev layout
+            // Standard Linux/Windows XInput / 8BitDo / Xbox / Steam Deck layout
             Some(RawPadState {
                 lx: unsafe { axis_fn(js, 0) },
                 ly: unsafe { axis_fn(js, 1) },
@@ -792,24 +761,20 @@ mod unix_hook {
     }
 
     unsafe fn update_guest_ram_and_check_in_race(
+        api: &ScreamerHostApi,
         gp: &GamepadRaceState,
         synth_key_mask: usize,
         now_ns: u64,
     ) -> bool {
-        let membase_sym = unsafe { dlsym_default(b"MemBase\0") as *const *mut u8 };
-        if membase_sym.is_null() {
+        if api.mem_base.is_null() || api.mem_bytes == 0 {
             return false;
         }
-        let mem_ptr = unsafe { *membase_sym };
-        if mem_ptr.is_null() {
-            return false;
-        }
-        let guest_ram = unsafe { std::slice::from_raw_parts_mut(mem_ptr, GUEST_MEM_SCAN_BYTES) };
+        let guest_ram = unsafe { std::slice::from_raw_parts_mut(api.mem_base, api.mem_bytes) };
 
         let mut base = CACHED_DATA_OBJ_BASE.load(Ordering::Relaxed);
         let mut spec_idx = CACHED_SPEC_IDX.load(Ordering::Relaxed);
 
-        let cache_valid = if base < GUEST_MEM_SCAN_BYTES && spec_idx < BINARY_CONTROL_SPECS.len() {
+        let cache_valid = if base < guest_ram.len() && spec_idx < BINARY_CONTROL_SPECS.len() {
             let spec = &BINARY_CONTROL_SPECS[spec_idx];
             let anchor_pos = base + spec.anchor_offset;
             anchor_pos + ANCHOR_SIGNATURE.len() <= guest_ram.len()
@@ -828,18 +793,16 @@ mod unix_hook {
 
         if !cache_valid {
             let last_scan = LAST_SCAN_ATTEMPT_NS.load(Ordering::Relaxed);
-            if now_ns != 0 && now_ns.wrapping_sub(last_scan) < 100_000_000 {
+            if now_ns != 0 && last_scan != 0 && now_ns.wrapping_sub(last_scan) < 100_000_000 {
                 return false;
             }
-            LAST_SCAN_ATTEMPT_NS.store(now_ns, Ordering::Relaxed);
+            LAST_SCAN_ATTEMPT_NS.store(now_ns.max(1), Ordering::Relaxed);
 
             let game_env = std::env::var("SCREAMER_GAME").ok();
             let exe_env = std::env::var("SCREAMER_EXE").ok();
-            if let Some((found_base, found_spec)) = locate_binary_data_object(
-                guest_ram,
-                game_env.as_deref(),
-                exe_env.as_deref(),
-            ) {
+            if let Some((found_base, found_spec)) =
+                locate_binary_data_object(guest_ram, game_env.as_deref(), exe_env.as_deref())
+            {
                 base = found_base;
                 spec_idx = BINARY_CONTROL_SPECS
                     .iter()
@@ -856,29 +819,23 @@ mod unix_hook {
         }
 
         let spec = &BINARY_CONTROL_SPECS[spec_idx];
-        let injected = inject_race_controls_with_synth_mask(
-            &mut guest_ram[base..],
-            spec,
-            gp,
-            synth_key_mask,
-        );
+        let injected =
+            inject_race_controls_with_synth_mask(&mut guest_ram[base..], spec, gp, synth_key_mask);
         if injected {
             LAST_RACE_HEARTBEAT_NS.store(now_ns, Ordering::Relaxed);
         }
         injected
     }
 
-    unsafe fn emit_edge_keys(new_mask: usize) {
+    unsafe fn emit_edge_keys(api: &ScreamerHostApi, new_mask: usize) {
         let prev_mask = HELD_KEYS_MASK.swap(new_mask, Ordering::Relaxed);
         let diff = prev_mask ^ new_mask;
         if diff == 0 {
             return;
         }
-        let kbd_ptr = unsafe { dlsym_default(b"_Z15KEYBOARD_AddKey8KBD_KEYSb\0") };
-        if kbd_ptr.is_null() {
+        let Some(add_key) = api.keyboard_add_key else {
             return;
-        }
-        let add_key: KeyboardAddKeyFn = unsafe { std::mem::transmute(kbd_ptr) };
+        };
         let cam_key = if IS_SCREAMER_1.load(Ordering::Relaxed) {
             kbd_keys::KBD_M
         } else {
@@ -904,7 +861,7 @@ mod unix_hook {
         }
     }
 
-    unsafe fn poll_gamepad_and_inject(now_ns: u64) {
+    unsafe fn poll_gamepad_and_inject(api: &ScreamerHostApi, now_ns: u64) {
         if IN_POLL
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
@@ -924,26 +881,7 @@ mod unix_hook {
             return;
         }
 
-        let was_init_ptr = unsafe { dlsym_default(b"SDL_WasInit\0") };
-        if !was_init_ptr.is_null() {
-            let was_init_fn: SdlWasInitFn = unsafe { std::mem::transmute(was_init_ptr) };
-            // Wait until SDL_INIT_VIDEO (0x20) is initialized
-            if unsafe { was_init_fn(0x20) } == 0 {
-                return;
-            }
-            if !SUBSYSTEM_INIT_DONE.swap(true, Ordering::Relaxed) {
-                let sub_ptr = unsafe { dlsym_default(b"SDL_InitSubSystem\0") };
-                if !sub_ptr.is_null() {
-                    let sub_fn: SdlInitSubSystemFn = unsafe { std::mem::transmute(sub_ptr) };
-                    // Ensure both SDL_INIT_JOYSTICK (0x200) and SDL_INIT_GAMECONTROLLER (0x2000) are active
-                    unsafe {
-                        let _ = sub_fn(0x2200);
-                    }
-                }
-            }
-        }
-
-        let Some(pad) = (unsafe { read_controller_or_joystick(now_ns) }) else {
+        let Some(pad) = (unsafe { read_controller_or_joystick(api, now_ns) }) else {
             return;
         };
 
@@ -952,12 +890,7 @@ mod unix_hook {
         let pedals_y = combine_triggers(pad.l2, pad.r2, pad.ry);
 
         // Also keep DOSBox's internal joystick state updated
-        let joy_x_ptr = unsafe { dlsym_default(b"_Z15JOYSTICK_Move_Xhs\0") };
-        let joy_y_ptr = unsafe { dlsym_default(b"_Z15JOYSTICK_Move_Yhs\0") };
-        let joy_btn_ptr = unsafe { dlsym_default(b"_Z15JOYSTICK_Buttonhib\0") };
-        if !joy_x_ptr.is_null() && !joy_y_ptr.is_null() {
-            let move_x: JoystickMoveFn = unsafe { std::mem::transmute(joy_x_ptr) };
-            let move_y: JoystickMoveFn = unsafe { std::mem::transmute(joy_y_ptr) };
+        if let (Some(move_x), Some(move_y)) = (api.joystick_move_x, api.joystick_move_y) {
             unsafe {
                 move_x(0, steer_x);
                 move_y(0, pedals_y);
@@ -972,8 +905,7 @@ mod unix_hook {
         let btn_gear_up = pad.button(BUTTON_MAP[5].load(Ordering::Relaxed));
         let btn_start = pad.button(BUTTON_MAP[7].load(Ordering::Relaxed));
 
-        if !joy_btn_ptr.is_null() {
-            let joy_btn: JoystickButtonFn = unsafe { std::mem::transmute(joy_btn_ptr) };
+        if let Some(joy_btn) = api.joystick_button {
             unsafe {
                 joy_btn(0, 0, btn_accel || btn_gear_up);
                 joy_btn(0, 1, btn_cancel || btn_gear_down);
@@ -1065,9 +997,9 @@ mod unix_hook {
 
         let active_mask = key_mask | HELD_KEYS_MASK.load(Ordering::Relaxed);
         let in_race =
-            unsafe { update_guest_ram_and_check_in_race(&gp_race, active_mask, now_ns) };
+            unsafe { update_guest_ram_and_check_in_race(api, &gp_race, active_mask, now_ns) };
 
-        unsafe { emit_edge_keys(key_mask) };
+        unsafe { emit_edge_keys(api, key_mask) };
 
         // Optional subtle rumble feedback when braking hard in race
         let rumble_pct = RUMBLE_PCT.load(Ordering::Relaxed) as u32;
@@ -1081,62 +1013,40 @@ mod unix_hook {
             if low > 0 || high > 0 {
                 let gc = CONTROLLER_PTR.load(Ordering::Relaxed) as *mut c_void;
                 let js = JOYSTICK_PTR.load(Ordering::Relaxed) as *mut c_void;
-                if !gc.is_null() {
-                    let rumble_ptr = unsafe { dlsym_default(b"SDL_GameControllerRumble\0") };
-                    if !rumble_ptr.is_null() {
-                        let rumble_fn: SdlGameControllerRumbleFn =
-                            unsafe { std::mem::transmute(rumble_ptr) };
-                        unsafe {
-                            let _ = rumble_fn(gc, low, high, 50);
-                        }
+                if !gc.is_null()
+                    && let Some(rumble_fn) = api.sdl_gc_rumble
+                {
+                    unsafe {
+                        let _ = rumble_fn(gc, low, high, 50);
                     }
-                } else if !js.is_null() {
-                    let rumble_ptr = unsafe { dlsym_default(b"SDL_JoystickRumble\0") };
-                    if !rumble_ptr.is_null() {
-                        let rumble_fn: SdlJoystickRumbleFn =
-                            unsafe { std::mem::transmute(rumble_ptr) };
-                        unsafe {
-                            let _ = rumble_fn(js, low, high, 50);
-                        }
+                } else if !js.is_null()
+                    && let Some(rumble_fn) = api.sdl_joy_rumble
+                {
+                    unsafe {
+                        let _ = rumble_fn(js, low, high, 50);
                     }
                 }
             }
         }
     }
 
+    /// Entry point invoked by `dosbox-staging` on the main thread at the end of `GFX_Events()`.
+    ///
+    /// # Safety
+    /// `api` must point to a valid [`ScreamerHostApi`] struct whose `mem_base` (if non-null)
+    /// points to at least `mem_bytes` of writable guest RAM.
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn SDL_GL_SwapWindow(window: *mut c_void) {
-        let now_ns = LAST_POLL_NS.load(Ordering::Relaxed).max(1);
-        unsafe { poll_gamepad_and_inject(now_ns) };
-        let next = unsafe { dlsym_next(b"SDL_GL_SwapWindow\0") };
-        if !next.is_null() {
-            let real_fn: SdlSwapWindowFn = unsafe { std::mem::transmute(next) };
-            unsafe { real_fn(window) };
+    pub unsafe extern "C" fn screamer_hooks_on_tick(api: *const ScreamerHostApi, now_ns: u64) {
+        if api.is_null() {
+            return;
         }
-    }
-
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn clock_gettime(clk_id: c_int, tp: *mut Timespec) -> c_int {
-        let next = unsafe { dlsym_next(b"clock_gettime\0") };
-        if next.is_null() {
-            return -1;
+        let prev = LAST_POLL_NS.load(Ordering::Relaxed);
+        // Poll at most once every 4 ms (250 Hz).
+        if prev != 0 && now_ns.wrapping_sub(prev) < 4_000_000 {
+            return;
         }
-        let real_fn: ClockGettimeFn = unsafe { std::mem::transmute(next) };
-        let ret = unsafe { real_fn(clk_id, tp) };
-        if ret == 0 && !tp.is_null() {
-            let now_ns = unsafe {
-                ((*tp).tv_sec as u64)
-                    .wrapping_mul(1_000_000_000)
-                    .wrapping_add((*tp).tv_nsec as u64)
-            };
-            let prev = LAST_POLL_NS.load(Ordering::Relaxed);
-            // Poll at most once every 4 ms (250 Hz).
-            if now_ns.wrapping_sub(prev) >= 4_000_000 {
-                LAST_POLL_NS.store(now_ns, Ordering::Relaxed);
-                unsafe { poll_gamepad_and_inject(now_ns) };
-            }
-        }
-        ret
+        LAST_POLL_NS.store(now_ns.max(1), Ordering::Relaxed);
+        unsafe { poll_gamepad_and_inject(&*api, now_ns) };
     }
 }
 
@@ -1251,5 +1161,87 @@ mod tests {
         let (low, high) = compute_rumble(1000, 500, 50);
         assert!(low > 32000 && low < 33000);
         assert!(high > 16000 && high < 17000);
+    }
+
+    #[test]
+    fn host_api_tick_injects_guest_ram_and_emits_edge_keys() {
+        use std::ffi::{c_int, c_short, c_void};
+        static LAST_KEY: AtomicUsize = AtomicUsize::new(0);
+        static LAST_PRESSED: AtomicBool = AtomicBool::new(false);
+
+        unsafe extern "C" fn mock_num_joy() -> c_int {
+            1
+        }
+        unsafe extern "C" fn mock_gc_open(_idx: c_int) -> *mut c_void {
+            std::ptr::without_provenance_mut(0xDEAD_BEEF)
+        }
+        unsafe extern "C" fn mock_gc_attached(_gc: *mut c_void) -> c_int {
+            1
+        }
+        unsafe extern "C" fn mock_gc_axis(_gc: *mut c_void, axis: c_int) -> c_short {
+            match axis {
+                0 => 16384, // half right steer
+                5 => 32767, // full R2 throttle
+                _ => 0,
+            }
+        }
+        unsafe extern "C" fn mock_gc_btn(_gc: *mut c_void, btn: c_int) -> u8 {
+            if btn == 0 { 1 } else { 0 } // A button held
+        }
+        unsafe extern "C" fn mock_kbd(key: u32, pressed: bool) {
+            LAST_KEY.store(key as usize, Ordering::SeqCst);
+            LAST_PRESSED.store(pressed, Ordering::SeqCst);
+        }
+
+        let spec = &BINARY_CONTROL_SPECS[0]; // S1_STARTH
+        let mut guest_ram = vec![0u8; 8 * 4096 + 0x20000];
+        let page_base = 4 * 4096;
+        let anchor_pos = page_base + spec.anchor_offset;
+        guest_ram[anchor_pos..anchor_pos + ANCHOR_SIGNATURE.len()]
+            .copy_from_slice(ANCHOR_SIGNATURE);
+
+        let scancodes = [72i32, 80, 75, 77, 56, 29];
+        for (r, &sc) in scancodes.iter().enumerate() {
+            let rec = page_base + spec.controls_base_offset + r * 28;
+            write_i32_le(&mut guest_ram, rec, 1);
+            write_i32_le(&mut guest_ram, rec + 0x08, 1);
+            write_i32_le(&mut guest_ram, rec + 0x14, 1);
+            write_i32_le(&mut guest_ram, rec + 0x18, sc);
+        }
+
+        let api = ScreamerHostApi {
+            mem_base: guest_ram.as_mut_ptr(),
+            mem_bytes: guest_ram.len(),
+            keyboard_add_key: Some(mock_kbd),
+            joystick_enable: None,
+            joystick_move_x: None,
+            joystick_move_y: None,
+            joystick_button: None,
+            sdl_num_joysticks: Some(mock_num_joy),
+            sdl_gc_open: Some(mock_gc_open),
+            sdl_gc_get_attached: Some(mock_gc_attached),
+            sdl_gc_get_axis: Some(mock_gc_axis),
+            sdl_gc_get_button: Some(mock_gc_btn),
+            sdl_gc_rumble: None,
+            sdl_joy_open: None,
+            sdl_joy_get_attached: None,
+            sdl_joy_get_axis: None,
+            sdl_joy_get_button: None,
+            sdl_joy_get_hat: None,
+            sdl_joy_rumble: None,
+        };
+
+        unsafe {
+            screamer_hooks_on_tick(&api, 500_000_000);
+        }
+
+        let norm_base = page_base + spec.controls_base_offset + 0xA8;
+        assert_eq!(read_i32_le(&guest_ram, norm_base), 1023); // throttle
+        assert!(read_i32_le(&guest_ram, norm_base + 8) > 500); // steer > 500
+        assert_eq!(
+            LAST_KEY.load(Ordering::SeqCst),
+            kbd_keys::KBD_ENTER as usize
+        );
+        assert!(LAST_PRESSED.load(Ordering::SeqCst));
     }
 }

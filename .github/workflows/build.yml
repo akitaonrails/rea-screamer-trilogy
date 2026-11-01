@@ -2,7 +2,7 @@ name: build
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -11,21 +11,23 @@ permissions:
   contents: read
 
 jobs:
-  build-packages:
-    name: Test and build Linux & Windows packages
+  linux-packages:
+    name: Test and build Linux package & AppImage
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Install build dependencies and MinGW toolchain
+      - name: Install Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64 zip libgl1-mesa-dev libxkbcommon-dev libwayland-dev
+          sudo apt-get install -y zip file libgl1-mesa-dev libxkbcommon-dev libwayland-dev \
+            meson ninja-build pkg-config libsdl2-dev libopusfile-dev libspeexdsp-dev \
+            libasound2-dev libpng-dev zlib1g-dev
 
       - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup target add x86_64-pc-windows-gnu
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -36,31 +38,118 @@ jobs:
       - name: Linux helper tests (GPU choice, scalers)
         run: sh linux/tests/gpu-env.sh && sh linux/tests/scaler.sh
 
-      - name: Lint (Linux & Windows targets)
-        run: |
-          cargo clippy --release --workspace -- -D warnings
-          cargo clippy --release --target x86_64-pc-windows-gnu --workspace -- -D warnings
+      - name: Lint (Linux target)
+        run: cargo clippy --release --workspace -- -D warnings
 
-      - name: Build Linux & Windows binaries
+      - name: Build bundled dosbox and ScreamerLauncher
         run: |
+          ./scripts/build-dosbox.sh
           cargo build --release --workspace
-          cargo build --release --target x86_64-pc-windows-gnu --workspace
 
-      - name: Package
+      - name: Package Linux zip and AppImage
         run: |
           name=ScreamerLauncher-${GITHUB_REF_NAME//\//-}
-          mkdir -p "dist/$name" "dist/$name-linux"
-          cp target/x86_64-pc-windows-gnu/release/ScreamerLauncher.exe \
-             target/x86_64-pc-windows-gnu/release/screamer_hooks.dll \
-             README.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
-          (cd dist && zip -r "$name-windows-x86_64.zip" "$name")
+          mkdir -p "dist/$name-linux"
           cp target/release/ScreamerLauncher \
-             target/release/libscreamer_hooks.so \
+             target/release/dosbox \
              README.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "dist/$name-linux/"
+          cp -r target/release/resources "dist/$name-linux/resources"
           cp -r linux "dist/$name-linux/linux"
           (cd dist && zip -r "$name-linux-x86_64.zip" "$name-linux")
+          packaging/appimage/build.sh "dist/$name-linux" dist/appimage
+          mv dist/appimage/ScreamerLauncher-x86_64.AppImage "dist/$name-x86_64.AppImage"
+          echo "LINUX_ZIP=dist/$name-linux-x86_64.zip" >> "$GITHUB_ENV"
+          echo "APPIMAGE=dist/$name-x86_64.AppImage" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ScreamerLauncher-packages
-          path: dist/*.zip
+          name: ScreamerLauncher-linux-zip
+          path: ${{ env.LINUX_ZIP }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreamerLauncher-linux-appimage
+          path: ${{ env.APPIMAGE }}
+
+  windows-packages:
+    name: Build Windows package (ScreamerLauncher.exe + dosbox.exe)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-rust
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-opusfile
+            mingw-w64-x86_64-speexdsp
+            mingw-w64-x86_64-libpng
+            mingw-w64-x86_64-zlib
+            zip
+            git
+
+      - name: Build static screamer-hooks, dosbox.exe, and ScreamerLauncher.exe
+        run: |
+          if git -C vendor/dosbox-staging apply --check ../../patches/dosbox-staging-screamer-hooks.patch 2>/dev/null; then
+            git -C vendor/dosbox-staging apply ../../patches/dosbox-staging-screamer-hooks.patch
+          fi
+          cargo build --release --workspace
+          meson setup target/dosbox-staging-build vendor/dosbox-staging \
+            -Dbuildtype=release \
+            -Ddefault_library=static \
+            -Duse_sdl2_net=false \
+            -Duse_mt32emu=false \
+            -Duse_slirp=false \
+            -Duse_fluidsynth=false \
+            -Duse_zlib_ng=false \
+            -Dunit_tests=disabled
+          ninja -C target/dosbox-staging-build dosbox.exe
+
+      - name: Package Windows zip
+        run: |
+          name=ScreamerLauncher-${GITHUB_REF_NAME//\//-}
+          mkdir -p "dist/$name-windows"
+          cp target/release/ScreamerLauncher.exe \
+             target/dosbox-staging-build/dosbox.exe \
+             README.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "dist/$name-windows/"
+          cp -r vendor/dosbox-staging/contrib/resources "dist/$name-windows/resources"
+          for dll in $(ldd target/dosbox-staging-build/dosbox.exe | awk '/=> \/mingw64\/bin\// {print $3}'); do
+            cp -L "$dll" "dist/$name-windows/"
+          done
+          (cd dist && zip -r "$name-windows-x86_64.zip" "$name-windows")
+          echo "WINDOWS_ZIP=dist/$name-windows-x86_64.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreamerLauncher-windows-zip
+          path: ${{ env.WINDOWS_ZIP }}
+
+  release:
+    name: Publish a release for version tags
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux-packages, windows-packages]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ScreamerLauncher-*
+          merge-multiple: true
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes ./*.zip ./*.AppImage

@@ -8,4 +8,4 @@ description = "In-process hook library loaded into dosbox-staging by ScreamerLau
 
 [lib]
 name = "screamer_hooks"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["staticlib", "rlib"]

@@ -45,22 +45,37 @@ Point `ScreamerLauncher` at a parent folder containing one, two, or all three ga
 
 ## Installation & Usage
 
-### Prerequisites
+### Prebuilt Releases (Linux AppImage, Linux Zip & Windows Zip)
+
+Every push and `v*` tag on GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)) builds three self-contained distribution packages:
+
+- **Linux AppImage (`ScreamerLauncher-x86_64.AppImage`)**: Single-file portable bundle containing `ScreamerLauncher`, our statically hooked `dosbox`, `resources/`, `screamer-play`, and SDL2/codec libraries:
+  ```bash
+  chmod +x ScreamerLauncher-x86_64.AppImage
+  ./ScreamerLauncher-x86_64.AppImage --game /path/to/screamer/games
+  ```
+- **Windows (`ScreamerLauncher-windows-x86_64.zip`)**: Unpack anywhere and run `ScreamerLauncher.exe` (includes the statically hooked `dosbox.exe`, `resources/`, and runtime DLLs in the same folder).
+- **Linux Portable Archive (`ScreamerLauncher-linux-x86_64.zip`)**: Unpack and run `./ScreamerLauncher` or `./linux/screamer-play`.
+
+### Prerequisites (When Building from Source)
 
 1. Your own copy of **Screamer**, **Screamer 2**, and/or **Screamer Rally** (GOG or original CD releases).
-2. **`dosbox-staging` (`>= 0.82.0`)**:
-   - The launcher searches `--dosbox <path>`, `SCREAMER_DOSBOX`, `PATH` (`dosbox-staging` or `dosbox`), and sibling `dosbox-staging/dosbox` folders next to your games directory automatically.
+2. Standard `dosbox-staging` build dependencies (`meson`, `ninja`, `pkg-config`, `sdl2`, `opusfile`, `speexdsp`, `fluidsynth`, `alsa`, `libpng`, `libslirp`, `glew`, `zlib`) when building from source.
 
 ### Building from Source
 
+`dosbox-staging` (`v0.82.2`) is included as a git submodule at [`vendor/dosbox-staging`](vendor/dosbox-staging) and linked directly against our static `libscreamer_hooks.a` library (`screamer_hooks_on_tick` invoked deterministically on the main thread at the end of `GFX_Events()`, with no `LD_PRELOAD` or runtime `dlsym` hacks):
+
 ```bash
+git submodule update --init --depth 1 vendor/dosbox-staging
+./scripts/build-dosbox.sh
 cargo test --workspace
 cargo build --release --workspace
 ```
 
-This produces:
+This produces two clean self-contained binaries in `target/release/`:
 - `target/release/ScreamerLauncher` — the unified GUI/CLI launcher
-- `target/release/libscreamer_hooks.so` — the `LD_PRELOAD` runtime bridge automatically injected by `ScreamerLauncher`
+- `target/release/dosbox` (plus `target/release/resources/`) — `dosbox-staging v0.82.2` with `libscreamer_hooks.a` statically compiled in, automatically used by `ScreamerLauncher`
 
 ### Running the Launcher
 
@@ -109,17 +124,18 @@ Getting a modern wireless controller to work seamlessly across menus, driver nam
 
 1. **Why DOS Gameport `0x201` Fails at `cpu_cycles_protected = max`**:
    - The original DOS binaries poll port `0x201` in a tight loop (`DetectJoystick`, max `0x800` iterations) waiting for the simulated RC capacitor to discharge. Under `cpu_cycles_protected = max`, a modern CPU finishes `0x800` iterations before the virtual capacitor discharges, so the game concludes no joystick is connected.
-2. **Direct Guest RAM (`*MemBase`) Injection**:
+2. **Source-Level Hook in `dosbox-staging` (`GFX_Events()`) & Direct Guest RAM (`MemBase`) Injection**:
+   - Rather than relying on fragile `LD_PRELOAD` / `dlsym` / `clock_gettime` interception across audio and renderer threads, [`vendor/dosbox-staging`](vendor/dosbox-staging) (`src/gui/sdlmain.cpp`, patch in [`patches/dosbox-staging-screamer-hooks.patch`](patches/dosbox-staging-screamer-hooks.patch)) statically links `libscreamer_hooks.a` and calls `screamer_hooks_on_tick(&api, now_ns)` on the main thread right at the end of `GFX_Events()`, passing `MemBase`, `MEM_TotalPages() * 4096`, `KEYBOARD_AddKey`, `JOYSTICK_*`, and `SDL_*` callbacks directly.
    - `PollControls` in all 8 racing executables checks `if (record[r].enabled == 1)` before overwriting `normalized_controls[r]`, while the car physics engine reads `normalized_controls[0..5]` (`-1023..+1023`) directly without checking `record[r].enabled` (and uses full-range proportional steering when `record[2].mode == 0`).
-   - `libscreamer_hooks.so` locates the loaded Data Object in `*MemBase` (on 4096-byte page boundaries), sets `record[r].enabled = 2`, `record[r].ctrl_type = 1`, `record[r].mode = 0`, and writes live 10-bit proportional steering (`norm[2]`), throttle (`norm[0]`), brake (`norm[1]`), and gear shifts (`norm[4..5]`) directly into guest RAM.
+   - `screamer_hooks_on_tick` locates the loaded Data Object in `MemBase` (on 4096-byte page boundaries), sets `record[r].enabled = 2`, `record[r].ctrl_type = 1`, `record[r].mode = 0`, and writes live 10-bit proportional steering (`norm[2]`), throttle (`norm[0]`), brake (`norm[1]`), and gear shifts (`norm[4..5]`) directly into guest RAM.
 3. **Why `MenuPollInput` Also Calls `PollControls` in Menus**:
-   - In all three games, the menu loop (`MenuPollInput`) also calls `PollControls` every frame. If `record[r].ctrl_type == 2` and `record[r].mode != 0`, `MenuPollInput` interprets `normalized_controls[0..3]` as menu directional presses. Setting `ctrl_type = 1`, `mode = 0`, and `norm[3] = 0` prevents analog race state from poisoning menu navigation, while edge-triggered synthetic keystrokes (`_Z15KEYBOARD_AddKey8KBD_KEYSb`) drive menus and Driver Name Input cleanly.
+   - In all three games, the menu loop (`MenuPollInput`) also calls `PollControls` every frame. If `record[r].ctrl_type == 2` and `record[r].mode != 0`, `MenuPollInput` interprets `normalized_controls[0..3]` as menu directional presses. Setting `ctrl_type = 1`, `mode = 0`, and `norm[3] = 0` prevents analog race state from poisoning menu navigation, while edge-triggered synthetic keystrokes (`KEYBOARD_AddKey`) drive menus and Driver Name Input cleanly.
 4. **The Watcom `LE` Keyboard BSS vs. ASCII String Trap (`data_obj[2 + 72] == 'f'`)**:
-   - To allow simultaneous keyboard and gamepad play, `libscreamer_hooks.so` checks whether a bound keyboard scancode is pressed before overriding a control record.
+   - To allow simultaneous keyboard and gamepad play, `screamer-hooks` checks whether a bound keyboard scancode is pressed before overriding a control record.
    - However, in the Watcom `LE` binary layout, the 130-byte (`0x82`) keyboard state array lives in a separate preceding BSS object, whereas `data_obj[0..130]` contains initialized ASCII strings — and `data_obj[2 + 72]` (the offset for Up Arrow scancode `72`) happens to contain the ASCII byte `'f'` (`102 != 0`)!
-   - Without verifying that `data_obj[2..90]` contains only boolean `0`/`1` bytes (`has_clean_kbd_array`) and prioritizing active gamepad input (`gp.throttle > 0`), the hook would mistake the `'f'` byte for a held Up Arrow key and cut out the `A` button throttle unless Left Stick Up was held.
-5. **Thread-Safe `clock_gettime` Polling**:
-   - `dosbox-staging` invokes `clock_gettime` from audio mixer and Voodoo threads as well as re-entrantly from the main thread during `SDL_PollEvent`. `libscreamer_hooks.so` guards polling with a non-blocking atomic try-lock and reads SDL controller/joystick state updated by `dosbox-staging`'s main loop without calling `SDL_JoystickUpdate()` from background threads.
+   - Verifying that `data_obj[2..90]` contains only boolean `0`/`1` bytes (`has_clean_kbd_array`) and prioritizing active gamepad input (`gp.throttle > 0`) prevents mistaking the `'f'` byte for a held Up Arrow key.
+5. **Deterministic Main-Thread Execution**:
+   - Because `screamer_hooks_on_tick` runs on the main thread at the end of `GFX_Events()` right after `while (SDL_PollEvent(&event))` has pumped all SDL events, SDL controller and joystick state is always up-to-date and single-threaded without any background thread locks or symbol-lookup overhead.
 
 ### Default Modern Controller Layout
 
