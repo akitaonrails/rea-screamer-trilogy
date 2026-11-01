@@ -1,5 +1,5 @@
 //! Core library for `ScreamerLauncher`: `LE` executable parser, edition
-//! table, declarative binary patches (`F1`–`F8`, `E1`–`E5`), config generators,
+//! table, declarative binary patches (`F1`–`F6`, `E1`–`E5`), config generators,
 //! runtime staging, and settings form model.
 
 pub mod config;

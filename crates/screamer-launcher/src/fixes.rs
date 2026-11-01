@@ -317,59 +317,6 @@ pub static S1_SETUP_FIXES: FixSet = FixSet {
 pub static S2_3DFX_FIXES: FixSet = FixSet {
     fixes: &[
         Fix {
-            id: "F7",
-            what: "Wrap 3dfx TMU texture ring-buffer at 1024 slots instead of calling exit(-1) on MAXCACHE",
-            optional: false,
-            code: &[
-                Piece {
-                    at: At::Image(0x000c_d856),
-                    expected: &[0x0f, 0x8e, 0xf7, 0x00, 0x00, 0x00],
-                    ops: &[Op::Raw(&[0x0f, 0x8e, 0x82, 0x01, 0x00, 0x00])],
-                },
-                Piece {
-                    at: At::Image(0x000c_d9ce),
-                    expected: &[0x0f, 0x8c, 0x14, 0x04, 0x00, 0x00],
-                    ops: &[Op::Raw(&[0xe9, 0x15, 0x04, 0x00, 0x00, 0x90])],
-                },
-                Piece {
-                    at: At::Image(0x000c_d9de),
-                    expected: &[
-                        0xe8, 0x7b, 0x69, 0xf8, 0xff, 0x83, 0xc4, 0x08, 0xb8, 0xff, 0xff, 0xff,
-                        0xff, 0xe8, 0xe0, 0xdc, 0xfe, 0xff,
-                    ],
-                    ops: &[Op::Raw(&[
-                        0x81, 0xf9, 0x00, 0x04, 0x00, 0x00, 0x0f, 0x8c, 0x69, 0xff, 0xff, 0xff,
-                        0xe9, 0x6d, 0xfe, 0xff, 0xff, 0x90,
-                    ])],
-                },
-            ],
-        },
-        Fix {
-            id: "F8",
-            what: "Use a live fallback descriptor when the 3dfx texture-descriptor pool is full",
-            optional: false,
-            code: &[Piece {
-                // Both error-message arguments are already on the stack. Drop
-                // them, map this excess texture to descriptor zero (which is
-                // necessarily live when all 3,064 slots are occupied), and
-                // continue with the next texture.
-                at: At::Image(0x000c_eb7a),
-                expected: &[
-                    0xe8, 0xdf, 0x57, 0xf8, 0xff, 0x83, 0xc4, 0x08, 0xb8, 0xff, 0xff, 0xff, 0xff,
-                    0xe8, 0x44, 0xcb, 0xfe, 0xff,
-                ],
-                ops: &[
-                    Op::Raw(&[
-                        0x5b, 0x5b, // pop ebx; pop ebx
-                        0x8b, 0x9c, 0x24, 0x6c, 0x09, 0x00, 0x00, // mov ebx,[esp+0x96c]
-                        0x89, 0x7b, 0x08, // mov [ebx+8],edi (edi is zero here)
-                    ]),
-                    Op::Jmp(At::Image(0x000c_f6ff)),
-                    Op::Raw(&[0x90]),
-                ],
-            }],
-        },
-        Fix {
             id: "E1",
             what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
@@ -525,57 +472,6 @@ pub static S2_SETUP_FIXES: FixSet = FixSet {
 // ============================================================================
 pub static SR_STRT3FX_FIXES: FixSet = FixSet {
     fixes: &[
-        Fix {
-            id: "F7",
-            what: "Wrap 3dfx TMU texture ring-buffer at 1024 slots instead of calling exit(-1) on MAXCACHE",
-            optional: false,
-            code: &[
-                Piece {
-                    at: At::Image(0x000c_bdf6),
-                    expected: &[0x0f, 0x8e, 0xf7, 0x00, 0x00, 0x00],
-                    ops: &[Op::Raw(&[0x0f, 0x8e, 0x82, 0x01, 0x00, 0x00])],
-                },
-                Piece {
-                    at: At::Image(0x000c_bf6e),
-                    expected: &[0x0f, 0x8c, 0x14, 0x04, 0x00, 0x00],
-                    ops: &[Op::Raw(&[0xe9, 0x15, 0x04, 0x00, 0x00, 0x90])],
-                },
-                Piece {
-                    at: At::Image(0x000c_bf7e),
-                    expected: &[
-                        0xe8, 0x17, 0x6e, 0xf8, 0xff, 0x83, 0xc4, 0x08, 0xb8, 0xff, 0xff, 0xff,
-                        0xff, 0xe8, 0x10, 0xdd, 0xfe, 0xff,
-                    ],
-                    ops: &[Op::Raw(&[
-                        0x81, 0xf9, 0x00, 0x04, 0x00, 0x00, 0x0f, 0x8c, 0x69, 0xff, 0xff, 0xff,
-                        0xe9, 0x6d, 0xfe, 0xff, 0xff, 0x90,
-                    ])],
-                },
-            ],
-        },
-        Fix {
-            id: "F8",
-            what: "Use a live fallback descriptor when the 3dfx texture-descriptor pool is full",
-            optional: false,
-            code: &[Piece {
-                // Equivalent to the Screamer 2 patch above, with Rally's
-                // stack layout and next-texture loop target.
-                at: At::Image(0x000c_d0dc),
-                expected: &[
-                    0xe8, 0xb9, 0x5c, 0xf8, 0xff, 0x83, 0xc4, 0x08, 0xb8, 0xff, 0xff, 0xff, 0xff,
-                    0xe8, 0xb2, 0xcb, 0xfe, 0xff,
-                ],
-                ops: &[
-                    Op::Raw(&[
-                        0x5b, 0x5b, // pop ebx; pop ebx
-                        0x8b, 0x9c, 0x24, 0x4c, 0x09, 0x00, 0x00, // mov ebx,[esp+0x94c]
-                        0x89, 0x7b, 0x08, // mov [ebx+8],edi (edi is zero here)
-                    ]),
-                    Op::Jmp(At::Image(0x000c_d9de)),
-                    Op::Raw(&[0x90]),
-                ],
-            }],
-        },
         Fix {
             id: "E1",
             what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
@@ -761,33 +657,12 @@ mod tests {
     }
 
     #[test]
-    fn texture_pool_fallbacks_discard_error_arguments_and_continue() {
-        let s2 = S2_3DFX_FIXES
-            .assemble(0, &[])
-            .into_iter()
-            .find(|write| write.fix == "F8")
-            .unwrap();
-        assert_eq!(s2.address, 0x000c_eb7a);
-        assert_eq!(
-            s2.bytes,
-            [
-                0x5b, 0x5b, 0x8b, 0x9c, 0x24, 0x6c, 0x09, 0x00, 0x00, 0x89, 0x7b, 0x08, 0xe9, 0x74,
-                0x0b, 0x00, 0x00, 0x90,
-            ]
-        );
-
-        let rally = SR_STRT3FX_FIXES
-            .assemble(0, &[])
-            .into_iter()
-            .find(|write| write.fix == "F8")
-            .unwrap();
-        assert_eq!(rally.address, 0x000c_d0dc);
-        assert_eq!(
-            rally.bytes,
-            [
-                0x5b, 0x5b, 0x8b, 0x9c, 0x24, 0x4c, 0x09, 0x00, 0x00, 0x89, 0x7b, 0x08, 0xe9, 0xf1,
-                0x08, 0x00, 0x00, 0x90,
-            ]
-        );
+    fn authentic_3dfx_tmu_uses_the_original_texture_managers() {
+        for set in [&S2_3DFX_FIXES, &SR_STRT3FX_FIXES] {
+            assert!(
+                set.fixes.iter().all(|fix| fix.id != "F7" && fix.id != "F8"),
+                "the original 2 MB TMU wrap logic must remain unpatched"
+            );
+        }
     }
 }
