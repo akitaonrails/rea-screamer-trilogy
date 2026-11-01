@@ -1112,17 +1112,15 @@ impl Window<'_> {
                     self.form.look = Form::look_of(&self.form.picture, self.screen);
                 }
             }
-            (Tab::Picture, 1) => {
-                if !self.resolutions.is_empty() {
-                    let idx = self
-                        .resolutions
-                        .iter()
-                        .position(|(r, _)| *r == self.form.picture.resolution)
-                        .unwrap_or(0) as isize;
-                    let next = (idx + dir).rem_euclid(self.resolutions.len() as isize) as usize;
-                    self.form.picture.resolution = self.resolutions[next].0;
-                    self.form.look = Form::look_of(&self.form.picture, self.screen);
-                }
+            (Tab::Picture, 1) if !self.resolutions.is_empty() => {
+                let idx = self
+                    .resolutions
+                    .iter()
+                    .position(|(r, _)| *r == self.form.picture.resolution)
+                    .unwrap_or(0) as isize;
+                let next = (idx + dir).rem_euclid(self.resolutions.len() as isize) as usize;
+                self.form.picture.resolution = self.resolutions[next].0;
+                self.form.look = Form::look_of(&self.form.picture, self.screen);
             }
             (Tab::Picture, 2) => {
                 let idx = form::FILTERS

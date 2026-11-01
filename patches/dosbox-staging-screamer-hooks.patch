@@ -1155,3 +1155,13 @@ index 9661f47..6b85d56 100644
  			video_mode.graphics_standard  = GraphicsStandard::Svga;
  			video_mode.color_depth = ColorDepth::HighColor16Bit;
  			video_mode.is_double_scanned_mode = false;
+diff --git a/scripts/get-version.sh b/scripts/get-version.sh
+index 3893f74..9b1687f 100755
+--- a/scripts/get-version.sh
++++ b/scripts/get-version.sh
+@@ -1,3 +1,3 @@
+-#!/usr/bin/env bash
++#!/bin/sh
+-
++# Invoked directly by Meson; use MSYS2's POSIX shell on Windows.
+ # SPDX-License-Identifier: GPL-2.0-or-later
