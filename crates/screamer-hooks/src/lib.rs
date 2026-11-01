@@ -516,17 +516,17 @@ pub mod host_hook {
     /// Bitmask of synthetic keys currently held via `KEYBOARD_AddKey`.
     static HELD_KEYS_MASK: AtomicUsize = AtomicUsize::new(0);
 
-    /// Action-to-pad-button mapping (1=A, 2=B, 3=X, 4=Y, 5=LB, 6=RB, 7=Back, 8=Start).
+    /// Action-to-pad-button mapping (1=A, 2=B, 3=X, 4=Y, 5=LB, 6=RB, 7=Back, 8=Start, 9=LT/L2, 10=RT/R2).
     /// Indices match `form::ACTIONS` / `config::MODERN_BUTTONS`:
-    /// 0: Accelerate/Select (A=1), 1: Back/Cancel (B=2), 2: Camera (Y=4),
-    /// 3: Gear Down (LB=5), 4: Brake/Backspace (X=3), 5: Gear Up (RB=6),
+    /// 0: Accelerate (RT=10; A=1 also works in race & menus), 1: Back/Cancel (B=2), 2: Camera (Y=4),
+    /// 3: Gear Down (LB=5), 4: Brake (LT=9; X=3 also works in race & menus), 5: Gear Up (RB=6),
     /// 6: Pause/Back (Back=7), 7: Start/Confirm (Start=8).
     static BUTTON_MAP: [AtomicUsize; 8] = [
-        AtomicUsize::new(1),
+        AtomicUsize::new(10),
         AtomicUsize::new(2),
         AtomicUsize::new(4),
         AtomicUsize::new(5),
-        AtomicUsize::new(3),
+        AtomicUsize::new(9),
         AtomicUsize::new(6),
         AtomicUsize::new(7),
         AtomicUsize::new(8),
@@ -617,7 +617,18 @@ pub mod host_hook {
                 6 => self.rb,
                 7 => self.back,
                 8 => self.start,
+                9 => self.l2 > 4000,
+                10 => self.r2 > 4000,
                 _ => false,
+            }
+        }
+
+        fn analog(&self, id: usize) -> i32 {
+            match id {
+                9 => ((self.l2 as i32).clamp(0, 32767) * 1023) / 32767,
+                10 => ((self.r2 as i32).clamp(0, 32767) * 1023) / 32767,
+                _ if self.button(id) => 1023,
+                _ => 0,
             }
         }
     }
@@ -896,18 +907,20 @@ pub mod host_hook {
                 move_y(0, pedals_y);
             }
         }
-        let btn_accel = pad.button(BUTTON_MAP[0].load(Ordering::Relaxed));
+        let accel_id = BUTTON_MAP[0].load(Ordering::Relaxed);
+        let brake_id = BUTTON_MAP[4].load(Ordering::Relaxed);
+        let btn_accel = pad.button(accel_id);
         let btn_cancel = pad.button(BUTTON_MAP[1].load(Ordering::Relaxed))
             || pad.button(BUTTON_MAP[6].load(Ordering::Relaxed));
         let btn_cam = pad.button(BUTTON_MAP[2].load(Ordering::Relaxed));
         let btn_gear_down = pad.button(BUTTON_MAP[3].load(Ordering::Relaxed));
-        let btn_brake = pad.button(BUTTON_MAP[4].load(Ordering::Relaxed));
+        let btn_brake = pad.button(brake_id);
         let btn_gear_up = pad.button(BUTTON_MAP[5].load(Ordering::Relaxed));
         let btn_start = pad.button(BUTTON_MAP[7].load(Ordering::Relaxed));
 
         if let Some(joy_btn) = api.joystick_button {
             unsafe {
-                joy_btn(0, 0, btn_accel || btn_gear_up);
+                joy_btn(0, 0, btn_accel || pad.a || btn_gear_up);
                 joy_btn(0, 1, btn_cancel || btn_gear_down);
             }
         }
@@ -916,12 +929,14 @@ pub mod host_hook {
         // - D-Pad always navigates Up/Down/Left/Right; Left Stick also navigates menus when
         //   no race throttle/brake button or trigger is held and the stick is pushed along
         //   a dominant cardinal axis (preventing accidental Up/Down keystrokes while steering)
-        // - Accelerate (A) and Start emit Enter (confirm menu item / confirm driver name / start race)
+        // - A button, Start, or digital Accelerate button emit Enter (confirm menu item / driver name)
         // - Cancel (B) and Back/Select emit Esc (back out of menu / pause race)
-        // - Brake (X) emits Backspace (delete character on Screamer 2/Rally name input)
+        // - X button or digital Brake button emit Backspace (delete character on name input)
         // - Camera (Y) emits Camera toggle ('M' in Screamer 1, 'C' in Screamer 2/Rally)
         let pedals_idle = !btn_accel
             && !btn_brake
+            && !pad.a
+            && !pad.x
             && pad.r2 < 2000
             && pad.l2 < 2000
             && (pad.ry as i32).abs() < 8000;
@@ -945,13 +960,13 @@ pub mod host_hook {
         if pad.dpad_right || stick_menu_right {
             key_mask |= KEY_BIT_RIGHT;
         }
-        if btn_accel || btn_start {
+        if pad.a || btn_start || (accel_id <= 8 && btn_accel) {
             key_mask |= KEY_BIT_ENTER;
         }
         if btn_cancel {
             key_mask |= KEY_BIT_ESC;
         }
-        if btn_brake && !btn_cancel {
+        if (pad.x || (brake_id <= 8 && btn_brake)) && !btn_cancel {
             key_mask |= KEY_BIT_BACKSPACE;
         }
         if btn_cam {
@@ -975,8 +990,17 @@ pub mod host_hook {
         } else {
             0
         };
-        let a_throttle = if btn_accel { 1023 } else { 0 };
-        let throttle_norm = r2_norm.max(stick_throttle).max(a_throttle).clamp(0, 1023);
+        let mapped_throttle = pad.analog(accel_id);
+        let a_fallback = if pad.a && (accel_id == 10 || accel_id == 1) {
+            1023
+        } else {
+            0
+        };
+        let throttle_norm = r2_norm
+            .max(stick_throttle)
+            .max(mapped_throttle)
+            .max(a_fallback)
+            .clamp(0, 1023);
 
         let l2_norm = ((pad.l2 as i32).clamp(0, 32767) * 1023) / 32767;
         let stick_brake = if stick_y > 0 {
@@ -984,8 +1008,17 @@ pub mod host_hook {
         } else {
             0
         };
-        let x_brake = if btn_brake { 1023 } else { 0 };
-        let brake_norm = l2_norm.max(stick_brake).max(x_brake).clamp(0, 1023);
+        let mapped_brake = pad.analog(brake_id);
+        let x_fallback = if pad.x && (brake_id == 9 || brake_id == 3) {
+            1023
+        } else {
+            0
+        };
+        let brake_norm = l2_norm
+            .max(stick_brake)
+            .max(mapped_brake)
+            .max(x_fallback)
+            .clamp(0, 1023);
 
         let gp_race = GamepadRaceState {
             throttle: throttle_norm,

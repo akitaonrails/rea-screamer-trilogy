@@ -525,9 +525,10 @@ pub fn prepare_runtime(
     let vsync = settings.vsync.unwrap_or(true);
     let voodoo_enabled = selected.edition.role == Renderer::Glide3dfx;
     let filter = settings.texture_filter.unwrap_or(TextureFilter::Original);
-    let texture_filtering = filter == TextureFilter::Smooth;
+    let texture_filtering = matches!(filter, TextureFilter::Smooth | TextureFilter::Fsr);
     let glshader = match filter {
         TextureFilter::Original => "crt-auto",
+        TextureFilter::Fsr => "interpolation/fsr",
         TextureFilter::Sharp => "sharp",
         TextureFilter::Smooth => "bilinear",
     };

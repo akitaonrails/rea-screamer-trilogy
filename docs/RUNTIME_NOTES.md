@@ -83,3 +83,48 @@ This document records notable observations from running the original 1995–1997
      - Milestone added a `>= 50.0` clamp on the physics table pointer (`entry 50`, which holds precomputed suspension/gravity/friction coefficients for `dt = 0.02s`).
      - If the `0.02s` `smoothed_dt` clamp is lowered to `0.004s`, `smoothed_dt` (`0.004s..0.01s`) no longer matches the `0.02s` coefficients in `entry 50` of the physics table, causing suspension forces on frame 1 to spike and **all cars to jump into the air and crash into each other at the start of a race**!
 - **Rule**: Keep both the timer spin-wait and the `0.02s` (`50 Hz`) `smoothed_dt` floor completely unpatched (`code: &[]` for `E1`) across all 8 executables so all three games run at their exact 1.0x physics speed and suspension stability.
+
+---
+
+## 8. Screamer Rally (`STRT3FX.EXE`) & Screamer 2 (`S2_3DFX.EXE`) `MAXCACHE` Crash (`F7`)
+
+- **Symptom**: In **Screamer Rally** (`STRT3FX.EXE`) and **Screamer 2** (`S2_3DFX.EXE`), loading a track or driving mid-way through a race under `voodoo_memsize = 12` (8 MB TMU0) causes the game to abruptly quit back to DOS.
+- **Root Cause**:
+  - In `STRT3FX.EXE` (`0x01C26C..0x01C29C`) and `S2_3DFX.EXE` (`0x01DBBC..0x01DBEC`), the 3dfx Glide texture cache manager stores cached texture descriptors in a fixed **1,024-entry array** (`MAXCACHE = 0x400`, 32 bytes per slot).
+  - As textures are uploaded to TMU0, the game advances `next_tmu_addr` until it reaches `grTexMaxAddress(GR_TMU0)` (`tmu_max_addr`), at which point it resets `cache_count = 0` and wraps around.
+  - On a real 1996 3dfx Voodoo 1 (`4 MB` total = `2 MB FBI + 2 MB TMU0`), `2 MB` of TMU RAM fits roughly `32..256` textures before wrapping around `tmu_max_addr`, so `cache_count` never reaches `1,024`.
+  - When `voodoo_memsize = 12` (`4 MB FBI + 8 MB TMU0`) was configured, `tmu_max_addr` was `8 MB`, allowing more than `1,024` textures to be uploaded before `next_tmu_addr` wrapped around. On texture #1,025 (`cmp edx, 0x400; jle ...`), the game executed `printf("MAXCACHE\n"); exit(-1);`!
+- **Two-Part Fix**:
+  1. Set `voodoo_memsize = 4` (`2 MB FBI + 2 MB TMU0`) in `dosbox.conf` so `grTexMaxAddress(GR_TMU0)` reports the authentic 2 MB Voodoo 1 TMU0 size.
+  2. Apply binary patch **`F7`** (`S2_3DFX.EXE` at `0x01DBC1`, `STRT3FX.EXE` at `0x01C271`), replacing the `printf("MAXCACHE\n"); exit(-1);` abort path (`27` bytes) with a ring-buffer wrap (`xor edx, edx; mov [cache_count], edx; mov ecx, [tmu_start_addr]; mov [tmu_curr_addr], ecx; jmp retry`) so the 1,024-slot table can never terminate the game.
+
+---
+
+## 9. Internal 2× (`1280×960`) 3dfx Voodoo Superscaling & `SDL_GameControllerUpdate` Polling
+
+- **Internal 2× (`1280×960`) 3dfx Voodoo Rasterization (`SCREAMER_VOODOO_SCALE=2`)**:
+  - Why external Glide wrappers (`nGlide` / `dgVoodoo2`) cannot be used: DOS/4GW loads `GLIDE2X.OVL` inside emulated 32-bit DOS memory and communicates with the emulated Voodoo 1 SST-1 device over PCI MMIO (`0xD0000000`) inside `vendor/dosbox-staging/src/hardware/voodoo.cpp`.
+  - Because `dosbox-staging v0.82.2` uses a software triangle setup/rasterizer (`voodoo.cpp`), we extended `fbi_state` with `scale = 2` (enabled via `SCREAMER_VOODOO_SCALE=2` whenever an enhanced resolution is active):
+    - Allocates `fbmemsize * scale * scale` (`8 MB` FBI RAM at 2× so two `1280×960×2` color buffers + one `1280×960×2` Z-buffer fit cleanly) while keeping `tmumem0 = 2 MB` untouched for `MAXCACHE` compatibility.
+    - Scales `fbi.width`, `fbi.height`, `fbi.rowpixels`, and buffer offsets by `scale`.
+    - Scales triangle vertex coordinates (`ax..cy` × `scale`) and divides screen-space parameter gradients (`drdx..dwdy`, `dsdx..dwdy` / `scale`) inside `triangle()` with a `ScaleRestoreGuard` so subsequent triangles sharing vertices are unaffected.
+    - Scales `clipLowYHighY` and `clipLeftRight` by `scale` in `raster_generic` and `fastfill`, widens the `scry` scanline mask from `& 0x3ff` (`1023`) to `& 0xfff` (`4095`), and scales 2D `lfb_w` / `lfb_r` writes into `scale × scale` pixel blocks so the 2D HUD and menus overlay cleanly on top of the `1280×960` 3D scene.
+- **Explicit `SDL_GameControllerUpdate()` / `SDL_JoystickUpdate()` on Main Thread**:
+  - Because `dosbox-staging`'s `sdl_mapper.cpp` calls `SDL_JoystickEventState(SDL_DISABLE)`, `SDL_PollEvent` does not automatically pump SDL joystick/controller axes (`SDL_CONTROLLER_AXIS_TRIGGERLEFT` / `TRIGGERRIGHT`).
+  - Calling `SDL_GameControllerUpdate()` and `SDL_JoystickUpdate()` directly on the main thread inside `GFX_Events()` right before `screamer_hooks_on_tick()` ensures `RT` (`R2`) and `LT` (`L2`) trigger axes and stick axes are always fresh every frame without any background-thread mutex contention.
+
+---
+
+## 10. Why Native DLSS / FSR 2–3 Cannot Be Used on DOS/Glide, and How FSR 1.0 + Optical-Flow Frame Generation (`50 -> 100 FPS`) Work
+
+- **Why DLSS 2/3 & FSR 2/3 Cannot Attach Directly to a DOS Engine**:
+  - Temporal upscalers and frame generators (NVIDIA DLSS Super Resolution / DLSS 3 Frame Generation and AMD FSR 2/3) require DirectX 12 or Vulkan command queues plus engine-supplied **per-pixel 3D motion vectors (`MV_x, MV_y`)**, **sub-pixel camera projection jitter**, and a **linear depth buffer**.
+  - Neither the 1995–1997 DOS software rasterizers nor the 3dfx Glide 2.x API generate motion vectors or jittered projection matrices, and `dosbox-staging` presents final 2D RGBA frames over **OpenGL**.
+- **Hardware-Agnostic Solution 1 — AMD FSR 1.0 (`EASU + RCAS`) in GLSL (`interpolation/fsr.glsl`)**:
+  - Implemented in `vendor/dosbox-staging/contrib/resources/glshaders/interpolation/fsr.glsl` and selectable as **FSR (Super Res)** in the Launcher's **Picture** tab:
+    - **EASU (Edge-Adaptive Spatial Upsampling)**: Computes local luminance gradients across a 12-tap cross neighborhood around each texel and stretches an elliptical Lanczos2 kernel along detected edge directions, clamped to the inner 2×2 neighborhood min/max to eliminate ringing.
+    - **RCAS (Robust Contrast-Adaptive Sharpening)**: Applies a 5-tap contrast-bounded sharpening pass after upscaling.
+- **Hardware-Agnostic Solution 2 — GPU Optical-Flow Frame Generation (`50 FPS -> 100 FPS`, `SCREAMER_FRAME_GEN=1`)**:
+  - Because the DOS game's internal SOS timer and 50-entry physics lookup table must remain at `50 Hz` (`20 ms` per frame), presentation-layer Frame Generation in `vendor/dosbox-staging/src/gui/sdlmain.cpp` (`ScreamerFrameGenState`) maintains two OpenGL textures (`GL_TEXTURE0` = current frame $F_t$, `GL_TEXTURE1` = previous frame $F_{t-1}$):
+    - At `t = 0 ms` (when `update_frame_gl` receives a new 50 Hz frame from the DOS game), `present_frame_gl()` renders with `rubyFrameBlend = 0.5`, invoking a bidirectional optical-flow motion search in the fragment shader (`fsr.glsl`, `sharp.glsl`, `bilinear.glsl`) that protects static HUD/UI pixels (`|L_curr - L_prev| < 0.015`) while warping moving 3D geometry along the best-matching motion vector $\vec{v}$ with disocclusion fallback.
+    - At `t = +10 ms` (checked inside `GFX_Events()` on the main thread), `present_frame_gl()` renders the exact unblended frame $F_t$ (`rubyFrameBlend = 0.0`), doubling the output frame rate from **50 FPS to 100 FPS** with zero impact on game timers or physics.

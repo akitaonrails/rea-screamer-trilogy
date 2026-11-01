@@ -314,9 +314,24 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
         .arg("-conf")
         .arg(&prepared.conf_path);
 
-    // Pass settings to the statically linked screamer-hooks inside dosbox via environment variables.
+    let is_3dfx = prepared.selected_exe.eq_ignore_ascii_case("S2_3DFX.EXE")
+        || prepared.selected_exe.eq_ignore_ascii_case("STRT3FX.EXE");
+    let voodoo_scale = if is_3dfx && settings.race_resolution().is_some() {
+        "2"
+    } else {
+        "1"
+    };
+    let frame_gen = if settings.fps_cap().is_some_and(|fps| fps >= 60) {
+        "1"
+    } else {
+        "0"
+    };
+
+    // Pass settings to the statically linked screamer-hooks and Voodoo renderer inside dosbox via environment variables.
     cmd.env("SCREAMER_GAME", disc.game.slug())
         .env("SCREAMER_EXE", &prepared.selected_exe)
+        .env("SCREAMER_VOODOO_SCALE", voodoo_scale)
+        .env("SCREAMER_FRAME_GEN", frame_gen)
         .env(
             "SCREAMER_GAMEPAD_AXES",
             if settings.gamepad_axes != Some(false) {

@@ -104,9 +104,13 @@ impl RendererChoice {
 pub const ORIGINAL_BUTTONS: [u8; 8] = [0; 8];
 
 /// Modern layout for Xbox-style pads:
-/// 1: Select/Accelerate (A), 2: Back/Brake (B), 3: View (Y), 4: Gear Down (LB),
-/// 5: Handbrake/Alt (X), 6: Gear Up (RB), 7: Back/Select, 8: Pause (Start).
-pub const MODERN_BUTTONS: [u8; 8] = [1, 2, 4, 5, 3, 6, 7, 8];
+/// 0: Accelerate (RT=10; A=1 also works in race & menus), 1: Back/Cancel (B=2),
+/// 2: Camera (Y=4), 3: Gear Down (LB=5), 4: Brake (LT=9; X=3 also works in race & menus),
+/// 5: Gear Up (RB=6), 6: Back/Select (7), 7: Start/Confirm (8).
+pub const MODERN_BUTTONS: [u8; 8] = [10, 2, 4, 5, 9, 6, 7, 8];
+
+/// Legacy Modern layout (A=1 for Accelerate, X=3 for Brake).
+pub const LEGACY_MODERN_BUTTONS: [u8; 8] = [1, 2, 4, 5, 3, 6, 7, 8];
 
 pub const DEFAULT_BUTTONS: [u8; 8] = MODERN_BUTTONS;
 
@@ -126,7 +130,7 @@ fn parse_buttons(v: &str) -> Option<[u8; 8]> {
 pub fn buttons_value(b: &[u8; 8]) -> String {
     match *b {
         ORIGINAL_BUTTONS => "original".into(),
-        MODERN_BUTTONS => "modern".into(),
+        MODERN_BUTTONS | LEGACY_MODERN_BUTTONS => "modern".into(),
         _ => b.map(|n| n.to_string()).join(","),
     }
 }
@@ -158,10 +162,11 @@ impl Scaler {
     }
 }
 
-/// `texture_filter`: original, smooth (bilinear), or sharp (nearest).
+/// `texture_filter`: original (CRT), fsr (AMD FSR 1.0 EASU+RCAS), smooth (bilinear), or sharp (nearest).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextureFilter {
     Original,
+    Fsr,
     Smooth,
     Sharp,
 }
@@ -169,6 +174,7 @@ pub enum TextureFilter {
 fn parse_filter(v: &str) -> Option<TextureFilter> {
     match v.trim().to_ascii_lowercase().as_str() {
         "original" => Some(TextureFilter::Original),
+        "fsr" => Some(TextureFilter::Fsr),
         "smooth" => Some(TextureFilter::Smooth),
         "sharp" => Some(TextureFilter::Sharp),
         _ => None,

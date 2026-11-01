@@ -33,8 +33,8 @@ impl Picture {
             renderer: RendererChoice::Auto,
             resolution: Some((1920, 1080)),
             widescreen: true,
-            texture_filter: TextureFilter::Smooth,
-            fps_limit: Some(60),
+            texture_filter: TextureFilter::Fsr,
+            fps_limit: Some(100),
             vsync: Some(true),
         }
     }
@@ -43,8 +43,8 @@ impl Picture {
         renderer: RendererChoice::Auto,
         resolution: Some(STEAM_DECK_SCREEN),
         widescreen: true,
-        texture_filter: TextureFilter::Smooth,
-        fps_limit: Some(60),
+        texture_filter: TextureFilter::Fsr,
+        fps_limit: Some(100),
         vsync: Some(true),
     };
 }
@@ -88,9 +88,51 @@ pub const PAD_BUTTONS: [(u8, &str); 10] = [
     (6, "RB"),
     (7, "Back"),
     (8, "Start"),
-    (9, "LS"),
-    (10, "RS"),
+    (9, "LT"),
+    (10, "RT"),
 ];
+
+pub const PAD_A: u16 = 1 << 0;
+pub const PAD_B: u16 = 1 << 1;
+pub const PAD_LB: u16 = 1 << 4;
+pub const PAD_RB: u16 = 1 << 5;
+pub const PAD_START: u16 = 1 << 7;
+pub const PAD_UP: u16 = 1 << 8;
+pub const PAD_DOWN: u16 = 1 << 9;
+pub const PAD_LEFT: u16 = 1 << 10;
+pub const PAD_RIGHT: u16 = 1 << 11;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PadAction {
+    Play,
+    Up,
+    Down,
+    Left,
+    Right,
+    Press,
+    NextTab,
+    PreviousTab,
+}
+
+pub fn pad_actions(before: u16, now: u16) -> Vec<PadAction> {
+    let pressed = now & !before;
+    let mut out = Vec::new();
+    for (bit, action) in [
+        (PAD_START, PadAction::Play),
+        (PAD_LB, PadAction::PreviousTab),
+        (PAD_RB, PadAction::NextTab),
+        (PAD_UP, PadAction::Up),
+        (PAD_DOWN, PadAction::Down),
+        (PAD_LEFT, PadAction::Left),
+        (PAD_RIGHT, PadAction::Right),
+        (PAD_A, PadAction::Press),
+    ] {
+        if pressed & bit != 0 {
+            out.push(action);
+        }
+    }
+    out
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Look {
@@ -115,11 +157,9 @@ pub struct Form {
     pub layout: Layout,
 }
 
-pub const FRAME_RATES: [(Option<u32>, &str); 4] = [
-    (None, "Original (30)"),
-    (Some(60), "60 FPS"),
-    (Some(120), "120 FPS"),
-    (Some(144), "144 FPS"),
+pub const FRAME_RATES: [(Option<u32>, &str); 2] = [
+    (None, "50 FPS (Native)"),
+    (Some(100), "100 FPS (Frame Gen)"),
 ];
 
 pub const VSYNCS: [(Option<bool>, &str); 3] = [
@@ -128,8 +168,9 @@ pub const VSYNCS: [(Option<bool>, &str); 3] = [
     (Some(false), "Off"),
 ];
 
-pub const FILTERS: [(TextureFilter, &str); 3] = [
+pub const FILTERS: [(TextureFilter, &str); 4] = [
     (TextureFilter::Original, "CRT Monitor"),
+    (TextureFilter::Fsr, "FSR (Super Res)"),
     (TextureFilter::Sharp, "Sharp (Pixel)"),
     (TextureFilter::Smooth, "Smooth (Bilinear)"),
 ];
@@ -211,7 +252,7 @@ impl Form {
             resolution: s.race_resolution(),
             widescreen: s.widescreen == Some(true),
             texture_filter: s.texture_filter.unwrap_or(TextureFilter::Original),
-            fps_limit: s.fps_cap(),
+            fps_limit: s.fps_cap().map(|_| 100),
             vsync: s.vsync,
         };
         let buttons = s.buttons.unwrap_or(config::DEFAULT_BUTTONS);
@@ -241,7 +282,7 @@ impl Form {
     pub fn layout_of(buttons: &[u8; 8]) -> Layout {
         match *buttons {
             config::ORIGINAL_BUTTONS => Layout::Original,
-            config::MODERN_BUTTONS => Layout::Modern,
+            config::MODERN_BUTTONS | config::LEGACY_MODERN_BUTTONS => Layout::Modern,
             _ => Layout::Custom,
         }
     }
@@ -325,6 +366,7 @@ impl Form {
             "texture_filter",
             match p.texture_filter {
                 TextureFilter::Original => None,
+                TextureFilter::Fsr => Some("fsr".into()),
                 TextureFilter::Smooth => Some("smooth".into()),
                 TextureFilter::Sharp => Some("sharp".into()),
             },
@@ -371,7 +413,8 @@ mod tests {
         assert_eq!(f2.look, Look::Enhanced);
         assert_eq!(f2.picture.resolution, Some((1920, 1080)));
         assert!(f2.picture.widescreen);
-        assert_eq!(f2.picture.fps_limit, Some(60));
+        assert_eq!(f2.picture.texture_filter, TextureFilter::Fsr);
+        assert_eq!(f2.picture.fps_limit, Some(100));
     }
 
     #[test]
@@ -384,5 +427,19 @@ mod tests {
         // Switching to Screamer (1995), which does not have 3dfx Voodoo, resets renderer to Auto
         f.set_which(Game::Screamer, true, SCREEN);
         assert_eq!(f.picture.renderer, RendererChoice::Auto);
+    }
+
+    #[test]
+    fn pad_actions_detect_rising_edges_and_modern_triggers() {
+        assert_eq!(pad_actions(0, PAD_START), vec![PadAction::Play]);
+        assert_eq!(pad_actions(PAD_START, PAD_START), Vec::<PadAction>::new());
+        assert_eq!(
+            pad_actions(0, PAD_RB | PAD_DOWN),
+            vec![PadAction::NextTab, PadAction::Down]
+        );
+        let f = form(config::TEMPLATE);
+        assert_eq!(f.layout, Layout::Modern);
+        assert_eq!(f.buttons[0], 10); // Accelerate = RT
+        assert_eq!(f.buttons[4], 9); // Brake = LT
     }
 }

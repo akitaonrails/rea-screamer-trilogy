@@ -259,7 +259,10 @@ pub fn build_dosbox_conf(opts: &DosboxConfOptions<'_>) -> String {
         format!("{}x{}", opts.resolution.0, opts.resolution.1)
     };
     let aspect_str = if opts.widescreen { "stretch" } else { "auto" };
-    let voodoo_mem = if opts.voodoo_enabled { "12" } else { "4" };
+    // Always use standard 4 MB Voodoo 1 (2 MB FBI + 2 MB TMU0, single TMU).
+    // 12 MB selects VOODOO_1_DTMU (4 MB TMU0), which overflows S2/SR's 1024-slot
+    // lazy texture cache table before reaching grTexMaxAddress(0).
+    let voodoo_mem = "4";
     let voodoo_bilinear = if opts.texture_filtering {
         "true"
     } else {

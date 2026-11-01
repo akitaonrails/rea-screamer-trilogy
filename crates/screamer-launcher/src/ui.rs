@@ -17,7 +17,7 @@ use eframe::egui::{
 
 use screamer_launcher::config::{RendererChoice, Settings};
 use screamer_launcher::edition::Game;
-use screamer_launcher::form::{self, Form, Layout, Look};
+use screamer_launcher::form::{self, Form, Layout, Look, PadAction};
 use screamer_launcher::runtime::{self, DiscoveredTrilogy};
 
 const CHASSIS: Color32 = Color32::from_rgb(0x0e, 0x17, 0x2a);
@@ -152,6 +152,8 @@ enum Tab {
 struct Window<'a> {
     form: Form,
     tab: Tab,
+    focus_row: usize,
+    pad: PadPoller,
     trilogy: DiscoveredTrilogy,
     checked: String,
     screen: Option<(u32, u32)>,
@@ -213,6 +215,8 @@ impl<'a> Window<'a> {
             trilogy,
             form,
             tab: initial_tab,
+            focus_row: 0,
+            pad: PadPoller::default(),
             screen,
             resolutions: form::resolutions(screen),
             controllers: detect_controllers(),
@@ -375,6 +379,10 @@ impl eframe::App for Window<'_> {
         }
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(33));
+        for action in self.pad.poll() {
+            self.handle_pad_action(action, &ctx);
         }
 
         let full = ui.max_rect();
@@ -565,12 +573,13 @@ impl Window<'_> {
     }
 
     fn play_tab(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "Game in the trilogy");
+        let focus = self.focus_row;
+        heading_focused(ui, "Game in the trilogy", focus == 0);
         ui.add_space(2.0);
         let gap = 10.0;
         let card_w = (ui.available_width() - 2.0 * gap) / 3.0;
         let mut chosen_game = None;
-        ui.horizontal(|ui| {
+        let r0 = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             for game in Game::ALL {
                 let installed = self.trilogy.get(game).is_some();
@@ -599,6 +608,7 @@ impl Window<'_> {
                 }
             }
         });
+        draw_focus_bar(ui, r0.response.rect, focus == 0);
         if let Some(g) = chosen_game {
             let has_glide = self.trilogy.get(g).is_none_or(|d| d.can_use_dos_glide());
             self.form.set_which(g, has_glide, self.screen);
@@ -639,7 +649,7 @@ impl Window<'_> {
         ui.label(egui::RichText::new(note).font(font(13.0)).color(color));
         ui.add_space(8.0);
 
-        heading(ui, "Look");
+        heading_focused(ui, "Look", focus == 1);
         ui.add_space(4.0);
         let best = form::recommended(self.screen);
         let orig_title = format!("Original {}", self.form.which.year());
@@ -652,17 +662,17 @@ impl Window<'_> {
             (
                 Look::Enhanced,
                 "Enhanced",
-                "1080p Hor+ widescreen, smooth filter.",
+                "1080p Hor+, FSR upscaling, 100 FPS.",
             ),
             (
                 Look::SteamDeck,
                 "Steam Deck",
-                "1280×800 Hor+ widescreen, smooth filter.",
+                "1280×800 Hor+, FSR upscaling, 100 FPS.",
             ),
             (Look::Custom, "Custom", "Pick each setting in Picture."),
         ];
         let look_w = (ui.available_width() - 3.0 * gap) / 4.0;
-        ui.horizontal(|ui| {
+        let r1 = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             for (look, title, desc) in cards {
                 if look_card(
@@ -682,6 +692,7 @@ impl Window<'_> {
                 }
             }
         });
+        draw_focus_bar(ui, r1.response.rect, focus == 1);
         ui.add_space(8.0);
 
         heading(ui, "Saves");
@@ -698,16 +709,19 @@ impl Window<'_> {
         let which = self.form.which;
         let has_glide = self.has_dos_glide_for_current();
         let resolutions = &self.resolutions;
+        let focus = self.focus_row;
         let p = &mut self.form.picture;
 
-        let row = |ui: &mut egui::Ui, name: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
-            ui.horizontal_top(|ui| {
-                field(ui, name);
-                ui.vertical(|ui| add(ui));
-            });
-        };
+        let row =
+            |ui: &mut egui::Ui, focused: bool, name: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
+                let resp = ui.horizontal_top(|ui| {
+                    field_focused(ui, name, focused);
+                    ui.vertical(|ui| add(ui));
+                });
+                draw_focus_bar(ui, resp.response.rect, focused);
+            };
 
-        row(ui, "Renderer", &mut |ui| {
+        row(ui, focus == 0, "Renderer", &mut |ui| {
             let opts: Vec<(RendererChoice, &str, Option<&str>)> = RendererChoice::ALL
                 .into_iter()
                 .map(|r| (r, r.label(), r.disabled_reason(which, has_glide)))
@@ -715,19 +729,23 @@ impl Window<'_> {
             chips_with_disabled(ui, &opts, &mut p.renderer);
         });
 
-        row(ui, "Display", &mut |ui| {
+        row(ui, focus == 1, "Display", &mut |ui| {
             chips(ui, resolutions, &mut p.resolution);
         });
 
-        row(ui, "Shader / Filter", &mut |ui| {
+        row(ui, focus == 2, "Shader / Upscaler", &mut |ui| {
             chips(ui, &form::FILTERS, &mut p.texture_filter);
         });
 
-        row(ui, "Vsync", &mut |ui| {
+        row(ui, focus == 3, "Frame rate", &mut |ui| {
+            chips(ui, &form::FRAME_RATES, &mut p.fps_limit);
+        });
+
+        row(ui, focus == 4, "Vsync", &mut |ui| {
             chips(ui, &form::VSYNCS, &mut p.vsync);
         });
 
-        row(ui, "", &mut |ui| {
+        row(ui, focus == 5, "", &mut |ui| {
             toggle(
                 ui,
                 &mut p.widescreen,
@@ -739,7 +757,7 @@ impl Window<'_> {
         ui.add_space(10.0);
         ui.label(
             egui::RichText::new(
-                "Note: All three DOS games render internally at 640×480 (3dfx Voodoo / SVGA) or 320×200 (VGA), upscaled to your display by OpenGL, and pace physics via the 50 Hz SOS timer table.",
+                "Note: 3dfx Voodoo renders internally at 1280×960 (2x superscaled) and SVGA at 640×480. FSR (EASU+RCAS) upscales to your display, and 100 FPS Frame Gen uses GPU optical flow while keeping 50 Hz game physics intact.",
             )
             .font(font(13.0))
             .color(MUTED),
@@ -752,34 +770,40 @@ impl Window<'_> {
     }
 
     fn controls_tab(&mut self, ui: &mut egui::Ui) {
-        toggle(
-            ui,
-            &mut self.form.gamepad_axes,
-            "Gamepad: proportional analog steering, L2/R2 trigger pedals, D-pad menus",
-            None,
-        );
+        let focus = self.focus_row;
+        let r0 = ui.horizontal_top(|ui| {
+            toggle(
+                ui,
+                &mut self.form.gamepad_axes,
+                "Gamepad: proportional analog steering, L2/R2 trigger pedals, D-pad menus",
+                None,
+            );
+        });
+        draw_focus_bar(ui, r0.response.rect, focus == 0);
         ui.add_space(6.0);
 
         let pad_off_reason = (!self.form.gamepad_axes)
             .then_some("Turn on Gamepad above to configure steering deadzone and rumble.");
 
-        ui.horizontal_top(|ui| {
-            field(ui, "Deadzone");
+        let r1 = ui.horizontal_top(|ui| {
+            field_focused(ui, "Deadzone", focus == 1);
             let opts: Vec<_> = form::DEADZONES
                 .into_iter()
                 .map(|(dz, label)| (dz, label, pad_off_reason))
                 .collect();
             chips_with_disabled(ui, &opts, &mut self.form.deadzone);
         });
+        draw_focus_bar(ui, r1.response.rect, focus == 1);
 
-        ui.horizontal_top(|ui| {
-            field(ui, "Rumble");
+        let r2 = ui.horizontal_top(|ui| {
+            field_focused(ui, "Rumble", focus == 2);
             let opts: Vec<_> = form::RUMBLES
                 .into_iter()
                 .map(|(r, label)| (r, label, pad_off_reason))
                 .collect();
             chips_with_disabled(ui, &opts, &mut self.form.rumble);
         });
+        draw_focus_bar(ui, r2.response.rect, focus == 2);
 
         ui.add_space(8.0);
         let pad_status = if self.controllers.is_empty() {
@@ -810,6 +834,7 @@ impl Window<'_> {
     }
 
     fn buttons_tab(&mut self, ui: &mut egui::Ui) {
+        let focus = self.focus_row;
         let orig_title = format!("Original {}", self.form.which.year());
         let cards = [
             (
@@ -821,7 +846,7 @@ impl Window<'_> {
             (
                 Layout::Modern,
                 "Modern",
-                "Xbox / Steam Deck racing layout.",
+                "RT/LT pedals + Xbox / Steam Deck layout.",
                 true,
             ),
             (Layout::Custom, "Custom", "Your own button choices.", false),
@@ -829,7 +854,7 @@ impl Window<'_> {
         let gap = 12.0;
         let w = (ui.available_width() - 2.0 * gap) / 3.0;
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
+        let r0 = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             for (layout, title, note, recommended) in cards {
                 if look_card(
@@ -845,9 +870,10 @@ impl Window<'_> {
                 }
             }
         });
+        draw_focus_bar(ui, r0.response.rect, focus == 0);
         ui.label(
             egui::RichText::new(
-                "Names follow Xbox / Steam Deck pads. D-pad and Left Stick navigate menus; A confirms, B goes back.",
+                "RT/LT (R2/L2) analog triggers & A/X buttons work together in Modern mode. D-pad / Left Stick navigate menus.",
             )
             .font(font(13.0))
             .color(MUTED),
@@ -855,19 +881,21 @@ impl Window<'_> {
         ui.spacing_mut().item_spacing.y = 4.0;
         let pad_off_reason =
             (!self.form.gamepad_axes).then_some("Turn on Gamepad in the Controls tab first.");
-        let options: Vec<_> = form::PAD_BUTTONS[..8]
+        let options: Vec<_> = form::PAD_BUTTONS
             .iter()
             .map(|&(b, l)| (b, l, pad_off_reason))
             .collect();
-        for (k, name) in form::ACTIONS {
-            ui.horizontal_top(|ui| {
-                field(ui, name);
+        for (row_idx, (k, name)) in form::ACTIONS.into_iter().enumerate() {
+            let row_focused = focus == row_idx + 1;
+            let r = ui.horizontal_top(|ui| {
+                field_focused(ui, name, row_focused);
                 let mut button = self.form.pad_button(k);
-                chips_with_disabled(ui, &options, &mut button);
+                chips_compact_with_disabled(ui, &options, &mut button);
                 if self.form.gamepad_axes {
                     self.form.set_pad_button(k, button);
                 }
             });
+            draw_focus_bar(ui, r.response.rect, row_focused);
         }
     }
 
@@ -919,6 +947,298 @@ impl Window<'_> {
         {
             self.play(ctx);
         }
+    }
+
+    fn max_focus_row(&self) -> usize {
+        match self.tab {
+            Tab::Play => 1,
+            Tab::Picture => 5,
+            Tab::Controls => 2,
+            Tab::Buttons => form::ACTIONS.len(),
+        }
+    }
+
+    fn handle_pad_action(&mut self, action: PadAction, ctx: &egui::Context) {
+        let tabs = [Tab::Play, Tab::Picture, Tab::Controls, Tab::Buttons];
+        match action {
+            PadAction::Play => self.play(ctx),
+            PadAction::PreviousTab => {
+                let idx = tabs.iter().position(|&t| t == self.tab).unwrap_or(0);
+                self.tab = tabs[(idx + tabs.len() - 1) % tabs.len()];
+                self.focus_row = 0;
+            }
+            PadAction::NextTab => {
+                let idx = tabs.iter().position(|&t| t == self.tab).unwrap_or(0);
+                self.tab = tabs[(idx + 1) % tabs.len()];
+                self.focus_row = 0;
+            }
+            PadAction::Up => {
+                let max = self.max_focus_row();
+                self.focus_row = if self.focus_row == 0 {
+                    max
+                } else {
+                    self.focus_row - 1
+                };
+            }
+            PadAction::Down => {
+                let max = self.max_focus_row();
+                self.focus_row = if self.focus_row >= max {
+                    0
+                } else {
+                    self.focus_row + 1
+                };
+            }
+            PadAction::Left => self.step_focused_option(-1),
+            PadAction::Right => self.step_focused_option(1),
+            PadAction::Press => match (self.tab, self.focus_row) {
+                (Tab::Play, 0) => self.play(ctx),
+                (Tab::Play, 1) if self.form.look == Look::Custom => {
+                    self.tab = Tab::Picture;
+                    self.focus_row = 0;
+                }
+                (Tab::Picture, 5) => {
+                    self.form.picture.widescreen = !self.form.picture.widescreen;
+                    self.form.look = Form::look_of(&self.form.picture, self.screen);
+                }
+                (Tab::Controls, 0) => {
+                    self.form.gamepad_axes = !self.form.gamepad_axes;
+                }
+                _ => self.step_focused_option(1),
+            },
+        }
+    }
+
+    fn step_focused_option(&mut self, dir: isize) {
+        match (self.tab, self.focus_row) {
+            (Tab::Play, 0) => {
+                let idx = Game::ALL
+                    .iter()
+                    .position(|&g| g == self.form.which)
+                    .unwrap_or(0) as isize;
+                let next = (idx + dir).rem_euclid(Game::ALL.len() as isize) as usize;
+                let g = Game::ALL[next];
+                let has_glide = self.trilogy.get(g).is_none_or(|d| d.can_use_dos_glide());
+                self.form.set_which(g, has_glide, self.screen);
+                self.error = None;
+            }
+            (Tab::Play, 1) => {
+                let looks = [
+                    Look::Original,
+                    Look::Enhanced,
+                    Look::SteamDeck,
+                    Look::Custom,
+                ];
+                let idx = looks.iter().position(|&l| l == self.form.look).unwrap_or(0) as isize;
+                let next = (idx + dir).rem_euclid(looks.len() as isize) as usize;
+                let look = looks[next];
+                self.form.set_look(look, self.screen);
+                let has_glide = self.has_dos_glide_for_current();
+                self.form.set_which(self.form.which, has_glide, self.screen);
+            }
+            (Tab::Picture, 0) => {
+                let which = self.form.which;
+                let has_glide = self.has_dos_glide_for_current();
+                let supported: Vec<RendererChoice> = RendererChoice::ALL
+                    .into_iter()
+                    .filter(|r| r.is_supported_for(which, has_glide))
+                    .collect();
+                if !supported.is_empty() {
+                    let idx = supported
+                        .iter()
+                        .position(|&r| r == self.form.picture.renderer)
+                        .unwrap_or(0) as isize;
+                    let next = (idx + dir).rem_euclid(supported.len() as isize) as usize;
+                    self.form.picture.renderer = supported[next];
+                    self.form.look = Form::look_of(&self.form.picture, self.screen);
+                }
+            }
+            (Tab::Picture, 1) => {
+                if !self.resolutions.is_empty() {
+                    let idx = self
+                        .resolutions
+                        .iter()
+                        .position(|(r, _)| *r == self.form.picture.resolution)
+                        .unwrap_or(0) as isize;
+                    let next = (idx + dir).rem_euclid(self.resolutions.len() as isize) as usize;
+                    self.form.picture.resolution = self.resolutions[next].0;
+                    self.form.look = Form::look_of(&self.form.picture, self.screen);
+                }
+            }
+            (Tab::Picture, 2) => {
+                let idx = form::FILTERS
+                    .iter()
+                    .position(|(f, _)| *f == self.form.picture.texture_filter)
+                    .unwrap_or(0) as isize;
+                let next = (idx + dir).rem_euclid(form::FILTERS.len() as isize) as usize;
+                self.form.picture.texture_filter = form::FILTERS[next].0;
+                self.form.look = Form::look_of(&self.form.picture, self.screen);
+            }
+            (Tab::Picture, 3) => {
+                let idx = form::FRAME_RATES
+                    .iter()
+                    .position(|(f, _)| *f == self.form.picture.fps_limit)
+                    .unwrap_or(0) as isize;
+                let next = (idx + dir).rem_euclid(form::FRAME_RATES.len() as isize) as usize;
+                self.form.picture.fps_limit = form::FRAME_RATES[next].0;
+                self.form.look = Form::look_of(&self.form.picture, self.screen);
+            }
+            (Tab::Picture, 4) => {
+                let idx = form::VSYNCS
+                    .iter()
+                    .position(|(v, _)| *v == self.form.picture.vsync)
+                    .unwrap_or(0) as isize;
+                let next = (idx + dir).rem_euclid(form::VSYNCS.len() as isize) as usize;
+                self.form.picture.vsync = form::VSYNCS[next].0;
+                self.form.look = Form::look_of(&self.form.picture, self.screen);
+            }
+            (Tab::Picture, 5) => {
+                self.form.picture.widescreen = !self.form.picture.widescreen;
+                self.form.look = Form::look_of(&self.form.picture, self.screen);
+            }
+            (Tab::Controls, 0) => {
+                self.form.gamepad_axes = !self.form.gamepad_axes;
+            }
+            (Tab::Controls, 1) if self.form.gamepad_axes => {
+                let idx = form::DEADZONES
+                    .iter()
+                    .position(|(d, _)| *d == self.form.deadzone)
+                    .unwrap_or(0) as isize;
+                let next = (idx + dir).rem_euclid(form::DEADZONES.len() as isize) as usize;
+                self.form.deadzone = form::DEADZONES[next].0;
+            }
+            (Tab::Controls, 2) if self.form.gamepad_axes => {
+                let idx = form::RUMBLES
+                    .iter()
+                    .position(|(r, _)| *r == self.form.rumble)
+                    .unwrap_or(0) as isize;
+                let next = (idx + dir).rem_euclid(form::RUMBLES.len() as isize) as usize;
+                self.form.rumble = form::RUMBLES[next].0;
+            }
+            (Tab::Buttons, 0) if self.form.gamepad_axes => {
+                let layouts = [Layout::Original, Layout::Modern, Layout::Custom];
+                let idx = layouts
+                    .iter()
+                    .position(|&l| l == self.form.layout)
+                    .unwrap_or(0) as isize;
+                let next = (idx + dir).rem_euclid(layouts.len() as isize) as usize;
+                self.form.set_layout(layouts[next]);
+            }
+            (Tab::Buttons, r)
+                if self.form.gamepad_axes && (1..=form::ACTIONS.len()).contains(&r) =>
+            {
+                let (k, _) = form::ACTIONS[r - 1];
+                let cur = self.form.pad_button(k);
+                let idx = form::PAD_BUTTONS
+                    .iter()
+                    .position(|(b, _)| *b == cur)
+                    .unwrap_or(0) as isize;
+                let next = (idx + dir).rem_euclid(form::PAD_BUTTONS.len() as isize) as usize;
+                self.form.set_pad_button(k, form::PAD_BUTTONS[next].0);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[derive(Default)]
+struct PadPoller {
+    last_mask: u16,
+    #[cfg(target_os = "linux")]
+    js_file: Option<std::fs::File>,
+    #[cfg(target_os = "linux")]
+    buttons: [bool; 16],
+    #[cfg(target_os = "linux")]
+    axes: [i16; 8],
+}
+
+impl PadPoller {
+    fn poll(&mut self) -> Vec<PadAction> {
+        let now = self.read_mask();
+        let actions = form::pad_actions(self.last_mask, now);
+        self.last_mask = now;
+        actions
+    }
+
+    #[cfg(target_os = "linux")]
+    fn read_mask(&mut self) -> u16 {
+        use std::io::Read;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        if self.js_file.is_none() {
+            for idx in 0..4 {
+                let path = format!("/dev/input/js{idx}");
+                if let Ok(f) = std::fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(0o4000) // O_NONBLOCK
+                    .open(&path)
+                {
+                    self.buttons = [false; 16];
+                    self.axes = [0; 8];
+                    self.js_file = Some(f);
+                    break;
+                }
+            }
+        }
+
+        if let Some(f) = &mut self.js_file {
+            let mut buf = [0u8; 8];
+            loop {
+                match f.read_exact(&mut buf) {
+                    Ok(()) => {
+                        let value = i16::from_le_bytes([buf[4], buf[5]]);
+                        let ev_type = buf[6] & !0x80; // strip JS_EVENT_INIT
+                        let number = buf[7] as usize;
+                        if ev_type == 0x01 && number < self.buttons.len() {
+                            self.buttons[number] = value != 0;
+                        } else if ev_type == 0x02 && number < self.axes.len() {
+                            self.axes[number] = value;
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(_) => {
+                        self.js_file = None;
+                        self.buttons = [false; 16];
+                        self.axes = [0; 8];
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut m = 0u16;
+        if self.buttons[0] {
+            m |= form::PAD_A;
+        }
+        if self.buttons[1] {
+            m |= form::PAD_B;
+        }
+        if self.buttons[4] {
+            m |= form::PAD_LB;
+        }
+        if self.buttons[5] {
+            m |= form::PAD_RB;
+        }
+        if self.buttons[7] {
+            m |= form::PAD_START;
+        }
+        if self.axes[1] < -16000 || self.axes[7] < -16000 {
+            m |= form::PAD_UP;
+        }
+        if self.axes[1] > 16000 || self.axes[7] > 16000 {
+            m |= form::PAD_DOWN;
+        }
+        if self.axes[0] < -16000 || self.axes[6] < -16000 {
+            m |= form::PAD_LEFT;
+        }
+        if self.axes[0] > 16000 || self.axes[6] > 16000 {
+            m |= form::PAD_RIGHT;
+        }
+        m
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn read_mask(&mut self) -> u16 {
+        0
     }
 }
 
@@ -976,22 +1296,36 @@ fn draw_decal(ui: &egui::Ui, full: Rect) {
 }
 
 fn heading(ui: &mut egui::Ui, text: &str) {
+    heading_focused(ui, text, false);
+}
+
+fn heading_focused(ui: &mut egui::Ui, text: &str, focused: bool) {
     ui.label(
         egui::RichText::new(text)
             .font(named("barlow-semibold", 14.0))
-            .color(MUTED),
+            .color(if focused { GOLD } else { MUTED }),
     );
 }
 
-fn field(ui: &mut egui::Ui, text: &str) {
+fn field_focused(ui: &mut egui::Ui, text: &str, focused: bool) {
     let (rect, _) = ui.allocate_exact_size(vec2(128.0, 30.0), Sense::hover());
     ui.painter().text(
         rect.left_center(),
         Align2::LEFT_CENTER,
         text,
         font(15.0),
-        INK,
+        if focused { GOLD } else { INK },
     );
+}
+
+fn draw_focus_bar(ui: &egui::Ui, rect: Rect, focused: bool) {
+    if focused {
+        let bar = Rect::from_min_size(
+            pos2(rect.left() - 8.0, rect.top() + 2.0),
+            vec2(3.0, (rect.height() - 4.0).max(8.0)),
+        );
+        ui.painter().rect_filled(bar, CornerRadius::same(1), GOLD);
+    }
 }
 
 fn folder_field(ui: &mut egui::Ui, value: &mut String, hint: &str, title: &str) -> bool {
@@ -1053,8 +1387,26 @@ fn chips_with_disabled<T: PartialEq + Copy>(
     options: &[(T, &str, Option<&str>)],
     current: &mut T,
 ) {
+    chips_styled_with_disabled(ui, options, current, 22.0, 6.0);
+}
+
+fn chips_compact_with_disabled<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    options: &[(T, &str, Option<&str>)],
+    current: &mut T,
+) {
+    chips_styled_with_disabled(ui, options, current, 14.0, 5.0);
+}
+
+fn chips_styled_with_disabled<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    options: &[(T, &str, Option<&str>)],
+    current: &mut T,
+    pad_x: f32,
+    gap_x: f32,
+) {
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.spacing_mut().item_spacing.x = gap_x;
         for &(value, label, disabled_reason) in options {
             let enabled = disabled_reason.is_none();
             let on = enabled && *current == value;
@@ -1074,7 +1426,7 @@ fn chips_with_disabled<T: PartialEq + Copy>(
                 },
                 text_color,
             );
-            let size = vec2(galley.size().x + 22.0, 30.0);
+            let size = vec2(galley.size().x + pad_x, 30.0);
             let sense = if enabled {
                 Sense::click()
             } else {

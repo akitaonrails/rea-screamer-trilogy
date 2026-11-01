@@ -1,3 +1,349 @@
+diff --git a/contrib/resources/glshaders/interpolation/bilinear.glsl b/contrib/resources/glshaders/interpolation/bilinear.glsl
+index 109f3ce..3ddb8cb 100644
+--- a/contrib/resources/glshaders/interpolation/bilinear.glsl
++++ b/contrib/resources/glshaders/interpolation/bilinear.glsl
+@@ -44,10 +44,52 @@ void main()
+ 
+ #elif defined(FRAGMENT)
+ 
++uniform vec2 rubyTextureSize;
++uniform vec2 rubyInputSize;
+ uniform sampler2D rubyTexture;
++uniform sampler2D rubyPrevTexture;
++uniform float rubyFrameBlend;
++
++float luma(vec3 c)
++{
++	return dot(c, vec3(0.299, 0.587, 0.114));
++}
++
+ void main()
+ {
+-	gl_FragColor = texture2D(rubyTexture, v_texCoord);
++	vec4 curr = texture2D(rubyTexture, v_texCoord);
++	if (rubyFrameBlend <= 0.001) {
++		gl_FragColor = curr;
++		return;
++	}
++	vec4 prev = texture2D(rubyPrevTexture, v_texCoord);
++	float diff0 = abs(luma(curr.rgb) - luma(prev.rgb));
++	if (diff0 < 0.015) {
++		gl_FragColor = curr;
++		return;
++	}
++	vec2 inv_tex = 1.0 / rubyTextureSize;
++	vec2 max_uv = (rubyInputSize - vec2(0.5)) * inv_tex;
++	vec2 best_v = vec2(0.0);
++	float best_err = diff0;
++	for (int dy = -2; dy <= 2; ++dy) {
++		for (int dx = -3; dx <= 3; ++dx) {
++			vec2 v = vec2(float(dx) * 1.5, float(dy) * 1.25) * inv_tex;
++			vec2 uv_f = clamp(v_texCoord + 0.5 * v, vec2(0.5) * inv_tex, max_uv);
++			vec2 uv_b = clamp(v_texCoord - 0.5 * v, vec2(0.5) * inv_tex, max_uv);
++			float lf = luma(texture2D(rubyTexture, uv_f).rgb);
++			float lb = luma(texture2D(rubyPrevTexture, uv_b).rgb);
++			float err = abs(lf - lb) + 0.008 * (abs(float(dx)) + abs(float(dy)));
++			if (err < best_err) {
++				best_err = err;
++				best_v = v;
++			}
++		}
++	}
++	vec3 c_f = texture2D(rubyTexture, clamp(v_texCoord + 0.5 * best_v, vec2(0.5) * inv_tex, max_uv)).rgb;
++	vec3 c_b = texture2D(rubyPrevTexture, clamp(v_texCoord - 0.5 * best_v, vec2(0.5) * inv_tex, max_uv)).rgb;
++	float confidence = 1.0 - smoothstep(0.04, 0.22, abs(luma(c_f) - luma(c_b)));
++	gl_FragColor = vec4(mix(curr.rgb, mix(c_f, c_b, rubyFrameBlend), confidence), 1.0);
+ }
+ 
+ #endif
+diff --git a/contrib/resources/glshaders/interpolation/fsr.glsl b/contrib/resources/glshaders/interpolation/fsr.glsl
+new file mode 100644
+index 0000000..648cc15
+--- /dev/null
++++ b/contrib/resources/glshaders/interpolation/fsr.glsl
+@@ -0,0 +1,220 @@
++#version 120
++
++/*
++ *  SPDX-License-Identifier: GPL-2.0-or-later
++ *
++ *  AMD FidelityFX Super Resolution 1.0 (EASU + RCAS) +
++ *  Bidirectional Optical-Flow Frame Generation for DOSBox Staging.
++ *
++ *  Stage 1: Optional Bidirectional Optical-Flow Frame Generation
++ *           (when rubyFrameBlend > 0.0, synthesizes the motion-compensated
++ *           midpoint frame between rubyPrevTexture and rubyTexture while
++ *           protecting static HUD/UI elements).
++ *  Stage 2: EASU (Edge-Adaptive Spatial Upsampling) — 12-tap directional
++ *           anisotropic Lanczos2 kernel with anti-ringing neighborhood clamp.
++ *  Stage 3: RCAS (Robust Contrast-Adaptive Sharpening) — 5-tap local
++ *           contrast-bounded sharpening pass.
++ */
++
++#pragma use_npot_texture
++#pragma use_srgb_texture
++#pragma use_srgb_framebuffer
++#pragma force_single_scan
++#pragma force_no_pixel_doubling
++
++uniform vec2 rubyTextureSize;
++uniform vec2 rubyInputSize;
++uniform vec2 rubyOutputSize;
++
++varying vec2 v_texCoord;
++
++#if defined(VERTEX)
++
++attribute vec4 a_position;
++
++void main()
++{
++	gl_Position = a_position;
++	v_texCoord  = vec2(a_position.x + 1.0, 1.0 - a_position.y) * 0.5 *
++	              rubyInputSize / rubyTextureSize;
++}
++
++#elif defined(FRAGMENT)
++
++uniform sampler2D rubyTexture;
++uniform sampler2D rubyPrevTexture;
++uniform float rubyFrameBlend;
++
++float luma(vec3 c)
++{
++	return dot(c, vec3(0.299, 0.587, 0.114));
++}
++
++// Stage 1: Bidirectional Optical-Flow Frame Generation sample at texel UV
++vec3 sampleFrame(vec2 uv)
++{
++	vec2 max_uv = (rubyInputSize - vec2(0.5)) / rubyTextureSize;
++	vec2 clamped_uv = clamp(uv, vec2(0.5) / rubyTextureSize, max_uv);
++	vec3 curr = texture2D(rubyTexture, clamped_uv).rgb;
++
++	if (rubyFrameBlend <= 0.001) {
++		return curr;
++	}
++
++	vec3 prev = texture2D(rubyPrevTexture, clamped_uv).rgb;
++	float l_curr = luma(curr);
++	float l_prev = luma(prev);
++	float diff0 = abs(l_curr - l_prev);
++
++	// Static pixel / HUD / menu protection: if luminance barely changed,
++	// keep exact current pixel to prevent any HUD ghosting.
++	if (diff0 < 0.015) {
++		return curr;
++	}
++
++	vec2 inv_tex = 1.0 / rubyTextureSize;
++	vec2 best_v = vec2(0.0);
++	float best_err = diff0;
++
++	// Bidirectional motion search across horizontal, vertical, and diagonal candidates
++	for (int dy = -2; dy <= 2; ++dy) {
++		for (int dx = -3; dx <= 3; ++dx) {
++			vec2 v = vec2(float(dx) * 1.5, float(dy) * 1.25) * inv_tex;
++			vec2 uv_f = clamp(clamped_uv + 0.5 * v, vec2(0.5) * inv_tex, max_uv);
++			vec2 uv_b = clamp(clamped_uv - 0.5 * v, vec2(0.5) * inv_tex, max_uv);
++			float lf = luma(texture2D(rubyTexture, uv_f).rgb);
++			float lb = luma(texture2D(rubyPrevTexture, uv_b).rgb);
++			float penalty = 0.008 * (abs(float(dx)) + abs(float(dy)));
++			float err = abs(lf - lb) + penalty;
++			if (err < best_err) {
++				best_err = err;
++				best_v = v;
++			}
++		}
++	}
++
++	vec2 uv_curr = clamp(clamped_uv + 0.5 * best_v, vec2(0.5) * inv_tex, max_uv);
++	vec2 uv_prev = clamp(clamped_uv - 0.5 * best_v, vec2(0.5) * inv_tex, max_uv);
++	vec3 c_f = texture2D(rubyTexture, uv_curr).rgb;
++	vec3 c_b = texture2D(rubyPrevTexture, uv_prev).rgb;
++
++	// Disocclusion confidence: fall back smoothly to current frame if photometric
++	// residual indicates an Newly uncovered background / fast edge.
++	float match_err = abs(luma(c_f) - luma(c_b));
++	float confidence = 1.0 - smoothstep(0.04, 0.22, match_err);
++	vec3 warped = mix(c_f, c_b, rubyFrameBlend);
++	return mix(curr, warped, confidence);
++}
++
++// Anisotropic Lanczos2 weight helper for FSR 1.0 EASU
++float easuWeight(vec2 d, vec2 dir, vec2 len2)
++{
++	vec2 rot = vec2(
++		d.x * dir.x + d.y * dir.y,
++		d.x * (-dir.y) + d.y * dir.x
++	);
++	rot *= len2;
++	float x2 = clamp(dot(rot, rot), 0.0, 4.0);
++	// Windowed Lanczos2 polynomial approximation (FSR 1.0)
++	float wB = 0.4 * x2 - 1.0;
++	float wA = x2 * 0.25 - 1.0;
++	wB *= wB;
++	wA *= wA;
++	return (1.5625 * wB - 0.5625) * wA;
++}
++
++// Stage 2: FSR 1.0 EASU (Edge-Adaptive Spatial Upsampling) at texel coordinate p
++vec3 fsrEasu(vec2 p)
++{
++	vec2 inv_tex = 1.0 / rubyTextureSize;
++	vec2 fp = floor(p);
++	vec2 pp = p - fp;
++
++	// Fetch 12-tap cross neighborhood around fp:
++	//       [b] [c]
++	//   [e] [f] [g] [h]
++	//   [i] [j] [k] [l]
++	//       [n] [o]
++	vec2 base = (fp + vec2(0.5)) * inv_tex;
++	vec3 b = sampleFrame(base + vec2( 0.0, -1.0) * inv_tex);
++	vec3 c = sampleFrame(base + vec2( 1.0, -1.0) * inv_tex);
++	vec3 e = sampleFrame(base + vec2(-1.0,  0.0) * inv_tex);
++	vec3 f = sampleFrame(base + vec2( 0.0,  0.0) * inv_tex);
++	vec3 g = sampleFrame(base + vec2( 1.0,  0.0) * inv_tex);
++	vec3 h = sampleFrame(base + vec2( 2.0,  0.0) * inv_tex);
++	vec3 i = sampleFrame(base + vec2(-1.0,  1.0) * inv_tex);
++	vec3 j = sampleFrame(base + vec2( 0.0,  1.0) * inv_tex);
++	vec3 k = sampleFrame(base + vec2( 1.0,  1.0) * inv_tex);
++	vec3 l = sampleFrame(base + vec2( 2.0,  1.0) * inv_tex);
++	vec3 n = sampleFrame(base + vec2( 0.0,  2.0) * inv_tex);
++	vec3 o = sampleFrame(base + vec2( 1.0,  2.0) * inv_tex);
++
++	float lb = luma(b), lc = luma(c);
++	float le = luma(e), lf = luma(f), lg = luma(g), lh = luma(h);
++	float li = luma(i), lj = luma(j), lk = luma(k), ll = luma(l);
++	float ln = luma(n), lo = luma(o);
++
++	// Bilinear-weighted directional gradient accumulation
++	float gx = (lg - le) * (1.0 - pp.x) * (1.0 - pp.y) +
++	           (lh - lf) * pp.x         * (1.0 - pp.y) +
++	           (lk - li) * (1.0 - pp.x) * pp.y +
++	           (ll - lj) * pp.x         * pp.y;
++	float gy = (lj - lb) * (1.0 - pp.x) * (1.0 - pp.y) +
++	           (lk - lc) * pp.x         * (1.0 - pp.y) +
++	           (ln - lf) * (1.0 - pp.x) * pp.y +
++	           (lo - lg) * pp.x         * pp.y;
++
++	float grad_len = sqrt(gx * gx + gy * gy);
++	vec2 dir = (grad_len > 1e-4) ? vec2(gx, gy) / grad_len : vec2(1.0, 0.0);
++	float edge_aniso = clamp(grad_len * 3.5, 0.0, 1.0);
++	vec2 len2 = vec2(1.0 + edge_aniso * 0.5, 1.0 - edge_aniso * 0.35);
++
++	float wb = easuWeight(vec2( 0.0, -1.0) - pp, dir, len2);
++	float wc = easuWeight(vec2( 1.0, -1.0) - pp, dir, len2);
++	float we = easuWeight(vec2(-1.0,  0.0) - pp, dir, len2);
++	float wf = easuWeight(vec2( 0.0,  0.0) - pp, dir, len2);
++	float wg = easuWeight(vec2( 1.0,  0.0) - pp, dir, len2);
++	float wh = easuWeight(vec2( 2.0,  0.0) - pp, dir, len2);
++	float wi = easuWeight(vec2(-1.0,  1.0) - pp, dir, len2);
++	float wj = easuWeight(vec2( 0.0,  1.0) - pp, dir, len2);
++	float wk = easuWeight(vec2( 1.0,  1.0) - pp, dir, len2);
++	float wl = easuWeight(vec2( 2.0,  1.0) - pp, dir, len2);
++	float wn = easuWeight(vec2( 0.0,  2.0) - pp, dir, len2);
++	float wo = easuWeight(vec2( 1.0,  2.0) - pp, dir, len2);
++
++	vec3 sum_c = b * wb + c * wc + e * we + f * wf + g * wg + h * wh +
++	             i * wi + j * wj + k * wk + l * wl + n * wn + o * wo;
++	float sum_w = wb + wc + we + wf + wg + wh + wi + wj + wk + wl + wn + wo;
++	vec3 color = sum_c / max(sum_w, 1e-4);
++
++	// Anti-ringing clamp to inner 2x2 neighborhood min/max
++	vec3 min4 = min(min(f, g), min(j, k));
++	vec3 max4 = max(max(f, g), max(j, k));
++	return clamp(color, min4, max4);
++}
++
++void main()
++{
++	vec2 p = v_texCoord * rubyTextureSize - vec2(0.5);
++	vec3 c = fsrEasu(p);
++
++	// Stage 3: FSR 1.0 RCAS (Robust Contrast-Adaptive Sharpening)
++	vec2 step_p = rubyInputSize / max(rubyOutputSize, rubyInputSize);
++	vec3 n = fsrEasu(p + vec2( 0.0, -step_p.y));
++	vec3 s = fsrEasu(p + vec2( 0.0,  step_p.y));
++	vec3 w = fsrEasu(p + vec2(-step_p.x,  0.0));
++	vec3 e = fsrEasu(p + vec2( step_p.x,  0.0));
++
++	vec3 min4 = min(min(n, s), min(w, e));
++	vec3 max4 = max(max(n, s), max(w, e));
++	float l_min = min(luma(min4), luma(c));
++	float l_max = max(luma(max4), luma(c));
++	float contrast = l_max - l_min;
++
++	// Contrast-adaptive negative lobe weight (bounded to prevent clipping)
++	float lobe = -0.18 * (1.0 - smoothstep(0.15, 0.65, contrast));
++	vec3 rcas = (c + lobe * (n + s + w + e)) / (1.0 + 4.0 * lobe);
++	gl_FragColor = vec4(clamp(rcas, 0.0, 1.0), 1.0);
++}
++
++#endif
+diff --git a/contrib/resources/glshaders/interpolation/sharp.glsl b/contrib/resources/glshaders/interpolation/sharp.glsl
+index 7d678b2..2b23074 100644
+--- a/contrib/resources/glshaders/interpolation/sharp.glsl
++++ b/contrib/resources/glshaders/interpolation/sharp.glsl
+@@ -51,6 +51,48 @@ void main()
+ #elif defined(FRAGMENT)
+ 
+ uniform sampler2D rubyTexture;
++uniform sampler2D rubyPrevTexture;
++uniform float rubyFrameBlend;
++
++float luma(vec3 c)
++{
++	return dot(c, vec3(0.299, 0.587, 0.114));
++}
++
++vec4 sampleOpticalFlow(vec2 uv)
++{
++	vec4 curr = texture2D(rubyTexture, uv);
++	if (rubyFrameBlend <= 0.001) {
++		return curr;
++	}
++	vec4 prev = texture2D(rubyPrevTexture, uv);
++	float diff0 = abs(luma(curr.rgb) - luma(prev.rgb));
++	if (diff0 < 0.015) {
++		return curr;
++	}
++	vec2 inv_tex = 1.0 / rubyTextureSize;
++	vec2 max_uv = (rubyInputSize - vec2(0.5)) * inv_tex;
++	vec2 best_v = vec2(0.0);
++	float best_err = diff0;
++	for (int dy = -2; dy <= 2; ++dy) {
++		for (int dx = -3; dx <= 3; ++dx) {
++			vec2 v = vec2(float(dx) * 1.5, float(dy) * 1.25) * inv_tex;
++			vec2 uv_f = clamp(uv + 0.5 * v, vec2(0.5) * inv_tex, max_uv);
++			vec2 uv_b = clamp(uv - 0.5 * v, vec2(0.5) * inv_tex, max_uv);
++			float lf = luma(texture2D(rubyTexture, uv_f).rgb);
++			float lb = luma(texture2D(rubyPrevTexture, uv_b).rgb);
++			float err = abs(lf - lb) + 0.008 * (abs(float(dx)) + abs(float(dy)));
++			if (err < best_err) {
++				best_err = err;
++				best_v = v;
++			}
++		}
++	}
++	vec3 c_f = texture2D(rubyTexture, clamp(uv + 0.5 * best_v, vec2(0.5) * inv_tex, max_uv)).rgb;
++	vec3 c_b = texture2D(rubyPrevTexture, clamp(uv - 0.5 * best_v, vec2(0.5) * inv_tex, max_uv)).rgb;
++	float confidence = 1.0 - smoothstep(0.04, 0.22, abs(luma(c_f) - luma(c_b)));
++	return vec4(mix(curr.rgb, mix(c_f, c_b, rubyFrameBlend), confidence), 1.0);
++}
+ 
+ void main()
+ {
+@@ -63,7 +105,7 @@ void main()
+ 	vec2 f = (center_dist - clamp(center_dist, -region_range, region_range)) * prescale + halfp;
+ 
+ 	vec2 mod_texel = min(texel_floored + f, rubyInputSize - halfp);
+-	gl_FragColor = texture2D(rubyTexture, mod_texel / rubyTextureSize);
++	gl_FragColor = sampleOpticalFlow(mod_texel / rubyTextureSize);
+ }
+ 
+ #endif
 diff --git a/meson.build b/meson.build
 index 565f06e..a696b27 100644
 --- a/meson.build
@@ -36,7 +382,7 @@ index 565f06e..a696b27 100644
  if conf_data.get('C_MANYMOUSE') != 0
      third_party_deps += manymouse_dep
 diff --git a/src/gui/sdlmain.cpp b/src/gui/sdlmain.cpp
-index 04b7641..7599d65 100644
+index 04b7641..2ea2669 100644
 --- a/src/gui/sdlmain.cpp
 +++ b/src/gui/sdlmain.cpp
 @@ -61,6 +61,7 @@
@@ -47,7 +393,188 @@ index 04b7641..7599d65 100644
  #include "mixer.h"
  #include "mouse.h"
  #include "pacer.h"
-@@ -3813,6 +3814,30 @@ static void handle_user_event(const SDL_Event& event)
+@@ -132,7 +133,9 @@ typedef void (APIENTRYP PFNGLLINKPROGRAMPROC) (GLuint program);
+ //Change to NP, as Khronos changes include guard :(
+ typedef void (APIENTRYP PFNGLSHADERSOURCEPROC_NP) (GLuint shader, GLsizei count, const GLchar **string, const GLint *length);
+ typedef void (APIENTRYP PFNGLUNIFORM2FPROC) (GLint location, GLfloat v0, GLfloat v1);
++typedef void (APIENTRYP PFNGLUNIFORM1FPROC) (GLint location, GLfloat v0);
+ typedef void (APIENTRYP PFNGLUNIFORM1IPROC) (GLint location, GLint v0);
++typedef void (APIENTRYP PFNGLACTIVETEXTUREPROC) (GLenum texture);
+ typedef void (APIENTRYP PFNGLUSEPROGRAMPROC) (GLuint program);
+ typedef void (APIENTRYP PFNGLVERTEXATTRIBPOINTERPROC) (GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const GLvoid *pointer);
+ 
+@@ -158,7 +161,9 @@ PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = nullptr;
+ PFNGLLINKPROGRAMPROC glLinkProgram = nullptr;
+ PFNGLSHADERSOURCEPROC_NP glShaderSource = nullptr;
+ PFNGLUNIFORM2FPROC glUniform2f = nullptr;
++PFNGLUNIFORM1FPROC glUniform1f = nullptr;
+ PFNGLUNIFORM1IPROC glUniform1i = nullptr;
++PFNGLACTIVETEXTUREPROC glActiveTexture = nullptr;
+ PFNGLUSEPROGRAMPROC glUseProgram = nullptr;
+ PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer = nullptr;
+ }
+@@ -182,10 +187,26 @@ PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer = nullptr;
+ #define glLinkProgram             gl2::glLinkProgram
+ #define glShaderSource            gl2::glShaderSource
+ #define glUniform2f               gl2::glUniform2f
++#define glUniform1f               gl2::glUniform1f
+ #define glUniform1i               gl2::glUniform1i
++#define glActiveTexture           gl2::glActiveTexture
+ #define glUseProgram              gl2::glUseProgram
+ #define glVertexAttribPointer     gl2::glVertexAttribPointer
+ 
++struct ScreamerFrameGenState {
++	bool initialized = false;
++	bool enabled = false;
++	GLuint prev_texture = 0;
++	uint8_t* prev_framebuf = nullptr;
++	size_t framebuf_bytes = 0;
++	bool has_prev_frame = false;
++	bool pending_real_present = false;
++	int64_t last_real_frame_us = 0;
++	GLint u_prev_texture = -1;
++	GLint u_frame_blend = -1;
++};
++static ScreamerFrameGenState fg_state;
++
+ #endif // C_OPENGL
+ 
+ #ifdef WIN32
+@@ -2029,15 +2050,35 @@ uint8_t GFX_SetSize(const int render_width_px, const int render_height_px,
+ 					sdl.opengl.ruby.input_size = glGetUniformLocation(sdl.opengl.program_object, "rubyInputSize");
+ 					sdl.opengl.ruby.output_size = glGetUniformLocation(sdl.opengl.program_object, "rubyOutputSize");
+ 					sdl.opengl.ruby.frame_count = glGetUniformLocation(sdl.opengl.program_object, "rubyFrameCount");
++
++					fg_state.u_prev_texture = glGetUniformLocation(sdl.opengl.program_object, "rubyPrevTexture");
++					fg_state.u_frame_blend = glGetUniformLocation(sdl.opengl.program_object, "rubyFrameBlend");
++					if (fg_state.u_prev_texture >= 0) {
++						glUniform1i(fg_state.u_prev_texture, 1);
++					}
++					if (fg_state.u_frame_blend >= 0 && glUniform1f) {
++						glUniform1f(fg_state.u_frame_blend, 0.0f);
++					}
+ 				}
+ 			}
+ 		}
+ 
++		if (!fg_state.initialized) {
++			fg_state.initialized = true;
++			const char* fg_env = getenv("SCREAMER_FRAME_GEN");
++			fg_state.enabled = (fg_env && fg_env[0] == '1');
++		}
++
+ 		/* Create the texture and display list */
+ 		const auto framebuffer_bytes = static_cast<size_t>(render_width_px) *
+ 		                               render_height_px * MAX_BYTES_PER_PIXEL;
+ 		sdl.opengl.framebuf = malloc(framebuffer_bytes); // 32 bit colour
+ 		sdl.opengl.pitch = render_width_px * 4;
++		free(fg_state.prev_framebuf);
++		fg_state.prev_framebuf = static_cast<uint8_t*>(malloc(framebuffer_bytes));
++		fg_state.framebuf_bytes = framebuffer_bytes;
++		fg_state.has_prev_frame = false;
++		fg_state.pending_real_present = false;
+ 
+ 		// One-time initialize the window size
+ 		if (!sdl.desktop.window.adjusted_initial_size) {
+@@ -2148,6 +2189,33 @@ uint8_t GFX_SetSize(const int render_width_px, const int render_height_px,
+ 		             GL_BGRA_EXT,
+ 		             GL_UNSIGNED_BYTE,
+ 		             emptytex);
++
++		if (fg_state.prev_texture > 0) {
++			glDeleteTextures(1, &fg_state.prev_texture);
++		}
++		glGenTextures(1, &fg_state.prev_texture);
++		if (glActiveTexture) {
++			glActiveTexture(GL_TEXTURE1);
++		}
++		glBindTexture(GL_TEXTURE_2D, fg_state.prev_texture);
++		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_parameter);
++		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_parameter);
++		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter_mode);
++		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter_mode);
++		glTexImage2D(GL_TEXTURE_2D,
++		             0,
++		             texformat,
++		             texsize_w_px,
++		             texsize_h_px,
++		             0,
++		             GL_BGRA_EXT,
++		             GL_UNSIGNED_BYTE,
++		             emptytex);
++		if (glActiveTexture) {
++			glActiveTexture(GL_TEXTURE0);
++		}
++		glBindTexture(GL_TEXTURE_2D, sdl.opengl.texture);
++
+ 		delete[] emptytex;
+ 
+ 		if (sdl.opengl.framebuffer_is_srgb_encoded) {
+@@ -2699,6 +2767,20 @@ static bool present_frame_texture()
+ static void update_frame_gl(const uint16_t* changedLines)
+ {
+ 	if (changedLines) {
++		if (fg_state.enabled && fg_state.has_prev_frame &&
++		    fg_state.prev_framebuf && glActiveTexture) {
++			glActiveTexture(GL_TEXTURE1);
++			glBindTexture(GL_TEXTURE_2D, fg_state.prev_texture);
++			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
++			                sdl.draw.render_width_px,
++			                sdl.draw.render_height_px,
++			                GL_BGRA_EXT,
++			                GL_UNSIGNED_INT_8_8_8_8_REV,
++			                fg_state.prev_framebuf);
++			glActiveTexture(GL_TEXTURE0);
++			glBindTexture(GL_TEXTURE_2D, sdl.opengl.texture);
++		}
++
+ 		const auto framebuf = static_cast<uint8_t *>(sdl.opengl.framebuf);
+ 		const auto pitch = sdl.opengl.pitch;
+ 		int y = 0;
+@@ -2716,6 +2798,16 @@ static void update_frame_gl(const uint16_t* changedLines)
+ 			}
+ 			index++;
+ 		}
++
++		if (fg_state.enabled && fg_state.prev_framebuf && framebuf) {
++			const bool already_had_prev = fg_state.has_prev_frame;
++			memcpy(fg_state.prev_framebuf, framebuf, fg_state.framebuf_bytes);
++			fg_state.has_prev_frame = true;
++			if (already_had_prev && fg_state.u_frame_blend >= 0) {
++				fg_state.pending_real_present = true;
++				fg_state.last_real_frame_us = GetTicksUs();
++			}
++		}
+ 	} else {
+ 		sdl.opengl.actual_frame_count++;
+ 	}
+@@ -2727,6 +2819,12 @@ static bool present_frame_gl()
+ 	if (is_presenting) {
+ 		glClear(GL_COLOR_BUFFER_BIT);
+ 		if (sdl.opengl.program_object) {
++			if (fg_state.u_frame_blend >= 0 && glUniform1f) {
++				glUniform1f(fg_state.u_frame_blend,
++				            (fg_state.enabled && fg_state.pending_real_present)
++				                    ? 0.5f
++				                    : 0.0f);
++			}
+ 			glUniform1i(sdl.opengl.ruby.frame_count,
+ 			            sdl.opengl.actual_frame_count++);
+ 			glDrawArrays(GL_TRIANGLES, 0, 3);
+@@ -3347,8 +3445,12 @@ static void set_output(Section* sec, const bool wants_aspect_ratio_correction)
+ 			        "glShaderSource");
+ 			glUniform2f = (PFNGLUNIFORM2FPROC)SDL_GL_GetProcAddress(
+ 			        "glUniform2f");
++			glUniform1f = (PFNGLUNIFORM1FPROC)SDL_GL_GetProcAddress(
++			        "glUniform1f");
+ 			glUniform1i = (PFNGLUNIFORM1IPROC)SDL_GL_GetProcAddress(
+ 			        "glUniform1i");
++			glActiveTexture = (PFNGLACTIVETEXTUREPROC)SDL_GL_GetProcAddress(
++			        "glActiveTexture");
+ 			glUseProgram = (PFNGLUSEPROGRAMPROC)SDL_GL_GetProcAddress(
+ 			        "glUseProgram");
+ 			glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC)
+@@ -3813,6 +3915,30 @@ static void handle_user_event(const SDL_Event& event)
  	}
  }
  
@@ -78,7 +605,7 @@ index 04b7641..7599d65 100644
  bool GFX_Events()
  {
  #if defined(MACOSX)
-@@ -4181,6 +4206,74 @@ bool GFX_Events()
+@@ -4181,6 +4307,86 @@ bool GFX_Events()
  		default: MAPPER_CheckEvent(&event);
  		}
  	}
@@ -89,6 +616,8 @@ index 04b7641..7599d65 100644
 +			joy_subsys_inited = true;
 +			SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
 +		}
++		SDL_GameControllerUpdate();
++		SDL_JoystickUpdate();
 +
 +		ScreamerHostApi api = {
 +		        MemBase,
@@ -148,8 +677,381 @@ index 04b7641..7599d65 100644
 +		        },
 +		};
 +		screamer_hooks_on_tick(&api, static_cast<uint64_t>(GetTicksUs()) * 1000ULL);
++
++#if C_OPENGL
++		if (fg_state.enabled && fg_state.pending_real_present &&
++		    sdl.rendering_backend == RenderingBackend::OpenGl &&
++		    sdl.opengl.program_object &&
++		    GetTicksUsSince(fg_state.last_real_frame_us) >= 9500) {
++			fg_state.pending_real_present = false;
++			present_frame_gl();
++		}
++#endif
 +	}
 +
  	return !shutdown_requested;
  }
+ 
+diff --git a/src/gui/shader_manager.cpp b/src/gui/shader_manager.cpp
+index d932a1e..9174eee 100644
+--- a/src/gui/shader_manager.cpp
++++ b/src/gui/shader_manager.cpp
+@@ -263,6 +263,9 @@ std::string ShaderManager::MapShaderName(const std::string& name) const
+ 
+ 	} else if (name == "nearest") {
+ 		return "interpolation/nearest";
++
++	} else if (name == "fsr") {
++		return "interpolation/fsr";
+ 	}
+ 
+ 	// Map legacy shader names
+diff --git a/src/hardware/voodoo.cpp b/src/hardware/voodoo.cpp
+index 9661f47..a70e586 100644
+--- a/src/hardware/voodoo.cpp
++++ b/src/hardware/voodoo.cpp
+@@ -815,6 +815,7 @@ struct fbi_state
+ 
+ 	uint32_t				width;					/* width of current frame buffer */
+ 	uint32_t				height;					/* height of current frame buffer */
++	uint32_t				scale = 1;				/* internal supersampling scale (1=640x480, 2=1280x960) */
+ 	//uint32_t				xoffs;					/* horizontal offset (back porch) */
+ 	//uint32_t				yoffs;					/* vertical offset (back porch) */
+ 	//uint32_t				vsyncscan;				/* vertical sync scanline */
+@@ -3115,7 +3116,7 @@ static inline void raster_generic(const voodoo_state* vs, uint32_t TMUS, uint32_
+ 
+ 	/* determine the screen Y */
+ 	if (FBZMODE_Y_ORIGIN(r_fbzMode)) {
+-		scry = (fbi.yorigin - y) & 0x3ff;
++		scry = ((fbi.yorigin + 1) * fbi.scale - 1 - y) & 0xfff;
+ 	}
+ 
+ 	/* compute the dithering pointers */
+@@ -3137,22 +3138,23 @@ static inline void raster_generic(const voodoo_state* vs, uint32_t TMUS, uint32_
+ 	/* apply clipping */
+ 	if (FBZMODE_ENABLE_CLIPPING(r_fbzMode))
+ 	{
++		const int32_t s = static_cast<int32_t>(fbi.scale);
+ 		/* Y clipping buys us the whole scanline */
+-		if (scry < (int32_t)((regs[clipLowYHighY].u >> 16) & 0x3ff) ||
+-		    scry >= (int32_t)(regs[clipLowYHighY].u & 0x3ff)) {
++		if (scry < (int32_t)((regs[clipLowYHighY].u >> 16) & 0x3ff) * s ||
++		    scry >= (int32_t)(regs[clipLowYHighY].u & 0x3ff) * s) {
+ 			stats.pixels_in += stopx - startx;
+ 			//stats.clip_fail += stopx - startx;
+ 			return;
+ 		}
+ 
+ 		/* X clipping */
+-		int32_t tempclip = (regs[clipLeftRight].u >> 16) & 0x3ff;
++		int32_t tempclip = ((regs[clipLeftRight].u >> 16) & 0x3ff) * s;
+ 		if (startx < tempclip)
+ 		{
+ 			stats.pixels_in += tempclip - startx;
+ 			startx = tempclip;
+ 		}
+-		tempclip = regs[clipLeftRight].u & 0x3ff;
++		tempclip = (regs[clipLeftRight].u & 0x3ff) * s;
+ 		if (stopx >= tempclip)
+ 		{
+ 			stats.pixels_in += stopx - tempclip;
+@@ -3623,7 +3625,7 @@ static void raster_fastfill(void *destbase, int32_t y, const poly_extent *extent
+ 	/* determine the screen Y */
+ 	scry = y;
+ 	if (FBZMODE_Y_ORIGIN(v->reg[fbzMode].u)) {
+-		scry = (v->fbi.yorigin - y) & 0x3ff;
++		scry = ((v->fbi.yorigin + 1) * v->fbi.scale - 1 - y) & 0xfff;
+ 	}
+ 
+ 	/* fill this RGB row */
+@@ -3917,7 +3919,8 @@ static void recompute_video_memory(voodoo_state *vs)
+ 		              (FBIINIT1_X_VIDEO_TILES_BIT5(regs[fbiInit1].u) << 5) |
+ 		              (FBIINIT6_X_VIDEO_TILES_BIT0(regs[fbiInit6].u));
+ 	}
+-	fbi.rowpixels = fbi.tile_width * fbi.x_tiles;
++	const uint32_t scale_sq = fbi.scale * fbi.scale;
++	fbi.rowpixels = fbi.tile_width * fbi.x_tiles * fbi.scale;
+ 
+ 	// logerror("VOODOO.%d.VIDMEM: buffer_pages=%X  fifo=%X-%X  tiles=%X
+ 	// rowpix=%d\n", vs->index, buffer_pages, fifo_start_page,
+@@ -3927,7 +3930,7 @@ static void recompute_video_memory(voodoo_state *vs)
+ 	fbi.rgboffs[0] = 0;
+ 
+ 	/* second RGB buffer starts immediately afterwards */
+-	fbi.rgboffs[1] = buffer_pages * 0x1000;
++	fbi.rgboffs[1] = buffer_pages * 0x1000 * scale_sq;
+ 
+ 	/* remaining buffers are based on the config */
+ 	switch (memory_config)
+@@ -3938,17 +3941,17 @@ static void recompute_video_memory(voodoo_state *vs)
+ 
+ 	case 0:	/* 2 color buffers, 1 aux buffer */
+ 		fbi.rgboffs[2] = (uint32_t)(~0);
+-		fbi.auxoffs    = 2 * buffer_pages * 0x1000;
++		fbi.auxoffs    = 2 * buffer_pages * 0x1000 * scale_sq;
+ 		break;
+ 
+ 	case 1:	/* 3 color buffers, 0 aux buffers */
+-		fbi.rgboffs[2] = 2 * buffer_pages * 0x1000;
++		fbi.rgboffs[2] = 2 * buffer_pages * 0x1000 * scale_sq;
+ 		fbi.auxoffs    = (uint32_t)(~0);
+ 		break;
+ 
+ 	case 2:	/* 3 color buffers, 1 aux buffers */
+-		fbi.rgboffs[2] = 2 * buffer_pages * 0x1000;
+-		fbi.auxoffs    = 3 * buffer_pages * 0x1000;
++		fbi.rgboffs[2] = 2 * buffer_pages * 0x1000 * scale_sq;
++		fbi.auxoffs    = 3 * buffer_pages * 0x1000 * scale_sq;
+ 		break;
+ 	}
+ 
+@@ -4629,6 +4632,75 @@ static void triangle(voodoo_state *vs)
+ 		}
+ 	}
+ 
++	const int32_t scale = static_cast<int32_t>(fbi.scale);
++	struct ScaleRestoreGuard {
++		fbi_state& fbi;
++		tmu_state& tmu0;
++		tmu_state& tmu1;
++		int16_t ax, ay, bx, by, cx, cy;
++		int32_t startr, startg, startb, starta, startz;
++		int64_t startw;
++		int32_t drdx, dgdx, dbdx, dadx, dzdx;
++		int64_t dwdx;
++		int32_t drdy, dgdy, dbdy, dady, dzdy;
++		int64_t dwdy;
++		int64_t t0_starts, t0_startt, t0_startw, t0_dsdx, t0_dtdx, t0_dwdx, t0_dsdy, t0_dtdy, t0_dwdy;
++		int64_t t1_starts, t1_startt, t1_startw, t1_dsdx, t1_dtdx, t1_dwdx, t1_dsdy, t1_dtdy, t1_dwdy;
++		bool active;
++		ScaleRestoreGuard(fbi_state& f, tmu_state& t0, tmu_state& t1, bool act)
++		    : fbi(f), tmu0(t0), tmu1(t1),
++		      ax(f.ax), ay(f.ay), bx(f.bx), by(f.by), cx(f.cx), cy(f.cy),
++		      startr(f.startr), startg(f.startg), startb(f.startb), starta(f.starta), startz(f.startz), startw(f.startw),
++		      drdx(f.drdx), dgdx(f.dgdx), dbdx(f.dbdx), dadx(f.dadx), dzdx(f.dzdx), dwdx(f.dwdx),
++		      drdy(f.drdy), dgdy(f.dgdy), dbdy(f.dbdy), dady(f.dady), dzdy(f.dzdy), dwdy(f.dwdy),
++		      t0_starts(t0.starts), t0_startt(t0.startt), t0_startw(t0.startw),
++		      t0_dsdx(t0.dsdx), t0_dtdx(t0.dtdx), t0_dwdx(t0.dwdx),
++		      t0_dsdy(t0.dsdy), t0_dtdy(t0.dtdy), t0_dwdy(t0.dwdy),
++		      t1_starts(t1.starts), t1_startt(t1.startt), t1_startw(t1.startw),
++		      t1_dsdx(t1.dsdx), t1_dtdx(t1.dtdx), t1_dwdx(t1.dwdx),
++		      t1_dsdy(t1.dsdy), t1_dtdy(t1.dtdy), t1_dwdy(t1.dwdy),
++		      active(act) {}
++		~ScaleRestoreGuard() {
++			if (active) {
++				fbi.ax = ax; fbi.ay = ay;
++				fbi.bx = bx; fbi.by = by;
++				fbi.cx = cx; fbi.cy = cy;
++				fbi.startr = startr; fbi.startg = startg;
++				fbi.startb = startb; fbi.starta = starta;
++				fbi.startz = startz; fbi.startw = startw;
++				fbi.drdx = drdx; fbi.dgdx = dgdx;
++				fbi.dbdx = dbdx; fbi.dadx = dadx;
++				fbi.dzdx = dzdx; fbi.dwdx = dwdx;
++				fbi.drdy = drdy; fbi.dgdy = dgdy;
++				fbi.dbdy = dbdy; fbi.dady = dady;
++				fbi.dzdy = dzdy; fbi.dwdy = dwdy;
++				tmu0.starts = t0_starts; tmu0.startt = t0_startt; tmu0.startw = t0_startw;
++				tmu0.dsdx = t0_dsdx; tmu0.dtdx = t0_dtdx; tmu0.dwdx = t0_dwdx;
++				tmu0.dsdy = t0_dsdy; tmu0.dtdy = t0_dtdy; tmu0.dwdy = t0_dwdy;
++				tmu1.starts = t1_starts; tmu1.startt = t1_startt; tmu1.startw = t1_startw;
++				tmu1.dsdx = t1_dsdx; tmu1.dtdx = t1_dtdx; tmu1.dwdx = t1_dwdx;
++				tmu1.dsdy = t1_dsdy; tmu1.dtdy = t1_dtdy; tmu1.dwdy = t1_dwdy;
++			}
++		}
++	} restore_guard(fbi, tmu0, tmu1, scale > 1);
++
++	if (scale > 1) {
++		fbi.ax = static_cast<int16_t>(fbi.ax * scale);
++		fbi.ay = static_cast<int16_t>(fbi.ay * scale);
++		fbi.bx = static_cast<int16_t>(fbi.bx * scale);
++		fbi.by = static_cast<int16_t>(fbi.by * scale);
++		fbi.cx = static_cast<int16_t>(fbi.cx * scale);
++		fbi.cy = static_cast<int16_t>(fbi.cy * scale);
++		fbi.drdx /= scale; fbi.dgdx /= scale; fbi.dbdx /= scale; fbi.dadx /= scale;
++		fbi.dzdx /= scale; fbi.dwdx /= scale;
++		fbi.drdy /= scale; fbi.dgdy /= scale; fbi.dbdy /= scale; fbi.dady /= scale;
++		fbi.dzdy /= scale; fbi.dwdy /= scale;
++		tmu0.dsdx /= scale; tmu0.dtdx /= scale; tmu0.dwdx /= scale;
++		tmu0.dsdy /= scale; tmu0.dtdy /= scale; tmu0.dwdy /= scale;
++		tmu1.dsdx /= scale; tmu1.dtdx /= scale; tmu1.dwdx /= scale;
++		tmu1.dsdy /= scale; tmu1.dtdy /= scale; tmu1.dwdy /= scale;
++	}
++
+ 	/* perform subpixel adjustments */
+ 	if (
+ #ifdef C_ENABLE_VOODOO_OPENGL
+@@ -5077,11 +5149,12 @@ static void draw_triangle(voodoo_state *vs)
+ static void fastfill(voodoo_state *vs)
+ {
+ 	const auto regs = vs->reg;
++	const int s = static_cast<int>(vs->fbi.scale);
+ 
+-	const int sx = (regs[clipLeftRight].u >> 16) & 0x3ff;
+-	const int ex = (regs[clipLeftRight].u >> 0) & 0x3ff;
+-	const int sy = (regs[clipLowYHighY].u >> 16) & 0x3ff;
+-	const int ey = (regs[clipLowYHighY].u >> 0) & 0x3ff;
++	const int sx = ((regs[clipLeftRight].u >> 16) & 0x3ff) * s;
++	const int ex = ((regs[clipLeftRight].u >> 0) & 0x3ff) * s;
++	const int sy = ((regs[clipLowYHighY].u >> 16) & 0x3ff) * s;
++	const int ey = ((regs[clipLowYHighY].u >> 0) & 0x3ff) * s;
+ 
+ 	poly_extent extents[64] = {};
+ 
+@@ -5817,8 +5890,8 @@ static void register_w(uint32_t offset, uint32_t data)
+ #endif
+ 
+ 					/* configure the new framebuffer info */
+-					const uint32_t new_width = (hvis + 1) & ~1;
+-					const uint32_t new_height = (vvis + 1) & ~1;
++					const uint32_t new_width = ((hvis + 1) & ~1) * v->fbi.scale;
++					const uint32_t new_height = ((vvis + 1) & ~1) * v->fbi.scale;
+ 
+ 					if ((v->fbi.width != new_width) || (v->fbi.height != new_height)) {
+ 						v->fbi.width = new_width;
+@@ -6322,7 +6395,8 @@ static void lfb_w(uint32_t offset, uint32_t data, uint32_t mem_mask) {
+ 		}
+ 
+ 		/* advance pointers to the proper row */
+-		bufoffs = scry * v->fbi.rowpixels + x;
++		const uint32_t s = v->fbi.scale;
++		bufoffs = (scry * s) * v->fbi.rowpixels + x * s;
+ 
+ 		/* compute dithering */
+ 		COMPUTE_DITHER_POINTERS(v->reg[fbzMode].u, y);
+@@ -6354,20 +6428,30 @@ static void lfb_w(uint32_t offset, uint32_t data, uint32_t mem_mask) {
+ 					{
+ 						/* apply dithering and write to the screen */
+ 						APPLY_DITHER(v->reg[fbzMode].u, x, dither_lookup, sr[pix], sg[pix], sb[pix]);
+-						dest[bufoffs] = (uint16_t)((sr[pix] << 11) | (sg[pix] << 5) | sb[pix]);
++						const uint16_t packed = (uint16_t)((sr[pix] << 11) | (sg[pix] << 5) | sb[pix]);
++						for (uint32_t dy = 0; dy < s; dy++) {
++							for (uint32_t dx = 0; dx < s; dx++) {
++								const uint32_t idx = bufoffs + dy * v->fbi.rowpixels + dx;
++								if (idx < destmax) {
++									dest[idx] = packed;
++								}
++							}
++						}
+ 					}
+ 
+ 					/* make sure we have an aux buffer to write to */
+ 					if ((depth != nullptr) && bufoffs < depthmax)
+ 					{
+-						/* write to the alpha buffer */
+-						if (has_alpha) {
+-							depth[bufoffs] = (uint16_t)sa[pix];
+-						}
+-
+-						/* write to the depth buffer */
+-						if (has_depth) {
+-							depth[bufoffs] = (uint16_t)sw[pix];
++						const uint16_t dval = has_alpha ? (uint16_t)sa[pix] : (uint16_t)sw[pix];
++						if (has_alpha || has_depth) {
++							for (uint32_t dy = 0; dy < s; dy++) {
++								for (uint32_t dx = 0; dx < s; dx++) {
++									const uint32_t idx = bufoffs + dy * v->fbi.rowpixels + dx;
++									if (idx < depthmax) {
++										depth[idx] = dval;
++									}
++								}
++							}
+ 						}
+ 					}
+ 				}
+@@ -6377,7 +6461,7 @@ static void lfb_w(uint32_t offset, uint32_t data, uint32_t mem_mask) {
+ 			}
+ 
+ 			/* advance our pointers */
+-			bufoffs++;
++			bufoffs += s;
+ 			x++;
+ 			mask >>= 4;
+ 		}
+@@ -6407,9 +6491,10 @@ static void lfb_w(uint32_t offset, uint32_t data, uint32_t mem_mask) {
+ 		}
+ 
+ 		/* advance pointers to the proper row */
+-		dest += scry * v->fbi.rowpixels;
++		const uint32_t s = v->fbi.scale;
++		dest += (scry * s) * v->fbi.rowpixels;
+ 		if (depth != nullptr) {
+-			depth += scry * v->fbi.rowpixels;
++			depth += (scry * s) * v->fbi.rowpixels;
+ 		}
+ 
+ 		/* compute dithering */
+@@ -6448,7 +6533,7 @@ static void lfb_w(uint32_t offset, uint32_t data, uint32_t mem_mask) {
+ 
+ 				/* pixel pipeline part 1 handles depth testing and stippling */
+ 				// TODO: in the v->ogl case this macro doesn't really work with depth testing
+-				PIXEL_PIPELINE_BEGIN(v, stats, x, y, v->reg[fbzColorPath].u, v->reg[fbzMode].u, iterz, iterw, v->reg[zaColor].u, v->reg[stipple].u);
++				PIXEL_PIPELINE_BEGIN(v, stats, x * s, y, v->reg[fbzColorPath].u, v->reg[fbzMode].u, iterz, iterw, v->reg[zaColor].u, v->reg[stipple].u);
+ 
+ 				color.rgb.r = static_cast<uint8_t>(sr[pix]);
+ 				color.rgb.g = static_cast<uint8_t>(sg[pix]);
+@@ -6692,9 +6777,22 @@ static void lfb_w(uint32_t offset, uint32_t data, uint32_t mem_mask) {
+ #endif
+ 				{
+ 					/* pixel pipeline part 2 handles color combine, fog, alpha, and final output */
+-					PIXEL_PIPELINE_MODIFY(v, dither, dither4, x, v->reg[fbzMode].u, v->reg[fbzColorPath].u, v->reg[alphaMode].u, v->reg[fogMode].u, iterz, iterw, v->reg[zaColor]);
+-
+-					PIXEL_PIPELINE_FINISH(v, dither_lookup, x, dest, depth, v->reg[fbzMode].u);
++					PIXEL_PIPELINE_MODIFY(v, dither, dither4, x * s, v->reg[fbzMode].u, v->reg[fbzColorPath].u, v->reg[alphaMode].u, v->reg[fogMode].u, iterz, iterw, v->reg[zaColor]);
++
++					for (uint32_t dy = 0; dy < s; dy++) {
++						uint16_t* row_dest = dest + dy * v->fbi.rowpixels;
++						uint16_t* row_depth = depth ? (depth + dy * v->fbi.rowpixels) : nullptr;
++						for (uint32_t dx = 0; dx < s; dx++) {
++							int32_t r_copy = r, g_copy = g, b_copy = b;
++							if (FBZMODE_RGB_BUFFER_MASK(v->reg[fbzMode].u)) {
++								APPLY_DITHER(v->reg[fbzMode].u, x * s + dx, dither_lookup, r_copy, g_copy, b_copy);
++								row_dest[x * s + dx] = (uint16_t)((r_copy << 11) | (g_copy << 5) | b_copy);
++							}
++							if (row_depth && FBZMODE_AUX_BUFFER_MASK(v->reg[fbzMode].u)) {
++								row_depth[x * s + dx] = (FBZMODE_ENABLE_ALPHA_PLANES(v->reg[fbzMode].u) == 0) ? (uint16_t)depthval : (uint16_t)a;
++							}
++						}
++					}
+ 				}
+ 
+ 				PIXEL_PIPELINE_END(stats);
+@@ -7031,13 +7129,15 @@ static uint32_t lfb_r(const uint32_t offset)
+ #endif
+ 	{
+ 		/* advance pointers to the proper row */
+-		const auto bufoffs = scry * v->fbi.rowpixels + x;
+-		if (bufoffs >= bufmax) {
++		const uint32_t s = v->fbi.scale;
++		const auto bufoffs0 = (scry * s) * v->fbi.rowpixels + x * s;
++		const auto bufoffs1 = (scry * s) * v->fbi.rowpixels + (x + 1) * s;
++		if (bufoffs1 >= bufmax) {
+ 			return 0xffffffff;
+ 		}
+ 
+ 		/* compute the data */
+-		data = buffer[bufoffs + 0] | (buffer[bufoffs + 1] << 16);
++		data = buffer[bufoffs0] | (buffer[bufoffs1] << 16);
+ 	}
+ 
+ 	/* word swapping */
+@@ -7267,8 +7367,17 @@ static void voodoo_init() {
+ 	/* set up the PCI FIFO */
+ 	v->pci.fifo.size = 64*2;
+ 
+-	/* set up frame buffer */
+-	init_fbi(&v->fbi, fbmemsize << 20);
++	/* set up frame buffer (with optional 2x internal supersampling via SCREAMER_VOODOO_SCALE) */
++	v->fbi.scale = 1;
++	if (const char* scale_env = std::getenv("SCREAMER_VOODOO_SCALE")) {
++		const int s = std::atoi(scale_env);
++		if (s == 2) {
++			v->fbi.scale = 2;
++		}
++	}
++	init_fbi(&v->fbi, (fbmemsize * v->fbi.scale * v->fbi.scale) << 20);
++	v->fbi.width *= v->fbi.scale;
++	v->fbi.height *= v->fbi.scale;
+ 
+ 	v->fbi.rowpixels = v->fbi.width;
  
