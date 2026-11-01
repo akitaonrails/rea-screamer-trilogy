@@ -1166,23 +1166,30 @@ index 3893f74..9b1687f 100755
 +# Invoked directly by Meson; use MSYS2's POSIX shell on Windows.
  # SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/scripts/create-package.sh b/scripts/create-package.sh
-index 9f2f627..19bb2fe 100755
+index 9f2f627..3c30131 100755
 --- a/scripts/create-package.sh
 +++ b/scripts/create-package.sh
-@@ -205,8 +205,14 @@ pkg_msys2()
+@@ -205,8 +205,17 @@ pkg_msys2()
      # Discover and copy required dll files
 -    ntldd -R "${pkg_dir}/dosbox.exe" \
-+    { ntldd -R "${pkg_dir}/dosbox.exe" || [ "$?" -eq 1 ]; } \
-         | sed -e 's/^[[:blank:]]*//g' \
-         | cut -d ' ' -f 3 \
-         | grep -E -i '(mingw|clang)(32|64)' \
-         | sed -e 's|\\|/|g' \
+-        | sed -e 's/^[[:blank:]]*//g' \
+-        | cut -d ' ' -f 3 \
+-        | grep -E -i '(mingw|clang)(32|64)' \
+-        | sed -e 's|\\|/|g' \
 -        | xargs cp --target-directory="${pkg_dir}/"
-+        | {
-+            copy_status=0
-+            while IFS= read -r dll; do
-+                cp "$dll" "${pkg_dir}/" || copy_status=$?
-+            done
-+            exit "$copy_status"
-+        }
++    (
++        set +o pipefail
++        ntldd -R "${pkg_dir}/dosbox.exe" \
++            | sed -e 's/^[[:blank:]]*//g' \
++            | cut -d ' ' -f 3 \
++            | grep -E -i '(mingw|clang)(32|64)' \
++            | sed -e 's|\\|/|g' \
++            | {
++                copy_status=0
++                while IFS= read -r dll; do
++                    cp "$dll" "${pkg_dir}/" || copy_status=$?
++                done
++                exit "$copy_status"
++            }
++    )
  }
