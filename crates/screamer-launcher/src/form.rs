@@ -11,6 +11,7 @@ pub struct Picture {
     pub renderer: RendererChoice,
     pub resolution: Option<(u32, u32)>,
     pub widescreen: bool,
+    pub extended_draw_distance: bool,
     pub texture_filter: TextureFilter,
     pub fps_limit: Option<u32>,
     pub vsync: Option<bool>,
@@ -23,6 +24,7 @@ impl Picture {
         renderer: RendererChoice::Auto,
         resolution: None,
         widescreen: false,
+        extended_draw_distance: false,
         texture_filter: TextureFilter::Original,
         fps_limit: Some(30),
         vsync: None,
@@ -33,6 +35,7 @@ impl Picture {
             renderer: RendererChoice::Auto,
             resolution: Some((1920, 1080)),
             widescreen: true,
+            extended_draw_distance: true,
             // The games render low-resolution pixel art and pre-filtered textures.
             // Nearest-neighbour output keeps that artwork crisp and avoids putting the
             // comparatively expensive FSR shader on the default presentation path.
@@ -46,6 +49,7 @@ impl Picture {
         renderer: RendererChoice::Auto,
         resolution: Some(STEAM_DECK_SCREEN),
         widescreen: true,
+        extended_draw_distance: true,
         texture_filter: TextureFilter::Sharp,
         fps_limit: None,
         vsync: Some(true),
@@ -266,6 +270,7 @@ impl Form {
             renderer,
             resolution,
             widescreen: s.widescreen_enabled(),
+            extended_draw_distance: s.extended_draw_distance_enabled(),
             texture_filter: s.effective_filter(),
             fps_limit: match s.fps_cap() {
                 Some(fps) if fps <= 30 => Some(30),
@@ -378,6 +383,10 @@ impl Form {
         );
         put("widescreen", Some(p.widescreen.to_string()));
         put(
+            "extended_draw_distance",
+            Some(p.extended_draw_distance.to_string()),
+        );
+        put(
             "fps_limit",
             Some(
                 p.fps_limit
@@ -444,6 +453,7 @@ mod tests {
         let f_orig = form(&saved_orig);
         assert_eq!(f_orig.look, Look::Original);
         assert_eq!(f_orig.picture, Picture::ORIGINAL);
+        assert!(!f_orig.picture.extended_draw_distance);
 
         f.set_look(Look::Enhanced, SCREEN);
         let saved = f.save(&saved_orig);
@@ -452,6 +462,7 @@ mod tests {
         assert_eq!(f2.look, Look::Enhanced);
         assert_eq!(f2.picture.resolution, Some((1920, 1080)));
         assert!(f2.picture.widescreen);
+        assert!(f2.picture.extended_draw_distance);
         assert_eq!(f2.picture.texture_filter, TextureFilter::Sharp);
         assert_eq!(f2.picture.fps_limit, None);
     }

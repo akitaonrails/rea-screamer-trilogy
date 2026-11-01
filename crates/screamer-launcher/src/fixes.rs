@@ -11,7 +11,7 @@
 pub struct Fix {
     pub id: &'static str,
     pub what: &'static str,
-    /// True if a launcher setting can turn it off (`E1`, `E2`, `E5`).
+    /// True if a launcher setting can turn it off (`E1`, `E2`, `E5`, `E6`).
     pub optional: bool,
     pub code: &'static [Piece],
 }
@@ -176,6 +176,9 @@ const UNUSED_CAM_CAVE_31: &[u8; 31] = &[
     0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb, 0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
 ];
 
+const DISTANCE_52K_CMP: &[u8; 5] = &[0x3d, 0x80, 0x78, 0x25, 0x14];
+const DISTANCE_104K_CMP: &[u8; 5] = &[0x3d, 0x00, 0xe2, 0x95, 0x50];
+
 // ============================================================================
 // Screamer (1995) — STARTH.EXE (SVGA 640x480)
 // ============================================================================
@@ -234,6 +237,28 @@ pub static S1_STARTH_FIXES: FixSet = FixSet {
                 ops: &[Op::Raw(&[0x00])],
             }],
         },
+        Fix {
+            id: "E6",
+            what: "Extend managed animated-object visibility by 20% (40,000 to 48,000 units)",
+            optional: true,
+            code: &[
+                Piece {
+                    at: At::Image(0x0010_0d29),
+                    expected: &[0x00, 0x40, 0x1c, 0x47],
+                    ops: &[Op::Raw(&[0x00, 0x80, 0x3b, 0x47])],
+                },
+                Piece {
+                    at: At::Image(0x0002_09bb),
+                    expected: &[0x20, 0xcb, 0x00, 0x00],
+                    ops: &[Op::Raw(&[0xc0, 0xf3, 0x00, 0x00])],
+                },
+                Piece {
+                    at: At::Image(0x0002_09d2),
+                    expected: &[0x20, 0xcb, 0x00, 0x00],
+                    ops: &[Op::Raw(&[0xc0, 0xf3, 0x00, 0x00])],
+                },
+            ],
+        },
     ],
 };
 
@@ -284,6 +309,28 @@ pub static S1_STARTL_FIXES: FixSet = FixSet {
                 expected: &[0x66],
                 ops: &[Op::Raw(&[0x00])],
             }],
+        },
+        Fix {
+            id: "E6",
+            what: "Extend managed animated-object visibility by 20% (40,000 to 48,000 units)",
+            optional: true,
+            code: &[
+                Piece {
+                    at: At::Image(0x0010_0d29),
+                    expected: &[0x00, 0x40, 0x1c, 0x47],
+                    ops: &[Op::Raw(&[0x00, 0x80, 0x3b, 0x47])],
+                },
+                Piece {
+                    at: At::Image(0x0002_09ab),
+                    expected: &[0x20, 0xcb, 0x00, 0x00],
+                    ops: &[Op::Raw(&[0xc0, 0xf3, 0x00, 0x00])],
+                },
+                Piece {
+                    at: At::Image(0x0002_09c2),
+                    expected: &[0x20, 0xcb, 0x00, 0x00],
+                    ops: &[Op::Raw(&[0xc0, 0xf3, 0x00, 0x00])],
+                },
+            ],
         },
     ],
 };
@@ -375,6 +422,38 @@ pub static S2_3DFX_FIXES: FixSet = FixSet {
                 ops: &[Op::Raw(&[0x00])],
             }],
         },
+        Fix {
+            id: "E6",
+            what: "Double scenery/object admission radius for verified original track data",
+            optional: true,
+            code: &[
+                Piece {
+                    at: At::Image(0x0007_c10f),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_c173),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_c1f9),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_c25d),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0008_3a52),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+            ],
+        },
     ],
 };
 
@@ -426,6 +505,38 @@ pub static S2_START65H_FIXES: FixSet = FixSet {
                 ops: &[Op::Raw(&[0x00])],
             }],
         },
+        Fix {
+            id: "E6",
+            what: "Double scenery/object admission radius for verified original track data",
+            optional: true,
+            code: &[
+                Piece {
+                    at: At::Image(0x0007_64ef),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_6553),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_65d9),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_663d),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_dd92),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+            ],
+        },
     ],
 };
 
@@ -466,6 +577,38 @@ pub static S2_STARTH_FIXES: FixSet = FixSet {
                 expected: &[0x66],
                 ops: &[Op::Raw(&[0x00])],
             }],
+        },
+        Fix {
+            id: "E6",
+            what: "Double scenery/object admission radius for verified original track data",
+            optional: true,
+            code: &[
+                Piece {
+                    at: At::Image(0x0007_704f),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_70b3),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_7139),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_719d),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_e952),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+            ],
         },
     ],
 };
@@ -557,6 +700,38 @@ pub static SR_STRT3FX_FIXES: FixSet = FixSet {
                 ops: &[Op::Raw(&[0x00])],
             }],
         },
+        Fix {
+            id: "E6",
+            what: "Double scenery/object admission radius for verified original track data",
+            optional: true,
+            code: &[
+                Piece {
+                    at: At::Image(0x0007_a6df),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_a743),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_a7c9),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_a82d),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0008_2022),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+            ],
+        },
     ],
 };
 
@@ -598,6 +773,38 @@ pub static SR_START65H_FIXES: FixSet = FixSet {
                 ops: &[Op::Raw(&[0x00])],
             }],
         },
+        Fix {
+            id: "E6",
+            what: "Double scenery/object admission radius for verified original track data",
+            optional: true,
+            code: &[
+                Piece {
+                    at: At::Image(0x0006_9fcf),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0006_a033),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0006_a0b9),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0006_a11d),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_1892),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+            ],
+        },
     ],
 };
 
@@ -638,6 +845,38 @@ pub static SR_STARTH_FIXES: FixSet = FixSet {
                 expected: &[0x66],
                 ops: &[Op::Raw(&[0x00])],
             }],
+        },
+        Fix {
+            id: "E6",
+            what: "Double scenery/object admission radius for verified original track data",
+            optional: true,
+            code: &[
+                Piece {
+                    at: At::Image(0x0006_f3df),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0006_f443),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0006_f4c9),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0006_f52d),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+                Piece {
+                    at: At::Image(0x0007_6d42),
+                    expected: DISTANCE_52K_CMP,
+                    ops: &[Op::Raw(DISTANCE_104K_CMP)],
+                },
+            ],
         },
     ],
 };
@@ -702,7 +941,7 @@ mod tests {
 
     #[test]
     fn skip_filters_only_optional_fixes() {
-        let writes = S1_STARTH_FIXES.assemble(0, &["F2", "F3", "E1", "E2", "E5"]);
+        let writes = S1_STARTH_FIXES.assemble(0, &["F2", "F3", "E1", "E2", "E5", "E6"]);
         assert_eq!(writes.len(), 2, "required F2 and F3 cannot be skipped");
         assert_eq!(writes[0].fix, "F2");
         assert_eq!(writes[1].fix, "F3");
@@ -736,6 +975,112 @@ mod tests {
             for patch in &patches[1..] {
                 assert_eq!(patch.expected, [0x7d, 0x10]);
                 assert_eq!(patch.bytes, [0x90, 0x90]);
+            }
+        }
+    }
+
+    #[test]
+    fn e6_draw_distance_matrix_is_exact() {
+        for (set, expected) in [
+            (
+                &S1_STARTH_FIXES,
+                vec![0x0010_0d29, 0x0002_09bb, 0x0002_09d2],
+            ),
+            (
+                &S1_STARTL_FIXES,
+                vec![0x0010_0d29, 0x0002_09ab, 0x0002_09c2],
+            ),
+        ] {
+            let writes = set
+                .assemble(0, &[])
+                .into_iter()
+                .filter(|w| w.fix == "E6")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                writes.iter().map(|w| w.address).collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(writes[0].expected, [0x00, 0x40, 0x1c, 0x47]);
+            assert_eq!(writes[0].bytes, [0x00, 0x80, 0x3b, 0x47]);
+            for write in &writes[1..] {
+                assert_eq!(write.expected, [0x20, 0xcb, 0x00, 0x00]);
+                assert_eq!(write.bytes, [0xc0, 0xf3, 0x00, 0x00]);
+            }
+        }
+
+        let matrices: [(&FixSet, &[u32]); 6] = [
+            (
+                &S2_3DFX_FIXES,
+                &[
+                    0x0007_c10f,
+                    0x0007_c173,
+                    0x0007_c1f9,
+                    0x0007_c25d,
+                    0x0008_3a52,
+                ],
+            ),
+            (
+                &S2_START65H_FIXES,
+                &[
+                    0x0007_64ef,
+                    0x0007_6553,
+                    0x0007_65d9,
+                    0x0007_663d,
+                    0x0007_dd92,
+                ],
+            ),
+            (
+                &S2_STARTH_FIXES,
+                &[
+                    0x0007_704f,
+                    0x0007_70b3,
+                    0x0007_7139,
+                    0x0007_719d,
+                    0x0007_e952,
+                ],
+            ),
+            (
+                &SR_STRT3FX_FIXES,
+                &[
+                    0x0007_a6df,
+                    0x0007_a743,
+                    0x0007_a7c9,
+                    0x0007_a82d,
+                    0x0008_2022,
+                ],
+            ),
+            (
+                &SR_START65H_FIXES,
+                &[
+                    0x0006_9fcf,
+                    0x0006_a033,
+                    0x0006_a0b9,
+                    0x0006_a11d,
+                    0x0007_1892,
+                ],
+            ),
+            (
+                &SR_STARTH_FIXES,
+                &[
+                    0x0006_f3df,
+                    0x0006_f443,
+                    0x0006_f4c9,
+                    0x0006_f52d,
+                    0x0007_6d42,
+                ],
+            ),
+        ];
+        for (set, sites) in matrices {
+            let writes = set
+                .assemble(0, &[])
+                .into_iter()
+                .filter(|w| w.fix == "E6")
+                .collect::<Vec<_>>();
+            assert_eq!(writes.len(), 5);
+            for (write, &site) in writes.iter().zip(sites) {
+                assert_eq!(write.address, site);
+                assert_eq!(write.expected, DISTANCE_52K_CMP);
+                assert_eq!(write.bytes, DISTANCE_104K_CMP);
             }
         }
     }

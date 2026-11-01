@@ -699,12 +699,12 @@ impl Window<'_> {
             (
                 Look::Enhanced,
                 "Enhanced",
-                "1080p Hor+, crisp pixels, native 50 FPS.",
+                "1080p Hor+, longer view, native 50 FPS.",
             ),
             (
                 Look::SteamDeck,
                 "Steam Deck",
-                "1280×800 Hor+, crisp pixels, native 50 FPS.",
+                "1280×800 Hor+, longer view, native 50 FPS.",
             ),
             (Look::Custom, "Custom", "Pick each setting in Picture."),
         ];
@@ -787,6 +787,15 @@ impl Window<'_> {
                 ui,
                 &mut p.widescreen,
                 "Widescreen: 16:9 Hor+ 3D camera FOV (shows more to the sides)",
+                None,
+            );
+        });
+
+        row(ui, focus == 6, "", &mut |ui| {
+            toggle(
+                ui,
+                &mut p.extended_draw_distance,
+                "Extended draw distance: reduce scenery and animated-object pop-in",
                 None,
             );
         });
@@ -998,7 +1007,7 @@ impl Window<'_> {
     fn max_focus_row(&self) -> usize {
         match self.tab {
             Tab::Play => 1,
-            Tab::Picture => 5,
+            Tab::Picture => 6,
             Tab::Controls => 2,
             Tab::Buttons => form::ACTIONS.len(),
         }
@@ -1044,6 +1053,11 @@ impl Window<'_> {
                 }
                 (Tab::Picture, 5) => {
                     self.form.picture.widescreen = !self.form.picture.widescreen;
+                    self.form.look = Form::look_of(&self.form.picture, self.screen);
+                }
+                (Tab::Picture, 6) => {
+                    self.form.picture.extended_draw_distance =
+                        !self.form.picture.extended_draw_distance;
                     self.form.look = Form::look_of(&self.form.picture, self.screen);
                 }
                 (Tab::Controls, 0) => {
@@ -1139,6 +1153,11 @@ impl Window<'_> {
             }
             (Tab::Picture, 5) => {
                 self.form.picture.widescreen = !self.form.picture.widescreen;
+                self.form.look = Form::look_of(&self.form.picture, self.screen);
+            }
+            (Tab::Picture, 6) => {
+                self.form.picture.extended_draw_distance =
+                    !self.form.picture.extended_draw_distance;
                 self.form.look = Form::look_of(&self.form.picture, self.screen);
             }
             (Tab::Controls, 0) => {

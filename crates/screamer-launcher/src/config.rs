@@ -18,6 +18,7 @@ pub struct Settings {
     pub renderer: Option<RendererChoice>,
     pub resolution: Option<(u32, u32)>,
     pub widescreen: Option<bool>,
+    pub extended_draw_distance: Option<bool>,
     pub fps_limit: Option<u32>,
     pub vsync: Option<bool>,
     pub texture_filter: Option<TextureFilter>,
@@ -216,6 +217,10 @@ resolution = 1920x1080
 # 4/3 inside SetCamera3D instead of stretching the 4:3 image).
 widescreen = true
 
+# Reduce scenery/object pop-in. Enhanced modes extend Screamer's managed
+# animations by 20% and double Screamer 2/Rally's admission radius.
+extended_draw_distance = true
+
 # Frame-rate target: 30 is the unchanged original timing, 50 is the smooth native
 # enhanced timing, and 100 enables experimental 2x GPU Optical-Flow Frame Generation.
 fps_limit = 50
@@ -258,6 +263,7 @@ ScreamerLauncher [1|2|rally] [options]
   --renderer <mode>        auto, 3dfx, svga16, svga8, or vga
   --resolution <WxH>       output resolution, e.g. 3840x2160, or original
   --widescreen on|off      Hor+ 16:9 widescreen 3D camera projection
+  --extended-draw-distance on|off  reduce scenery/object pop-in
   --fps-limit <n>|off      30 original, 50 native, or 100 frame generation
   --vsync on|off           wait for the screen's refresh
   --texture-filter <f>     original, fsr, smooth, or sharp
@@ -369,6 +375,10 @@ impl Settings {
                     Some(b) => s.widescreen = Some(b),
                     None => bad("widescreen needs true or false, not"),
                 },
+                "extended_draw_distance" => match parse_bool(value) {
+                    Some(b) => s.extended_draw_distance = Some(b),
+                    None => bad("extended_draw_distance needs true or false, not"),
+                },
                 "fps_limit" => match parse_fps(value) {
                     Some(f) => s.fps_limit = Some(f),
                     None => bad("fps_limit needs a number from 10 to 1000 or off, not"),
@@ -417,6 +427,7 @@ impl Settings {
             renderer: over.renderer.or(self.renderer),
             resolution: over.resolution.or(self.resolution),
             widescreen: over.widescreen.or(self.widescreen),
+            extended_draw_distance: over.extended_draw_distance.or(self.extended_draw_distance),
             fps_limit: over.fps_limit.or(self.fps_limit),
             vsync: over.vsync.or(self.vsync),
             texture_filter: over.texture_filter.or(self.texture_filter),
@@ -456,6 +467,10 @@ impl Settings {
         self.widescreen.unwrap_or(true)
     }
 
+    pub fn extended_draw_distance_enabled(&self) -> bool {
+        self.extended_draw_distance.unwrap_or(true)
+    }
+
     pub fn effective_filter(&self) -> TextureFilter {
         self.texture_filter.unwrap_or(TextureFilter::Sharp)
     }
@@ -464,7 +479,7 @@ impl Settings {
         self.buttons.unwrap_or(DEFAULT_BUTTONS)
     }
 
-    /// Optional binary fixes (`E1`, `E2`, `E5`) that these settings turn off.
+    /// Optional binary fixes (`E1`, `E2`, `E5`, `E6`) that these settings turn off.
     pub fn skipped_fixes(&self) -> Vec<&'static str> {
         let mut skip = Vec::new();
         // E1 unlocks the 30 FPS PIT timer wait loop (`fdiv 2.0 -> 1.0`).
@@ -480,6 +495,9 @@ impl Settings {
         // E5 zeroes the hardcoded 20/256 (7.8%) analog steering deadzone.
         if self.gamepad_axes == Some(false) || self.deadzone.unwrap_or(0) > 0 {
             skip.push("E5");
+        }
+        if !self.extended_draw_distance_enabled() {
+            skip.push("E6");
         }
         skip
     }
@@ -554,12 +572,16 @@ impl Settings {
                         format!("--fps-limit needs 10 to 1000 or off, not {v}\n\n{USAGE}")
                     })?);
                 }
-                flag @ ("--widescreen" | "--gamepad-axes" | "--vsync") => {
+                flag @ ("--widescreen"
+                | "--extended-draw-distance"
+                | "--gamepad-axes"
+                | "--vsync") => {
                     let v = value(flag)?;
                     let b = parse_bool(&v)
                         .ok_or_else(|| format!("{flag} needs on or off, not {v}\n\n{USAGE}"))?;
                     match flag {
                         "--widescreen" => s.widescreen = Some(b),
+                        "--extended-draw-distance" => s.extended_draw_distance = Some(b),
                         "--gamepad-axes" => s.gamepad_axes = Some(b),
                         _ => s.vsync = Some(b),
                     }
@@ -620,7 +642,7 @@ mod tests {
 
     #[test]
     fn skipped_fixes_follow_settings() {
-        // Smart defaults enable E1, E2, E5 out of the box
+        // Smart defaults enable E1, E2, E5, and E6 out of the box.
         let def = Settings::default();
         assert!(def.skipped_fixes().is_empty());
 
@@ -637,25 +659,32 @@ mod tests {
             fps_limit: Some(0),
             widescreen: Some(false),
             gamepad_axes: Some(false),
+            extended_draw_distance: Some(false),
             ..Settings::default()
         };
-        assert_eq!(orig.skipped_fixes(), vec!["E1", "E2", "E5"]);
+        assert_eq!(orig.skipped_fixes(), vec!["E1", "E2", "E5", "E6"]);
     }
 
     #[test]
     fn parses_file_and_args() {
         let (s, warn) = Settings::parse_file(
-            "game = /games/screamer\nrenderer = 3dfx\nresolution = 1920x1080\nwidescreen = true\nfps_limit = 60\n",
+            "game = /games/screamer\nrenderer = 3dfx\nresolution = 1920x1080\nwidescreen = true\nextended_draw_distance = false\nfps_limit = 60\n",
         );
         assert!(warn.is_empty());
         assert_eq!(s.renderer_choice(), RendererChoice::Voodoo);
         assert_eq!(s.resolution, Some((1920, 1080)));
         assert_eq!(s.widescreen, Some(true));
+        assert_eq!(s.extended_draw_distance, Some(false));
         assert_eq!(s.fps_limit, Some(60));
 
         // Legacy 4K/1440p values map cleanly to FULLSCREEN ("desktop")
         let (s_legacy, _) = Settings::parse_file("resolution = 3840x2160\n");
         assert_eq!(s_legacy.resolution, Some(FULLSCREEN));
+
+        let args =
+            Settings::parse_args(["--extended-draw-distance".to_string(), "off".to_string()])
+                .unwrap();
+        assert_eq!(args.extended_draw_distance, Some(false));
     }
 }
 

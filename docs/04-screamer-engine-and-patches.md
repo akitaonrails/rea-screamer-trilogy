@@ -82,6 +82,14 @@ In Watcom Linear Executables (`LE`):
   - Camera-space transformation uses a floating-point 3x3 rotation matrix + translation vector (`0x07C3F4..0x07C420` in `S2_3DFX.EXE`, `0x07A9C4..0x07A9F0` in `STRT3FX.EXE`), populated by `0x07C350..0x07C3F0` (`S2_3DFX`, `FileOff 0x081F50`) / `0x07A920..0x07A9C0` (`STRT3FX`, `FileOff 0x07FB20`).
   - Scaling the X-row of the float camera matrix (`[0x07C3F4]`, `[0x07C3F8]`, `[0x07C3FC]`, `[0x07C41C]`) by `0.75f` (`3/4`) widens the 3D horizontal FOV for 16:9 while keeping near-plane clipping and `VIS.TAB` frustum culling perfectly aligned.
 
+### 3.3 E6 Extended Draw Distance
+
+- **Screamer 1 (`STARTH.EXE` / `STARTL.EXE`)**: the confirmed distance-controlled stream is the managed `ANIMATIONS` list, not road or terrain visibility. E6 changes the shared `40000.0f` create/destroy and fade/LOD distance to `48000.0f`, and raises both coarse per-axis gates from `52000` to `62400`. All six references to the shared float belong to the same updater. The six official maps contain at most five managed animations, while the renderer has 32 slots and returns `-1` safely when full.
+- **Screamer 2 and Screamer Rally**: five homologous collectors compute `(dx² + dy² + dz²) >> 3` and reject entries at `0x14257880`, exactly a `52,000`-unit radius. E6 changes the threshold to `0x5095E200` (`104,000` units).
+- The five collectors append 8-byte `(distance, object)` pairs into one `0x3200`-byte region: exactly 1,600 entries. Static enumeration found at most 192 source records in the official track hierarchy; even the deliberately pessimistic assumption that all 192 records are emitted independently by all five collectors yields 960 entries. E6 therefore changes only each in-place five-byte distance immediate and leaves the original control flow untouched.
+- Experimental out-of-line capacity guards were rejected after headless runtime tests exposed that apparent zero padding after `SetCameraMatrix_Unused` remained indirectly reachable. The release uses the in-place comparison that completed a Rally race segment without the mid-level exit.
+- `TABS/VIS.TAB` is byte-identical across the trilogy (`SHA-256 da395e34f109aa5a685d1b6f46e502d0b1bd513086886a3b11a697dfea29e57e`) and supplies projection/frustum geometry. It is not a global far-distance table and is never modified.
+
 ---
 
 ## 4. Frame Rate Cap, Delta-Time (`dt`) & True 60 FPS Unlock

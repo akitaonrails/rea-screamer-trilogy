@@ -35,6 +35,12 @@ pub struct BinaryControlSpec {
     pub controls_base_offset: usize,
     /// Number of `0xC0`-byte control blocks (`1` in Screamer 1, `4` in Screamer 2/Rally).
     pub block_count: usize,
+    /// LE RVA of the Data Object used to derive the module load bias.
+    pub data_object_rva: usize,
+    /// Final shared scenery/object admission count (Screamer 2/Rally).
+    pub admission_count_rva: Option<usize>,
+    /// Renderer-ready, animations-enabled, count, and record-table offsets in the Data Object.
+    pub managed_animations: Option<(usize, usize, usize, usize)>,
 }
 
 pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
@@ -45,6 +51,9 @@ pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
         anchor_offset: 0x09AF,
         controls_base_offset: 0x197D8,
         block_count: 1,
+        data_object_rva: 0x100000,
+        admission_count_rva: None,
+        managed_animations: Some((0x08058, 0x0CF58, 0x0F178, 0x0F180)),
     },
     BinaryControlSpec {
         id: "S1_STARTL",
@@ -53,6 +62,9 @@ pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
         anchor_offset: 0x09AF,
         controls_base_offset: 0x197D4,
         block_count: 1,
+        data_object_rva: 0x100000,
+        admission_count_rva: None,
+        managed_animations: Some((0x08054, 0x0CF54, 0x0F174, 0x0F17C)),
     },
     BinaryControlSpec {
         id: "S2_3DFX",
@@ -61,6 +73,9 @@ pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
         anchor_offset: 0x104A,
         controls_base_offset: 0x18140,
         block_count: 4,
+        data_object_rva: 0x130000,
+        admission_count_rva: Some(0x07B298),
+        managed_animations: None,
     },
     BinaryControlSpec {
         id: "S2_START65H",
@@ -69,6 +84,9 @@ pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
         anchor_offset: 0x1206,
         controls_base_offset: 0x17890,
         block_count: 4,
+        data_object_rva: 0x130000,
+        admission_count_rva: Some(0x0755B8),
+        managed_animations: None,
     },
     BinaryControlSpec {
         id: "S2_STARTH",
@@ -77,6 +95,9 @@ pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
         anchor_offset: 0x0E46,
         controls_base_offset: 0x17714,
         block_count: 4,
+        data_object_rva: 0x110000,
+        admission_count_rva: Some(0x076140),
+        managed_animations: None,
     },
     BinaryControlSpec {
         id: "SR_STRT3FX",
@@ -85,6 +106,9 @@ pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
         anchor_offset: 0x10E2,
         controls_base_offset: 0x19BD0,
         block_count: 4,
+        data_object_rva: 0x120000,
+        admission_count_rva: Some(0x079868),
+        managed_animations: None,
     },
     BinaryControlSpec {
         id: "SR_START65H",
@@ -93,6 +117,9 @@ pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
         anchor_offset: 0x10E2,
         controls_base_offset: 0x196A0,
         block_count: 4,
+        data_object_rva: 0x120000,
+        admission_count_rva: Some(0x069158),
+        managed_animations: None,
     },
     BinaryControlSpec {
         id: "SR_STARTH",
@@ -101,6 +128,9 @@ pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
         anchor_offset: 0x0D22,
         controls_base_offset: 0x18F24,
         block_count: 4,
+        data_object_rva: 0x110000,
+        admission_count_rva: Some(0x06E4D0),
+        managed_animations: None,
     },
 ];
 
@@ -502,6 +532,9 @@ pub mod host_hook {
     static LAST_SCAN_ATTEMPT_NS: AtomicU64 = AtomicU64::new(0);
     static LAST_RACE_HEARTBEAT_NS: AtomicU64 = AtomicU64::new(0);
     static IN_POLL: AtomicBool = AtomicBool::new(false);
+    static TELEMETRY_ENABLED: AtomicBool = AtomicBool::new(false);
+    static TELEMETRY_SPEC_IDX: AtomicUsize = AtomicUsize::new(usize::MAX);
+    static TELEMETRY_MAX: AtomicUsize = AtomicUsize::new(0);
 
     static CONTROLLER_PTR: AtomicUsize = AtomicUsize::new(0);
     static JOYSTICK_PTR: AtomicUsize = AtomicUsize::new(0);
@@ -576,6 +609,83 @@ pub mod host_hook {
                     }
                 }
             }
+        }
+        if std::env::var("SCREAMER_TELEMETRY").is_ok_and(|v| {
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("on")
+        }) {
+            TELEMETRY_ENABLED.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn sample_draw_distance_telemetry(
+        guest_ram: &[u8],
+        data_base: usize,
+        spec_idx: usize,
+        spec: &BinaryControlSpec,
+    ) {
+        if !TELEMETRY_ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
+        if TELEMETRY_SPEC_IDX.swap(spec_idx, Ordering::Relaxed) != spec_idx {
+            TELEMETRY_MAX.store(0, Ordering::Relaxed);
+        }
+
+        let read_u32 = |off: usize| -> Option<u32> {
+            let bytes: [u8; 4] = guest_ram.get(off..off + 4)?.try_into().ok()?;
+            Some(u32::from_le_bytes(bytes))
+        };
+
+        if let Some(count_rva) = spec.admission_count_rva {
+            let delta = count_rva as isize - spec.data_object_rva as isize;
+            let Some(pos) = data_base.checked_add_signed(delta) else {
+                return;
+            };
+            let Some(count) = read_u32(pos).map(|v| v as usize) else {
+                return;
+            };
+            if count > 4096 {
+                return;
+            }
+            let previous = TELEMETRY_MAX.fetch_max(count, Ordering::Relaxed);
+            if count > previous {
+                eprintln!("SCREAMER_TELEMETRY {} admission_max={count}/1600", spec.id);
+            }
+            return;
+        }
+
+        let Some((renderer_ready, animations_enabled, count_off, records_off)) =
+            spec.managed_animations
+        else {
+            return;
+        };
+        if read_u32(data_base + renderer_ready) == Some(0)
+            || read_u32(data_base + animations_enabled) == Some(0)
+        {
+            return;
+        }
+        let Some(count) = read_u32(data_base + count_off).map(|v| v as usize) else {
+            return;
+        };
+        if count > 10 {
+            return;
+        }
+        let mut active = 0usize;
+        let mut handles = 0u32;
+        for i in 0..count {
+            let Some(handle) = read_u32(data_base + records_off + i * 0xbc + 0x38) else {
+                return;
+            };
+            if handle < 32 {
+                active += 1;
+                handles |= 1 << handle;
+            }
+        }
+        let previous = TELEMETRY_MAX.fetch_max(active, Ordering::Relaxed);
+        if active > previous {
+            eprintln!(
+                "SCREAMER_TELEMETRY {} managed_active_max={active}/{} handles=0x{handles:08x}",
+                spec.id, count
+            );
         }
     }
 
@@ -825,6 +935,7 @@ pub mod host_hook {
             inject_race_controls_with_synth_mask(&mut guest_ram[base..], spec, gp, synth_key_mask);
         if injected {
             LAST_RACE_HEARTBEAT_NS.store(now_ns, Ordering::Relaxed);
+            sample_draw_distance_telemetry(guest_ram, base, spec_idx, spec);
         }
         injected
     }

@@ -37,6 +37,10 @@ Point `ScreamerLauncher` at a parent folder containing one, two, or all three ga
 - **Automatic 3dfx Voodoo Glide Unlock & Authentic TMU Configuration**:
   - GOG's release of **Screamer 2** includes `S2_3DFX.EXE` alongside a `31 KB` Windows 9x port-`0x600` stub `glide2x.ovl` that fails in pure DOS. When `Screamer Rally` is present in the same trilogy folder, `ScreamerLauncher` automatically links the genuine `348 KB` DOS 3dfx driver (`GLIDE2X.OVL`) into Screamer 2's runtime directory so both **Screamer 2** and **Screamer Rally** run with hardware-accelerated 3dfx Voodoo Glide (`S2_3DFX.EXE` / `STRT3FX.EXE`).
   - Configures the authentic Voodoo 1 memory split (2 MB FBI + 2 MB TMU0), preserving the games' original texture-residency and 2 MB boundary logic. No texture-manager binary patch is applied.
+- **Extended Draw Distance**:
+  - **Screamer (1995)**: Enhanced and Steam Deck modes extend managed animated-object visibility from `40,000` to `48,000` engine units (1.2×), with the coarse admission gate raised from `52,000` to `62,400`. The authored road and terrain visibility remains unchanged.
+  - **Screamer 2 / Screamer Rally**: doubles the shared scenery/object admission radius from `52,000` to `104,000` engine units at all five homologous admission paths. The official track inventory stays below the renderer's fixed `1,600`-entry shared list capacity even under the deliberately pessimistic all-paths bound.
+  - The option is enabled by the **Enhanced** and **Steam Deck** presets and disabled by **Original 1995**. Every E6 site is verified by executable SHA-256, original instruction bytes, and LE relocation tables before the private runtime copy is patched.
 - **2× Internal 3dfx Voodoo Superscaling (`1280×960`), AMD FSR 1.0 (`EASU + RCAS`), & 100 FPS Optical-Flow Frame Generation**:
   - When an enhanced display resolution is selected (`1280×960`, `720p`, `900p`, `1080p`, or `Fullscreen`), our patched `vendor/dosbox-staging` 3dfx Voodoo emulator (`SCREAMER_VOODOO_SCALE=2`) scales internal Voodoo triangle setup (`ax..cy`), parameter gradients (`d*dx`, `d*dy`), clip windows, and 2D LFB HUD overlays to **`1280×960` (2× internal resolution)** while keeping `TMU0` at 2 MB for full texture-cache compatibility.
   - **AMD FSR 1.0 (`interpolation/fsr.glsl`)**: Edge-Adaptive Spatial Upsampling (**EASU**, 12-tap directional elliptical Lanczos2 with anti-ringing clamp) + Robust Contrast-Adaptive Sharpening (**RCAS**) upscales `1280×960` (Voodoo) or `640×480` (SVGA) cleanly to `1080p` / `1440p` / `4K` on any GPU (NVIDIA, AMD, Intel, Steam Deck).
@@ -52,15 +56,15 @@ Point `ScreamerLauncher` at a parent folder containing one, two, or all three ga
 
 ### Prebuilt Releases (Linux AppImage, Linux Zip & Windows Zip)
 
-Every push and `v*` tag on GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)) builds three self-contained distribution packages:
+Download the signed build-provenance artifacts and `SHA256SUMS` from the [latest GitHub release](https://github.com/akitaonrails/rea-screamer-trilogy/releases/latest). Every push is cross-platform tested; each `v*` tag publishes three self-contained distribution packages plus its recursive corresponding-source archive:
 
-- **Linux AppImage (`ScreamerLauncher-x86_64.AppImage`)**: Single-file portable bundle containing `ScreamerLauncher`, our statically hooked `dosbox`, `resources/`, `screamer-play`, and SDL2/codec libraries:
+- **Linux AppImage (`ScreamerLauncher-vX.Y.Z-x86_64.AppImage`)**: Single-file portable bundle containing `ScreamerLauncher`, our statically hooked `dosbox`, `resources/`, `screamer-play`, and SDL2/codec libraries:
   ```bash
-  chmod +x ScreamerLauncher-x86_64.AppImage
-  ./ScreamerLauncher-x86_64.AppImage --game /path/to/screamer/games
+  chmod +x ScreamerLauncher-vX.Y.Z-x86_64.AppImage
+  ./ScreamerLauncher-vX.Y.Z-x86_64.AppImage --game /path/to/screamer/games
   ```
-- **Windows (`ScreamerLauncher-windows-x86_64.zip`)**: Unpack anywhere and run `ScreamerLauncher.exe` (includes the statically hooked `dosbox.exe`, `resources/`, and runtime DLLs in the same folder).
-- **Linux Portable Archive (`ScreamerLauncher-linux-x86_64.zip`)**: Unpack and run `./ScreamerLauncher` or `./linux/screamer-play`.
+- **Windows (`ScreamerLauncher-vX.Y.Z-windows-x86_64.zip`)**: Unpack anywhere and run `ScreamerLauncher.exe` (includes the statically hooked `dosbox.exe`, `resources/`, and runtime DLLs in the same folder).
+- **Linux Portable Archive (`ScreamerLauncher-vX.Y.Z-linux-x86_64.zip`)**: Unpack and run `./ScreamerLauncher` or `./linux/screamer-play`.
 
 ### Prerequisites (When Building from Source)
 
@@ -94,6 +98,9 @@ Point `--game` at your parent trilogy folder (or any single game folder) once; `
 ./target/release/ScreamerLauncher 1 --no-window       # Screamer (1995)
 ./target/release/ScreamerLauncher 2 --no-window       # Screamer 2 (1996)
 ./target/release/ScreamerLauncher rally --no-window   # Screamer Rally (1997)
+
+# Override the pop-in reduction for a custom profile
+./target/release/ScreamerLauncher 2 --extended-draw-distance on --no-window
 
 # Verify discovered games, CD images, 3dfx Glide OVL status, and binary patches
 ./target/release/ScreamerLauncher --check --game /path/to/screamer/games

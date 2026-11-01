@@ -1,15 +1,14 @@
 # Runtime Verification Notes
 
-This document records notable observations from running the original 1995–1997 **Screamer** trilogy binaries (`Screamer` [1995], `Screamer 2` [1996], and `Screamer Rally` [1997]) through `ScreamerLauncher` + `dosbox-staging v0.82.2` + `libscreamer_hooks.so` in headless X11/OpenGL sessions.
+This document records notable observations from running the original 1995–1997 **Screamer** trilogy binaries (`Screamer` [1995], `Screamer 2` [1996], and `Screamer Rally` [1997]) through `ScreamerLauncher` and the bundled, statically hooked `dosbox-staging v0.82.2` in headless X11/OpenGL sessions.
 
 ---
 
-## 1. `dosbox-staging v0.82.2` Symbol Export & `LD_PRELOAD` Hook Integration
+## 1. `dosbox-staging v0.82.2` Static Hook Integration
 
-- **Static SDL2 with `--export-dynamic` (`-rdynamic`)**:
-  - `dosbox-staging` links `libSDL2` statically into the `dosbox` ELF executable and exports both SDL2 symbols (`SDL_WasInit`, `SDL_GameControllerOpen`, `SDL_GameControllerGetAxis`, `SDL_GameControllerGetButton`, `SDL_GameControllerRumble`) and DOSBox internal symbols (`MemBase`, `_Z15JOYSTICK_Enablehb`, `_Z15JOYSTICK_Move_Xhs`, `_Z15JOYSTICK_Move_Yhs`, `_Z15JOYSTICK_Buttonhib`, `_Z15KEYBOARD_AddKey8KBD_KEYSb`) in its dynamic symbol table (`.dynsym`).
-  - Because `SDL_GL_SwapWindow` is called intra-module inside `dosbox`, it does not go through the PLT; however, `clock_gettime@GLIBC_2.17` is an external `R_X86_64_JUMP_SLOT` relocation called continuously by the DOSBox main loop and pic queue.
-  - Intercepting `clock_gettime` in `libscreamer_hooks.so` (throttled to `250 Hz` / `4 ms` intervals) and guarding with `SDL_WasInit(0x220) == 0x220` before calling `SDL_GameControllerOpen(0)` allows `libscreamer_hooks.so` to poll the gamepad and inject proportional 16-bit steering (`X`) and combined independent `L2`/`R2` triggers (`Y`) directly into `_Z15JOYSTICK_Move_Xhs` / `_Z15JOYSTICK_Move_Yhs` without any `.map` files or `Ctrl+F1` setup.
+- `crates/screamer-hooks` builds as `libscreamer_hooks.a` and is linked directly into the bundled Linux and Windows DOSBox binaries.
+- A source patch calls `screamer_hooks_on_tick` at the end of main-thread `GFX_Events()` after SDL event pumping and passes explicit memory, keyboard, joystick, and SDL callbacks. No `LD_PRELOAD`, `dlsym`, `clock_gettime` interception, background polling thread, or separately shipped hook `.so`/`.dll` remains.
+- Keeping controller polling on the SDL main thread avoids the non-reentrant joystick-mutex deadlock observed with the earlier interception prototype.
 
 ---
 
@@ -44,10 +43,10 @@ This document records notable observations from running the original 1995–1997
 
 | Game | Selected Executable | Verified Patches Applied | Graphics Mode Entered | CD Audio & SB16 Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Screamer (1995)** | `STARTH.EXE` (`SVGA 640x480`) | `F2`, `F3`, `E1`, `E2`, `E5` (6 writes) | `VESA 640x480 256-colour mode 101h` | `SCREAM.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
-| **Screamer 2 (1996)** (3dfx) | `S2_3DFX.EXE` (`3dfx Voodoo Glide`) | `E1`, `E2`, `E5` (8 writes) | `3dfx Voodoo SVGA 640x480 16-bit mode 00h` | `GAME.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
-| **Screamer 2 (1996)** (SVGA16) | `START65H.EXE` (`SVGA 640x480 16-bit`) | `F5`, `E1`, `E2`, `E5` (9 writes) | `VESA 640x480 16-bit mode 111h` | `GAME.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
-| **Screamer Rally (1997)** | `STRT3FX.EXE` (`3dfx Voodoo Glide`) | `E1`, `E2`, `E5` (7 writes) | `3dfx Voodoo SVGA 640x480 16-bit mode 00h` | `srally.iso` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
+| **Screamer (1995)** | `STARTH.EXE` (`SVGA 640x480`) | `F2`, `F3`, `E1`, `E2`, `E5`, `E6` (8 writes) | `VESA 640x480 256-colour mode 101h` | `SCREAM.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
+| **Screamer 2 (1996)** (3dfx) | `S2_3DFX.EXE` (`3dfx Voodoo Glide`) | `F7`, `E1`, `E2`, `E5`, `E6` (11 writes) | `3dfx Voodoo SVGA 640x480 16-bit mode 00h` | `GAME.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
+| **Screamer 2 (1996)** (SVGA16) | `START65H.EXE` (`SVGA 640x480 16-bit`) | `F5`, `E1`, `E2`, `E5`, `E6` (9 writes) | `VESA 640x480 16-bit mode 111h` | `GAME.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
+| **Screamer Rally (1997)** | `STRT3FX.EXE` (`3dfx Voodoo Glide`) | `F7`, `E1`, `E2`, `E5`, `E6` (11 writes) | `3dfx Voodoo SVGA 640x480 16-bit mode 00h` | `srally.iso` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
 
 ---
 
@@ -86,7 +85,19 @@ This document records notable observations from running the original 1995–1997
 
 ---
 
-## 8. Screamer Rally (`STRT3FX.EXE`) & Screamer 2 (`S2_3DFX.EXE`) Texture Cache
+## 8. E6 Draw-Distance Verification
+
+- Static verification covers both Screamer 1 renderers and all six supported Screamer 2/Rally renderers. Every E6 target matches the original instruction/data bytes and has zero LE relocation overlap.
+- Original mode skips E6. A private-runtime differential test applies the required fixes to both variants, adds E6 only to Enhanced, and confirms that every differing byte lies inside a declared E6 range. SHA-256 checks before and after confirm the source game executables remain unchanged.
+- Screamer 1's improvement is deliberately limited to managed animated objects: `40,000 -> 48,000` units, with `52,000 -> 62,400` coarse gates. It does not claim to extend authored road or terrain visibility.
+- Screamer 2/Rally use a `52,000 -> 104,000` shared admission radius. Official track enumeration found at most 192 source records; a deliberately pessimistic five-collector bound is 960, below the shared 1,600-pair list capacity.
+- A first out-of-line guard prototype entered apparent padding after the known-safe E2 camera stub and exited on the first rendered race frame. Three revised call/JMP encodings and five independent direct-JMP stubs reproduced the same failure, proving the suffix was indirectly reachable despite having no static cross-reference. Those variants were discarded.
+- The final in-place E6 comparison completed a headless Screamer Rally China race segment without the former mid-level exit. It changes no instruction length, branch target, register use, stack state, object-table metadata, or relocation.
+- Release-candidate verification benchmark (`hyperfine`, 3 warmups + 20 runs, full trilogy `--check`): origin/master v0.5.0 averaged `67.7 ± 10.4 ms` and v0.6.0 averaged `70.6 ± 12.2 ms`; peak memory remained `6.9 MiB`. The 4.2% mean delta is smaller than the run-to-run variance and does not establish a regression.
+
+---
+
+## 9. Screamer Rally (`STRT3FX.EXE`) & Screamer 2 (`S2_3DFX.EXE`) Texture Cache
 
 - **Original analysis**:
   - In `STRT3FX.EXE` (`0x01C26C..0x01C29C`) and `S2_3DFX.EXE` (`0x01DBBC..0x01DBEC`), the 3dfx Glide texture cache manager stores cached texture descriptors in a fixed **1,024-entry array** (`MAXCACHE = 0x400`, 32 bytes per slot).
@@ -103,7 +114,7 @@ This document records notable observations from running the original 1995–1997
 
 ---
 
-## 9. Internal 2× (`1280×960`) 3dfx Voodoo Superscaling & `SDL_GameControllerUpdate` Polling
+## 10. Internal 2× (`1280×960`) 3dfx Voodoo Superscaling & `SDL_GameControllerUpdate` Polling
 
 - **Internal 2× (`1280×960`) 3dfx Voodoo Rasterization (`SCREAMER_VOODOO_SCALE=2`)**:
   - Why external Glide wrappers (`nGlide` / `dgVoodoo2`) cannot be used: DOS/4GW loads `GLIDE2X.OVL` inside emulated 32-bit DOS memory and communicates with the emulated Voodoo 1 SST-1 device over PCI MMIO (`0xD0000000`) inside `vendor/dosbox-staging/src/hardware/voodoo.cpp`.
@@ -118,7 +129,7 @@ This document records notable observations from running the original 1995–1997
 
 ---
 
-## 10. Why Native DLSS / FSR 2–3 Cannot Be Used on DOS/Glide, and How FSR 1.0 + Optical-Flow Frame Generation (`50 -> 100 FPS`) Work
+## 11. Why Native DLSS / FSR 2–3 Cannot Be Used on DOS/Glide, and How FSR 1.0 + Optical-Flow Frame Generation (`50 -> 100 FPS`) Work
 
 - **Why DLSS 2/3 & FSR 2/3 Cannot Attach Directly to a DOS Engine**:
   - Temporal upscalers and frame generators (NVIDIA DLSS Super Resolution / DLSS 3 Frame Generation and AMD FSR 2/3) require DirectX 12 or Vulkan command queues plus engine-supplied **per-pixel 3D motion vectors (`MV_x, MV_y`)**, **sub-pixel camera projection jitter**, and a **linear depth buffer**.

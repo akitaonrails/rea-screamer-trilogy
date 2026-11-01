@@ -60,6 +60,7 @@ This document records the architecture, engineering principles, build/packaging 
   - Instead of patching dozens of individual menus or race screens, hook central bottlenecks:
     - Central 2D blit / sprite / text dispatcher for virtual 640x480 canvas scaling and HUD corner anchoring (`canvas.rs`).
     - Central 3D projection & view-frustum culling parameters for Hor+ widescreen (`xs`, `ys`, frustum wedge angles).
+    - Central E6 visibility admission thresholds: managed animations in Screamer 1 and the five shared scenery/object collectors in Screamer 2/Rally. The official track inventory remains within the latter's 1,600-entry shared list after the radius increase.
     - Central frame flip / present primitive for sub-millisecond frame pacing (`pacing.rs`) and vsync control.
     - Central input polling primitive for analog steering/triggers, sticky controller presence, and button remapping (`pad.rs`).
 

@@ -1,5 +1,5 @@
 //! Core library for `ScreamerLauncher`: `LE` executable parser, edition
-//! table, declarative binary patches (`F1`–`F7`, `E1`–`E5`), config generators,
+//! table, declarative binary patches (`F1`–`F7`, `E1`–`E6`), config generators,
 //! runtime staging, and settings form model.
 
 pub mod config;
@@ -170,6 +170,46 @@ mod tests {
             let verified = runtime::verify_discovered_game(&disc, &[])
                 .unwrap_or_else(|e| panic!("{var} ({dir}): {e}"));
             assert!(!verified.is_empty());
+
+            for exe in &disc.executables {
+                let source = std::fs::read(&exe.path).unwrap();
+                let source_hash = edition::sha256(&source);
+                let image = Image::parse(&source).unwrap();
+
+                let original_writes =
+                    prepare(&image, exe.edition.fixes, &["E1", "E2", "E5", "E6"], 0).unwrap();
+                let enhanced_writes =
+                    prepare(&image, exe.edition.fixes, &["E1", "E2", "E5"], 0).unwrap();
+                let mut original = source.clone();
+                let mut enhanced = source.clone();
+                apply_to_image(&mut original, &original_writes).unwrap();
+                apply_to_image(&mut enhanced, &enhanced_writes).unwrap();
+
+                let expected_e6 = enhanced_writes
+                    .iter()
+                    .filter(|w| w.write.fix == "E6")
+                    .flat_map(|w| {
+                        w.original
+                            .iter()
+                            .zip(&w.write.bytes)
+                            .enumerate()
+                            .filter_map(|(i, (a, b))| (a != b).then_some(w.file_offset + i))
+                    })
+                    .collect::<std::collections::BTreeSet<_>>();
+                let actual_diff = original
+                    .iter()
+                    .zip(&enhanced)
+                    .enumerate()
+                    .filter_map(|(i, (a, b))| (a != b).then_some(i))
+                    .collect::<std::collections::BTreeSet<_>>();
+                assert_eq!(actual_diff, expected_e6, "{} E6 byte ranges", exe.file_name);
+                assert_eq!(
+                    edition::sha256(&std::fs::read(&exe.path).unwrap()),
+                    source_hash,
+                    "{} source changed",
+                    exe.file_name
+                );
+            }
         }
     }
 }

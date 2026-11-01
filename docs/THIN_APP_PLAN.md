@@ -2,7 +2,7 @@
 
 ## 1. Goal & Scope
 
-Build a self-contained compatibility launcher (`screamer-launcher` / `ScreamerLauncher.exe`) and runtime hook library (`libscreamer_hooks.so` / `screamerhooks.dll`) modeled after `rea-colin-mcrae`, supporting the entire 1995–1997 Graffiti / Milestone **Screamer** DOS4GW trilogy:
+Build a self-contained compatibility launcher (`ScreamerLauncher` / `ScreamerLauncher.exe`) plus a statically integrated DOSBox hook library, supporting the entire 1995–1997 Graffiti / Milestone **Screamer** DOS4GW trilogy:
 - **Screamer** (1995) — SVGA (`STARTH.EXE`) and VGA (`STARTL.EXE`)
 - **Screamer 2** (1996) — 3dfx Voodoo Glide (`S2_3DFX.EXE`), 16-bit SVGA (`START65H.EXE`), and 8-bit SVGA (`STARTH.EXE`)
 - **Screamer Rally** (1997) — 3dfx Voodoo Glide (`STRT3FX.EXE`), 16-bit SVGA (`START65H.EXE`), and 8-bit SVGA (`STARTH.EXE`)
@@ -35,7 +35,7 @@ All binary patches and memory offsets are keyed strictly by SHA-256 digest:
 
 ---
 
-## 3. Requirements (`R1`–`R12`), Fixes (`F1`–`F10`), and Enhancements (`E1`–`E8`)
+## 3. Requirements (`R1`–`R12`), Fixes (`F1`–`F10`), and Enhancements (`E1`–`E7`)
 
 ### Core Requirements (`R1`–`R12`)
 - **R1 — Read-only game directory**: Never write to the user's game folder. Build an isolated runtime directory (`runtime-data/` or user data dir) containing patched executables and generated config files, while referencing large read-only `.GOG`/`.ISO`/`.DAT` files in place.
@@ -55,7 +55,7 @@ All binary patches and memory offsets are keyed strictly by SHA-256 digest:
 - **F5 — Screamer 2 `START65H.EXE` VBE 2.0 Mode `0x120 -> 0x111` Fix**: Patch `jl` (`7C 16`) at `VA 0x0D782F` (`FileOff 0x0EB02F`) to `jmp` (`EB 16`) so `START65H.EXE` requests standard VESA mode `0x111` (`640x480x16bpp`) instead of proprietary mode `0x120` (`1600x1200x8bpp` on S3 Trio64 VBE 2.0).
 - **F6 — Screamer 2 `S2_3DFX.EXE` Genuine DOS 3dfx `GLIDE2X.OVL` Provisioning**: Detect when `GLIDE2X.OVL` is missing or replaced by the `31,425`-byte Windows port-`0x600` stub, and either supply a genuine DOS `GLIDE2X.OVL` from a sibling Screamer Rally installation or transparently fall back to patched 16-bit SVGA `START65H.EXE` (`640x480x16bpp`).
 
-### Modern Enhancements (`E1`–`E6`)
+### Modern Enhancements (`E1`–`E7`)
 - **E1 — True 60 FPS & 120 FPS Unlock with 1.0x Real-Time Physics**:
   - Patch the 50 FPS spin-wait (`cmp reg, 2` -> `cmp reg, 1`) in `STARTH.EXE`, `STARTL.EXE`, `S2_3DFX.EXE`, and `START65H.EXE`.
   - Lower the hardcoded `0.02` (`20 ms`) minimum `smoothed_dt` clamp in all 6 executables (`0.02` -> `0.004`), and normalize the `1.1x` race `dt` multiplier in S2/SR when 60/120 FPS is enabled.
@@ -68,8 +68,11 @@ All binary patches and memory offsets are keyed strictly by SHA-256 digest:
   - Pre-calibrate `CONTROLS.CFG` with `dev = 1, mode = 0` on Steering (`binding[2]`), Accelerate (`binding[0]`), and Brake (`binding[1]`) so the engine bypasses the keyboard steering rate limiter (`0x02D380`) and reads continuous analog values (`[car + 0x108]`, `[car + 0x144]`, `[car + 0x114]`).
 - **E5 — Custom Analog Deadzone Removal**:
   - Patch the hardcoded `10%` (`0x66` = `102/1024`) center deadzone in `PollControls` (`FileOff 0x02F73E` in S1 `STARTH.EXE`, `0x03FE04` in `S2_3DFX.EXE`, `0x03F644` in `SR_STRT3FX.EXE`) to `0x00` so our launcher/hook applies a smooth radial/axial deadzone configurable in `launcher.cfg` (`0–25%`).
-- **E6 — In-Process `libscreamer_hooks` SDL Gamepad & Rumble Bridge**:
-  - `LD_PRELOAD` hook library (`crates/screamer-hooks`) that intercepts `GFX_Events()` in `dosbox-staging`, locates the game's Data Object in `GetMemBase()`, injects independent analog L2/R2 triggers + 10-bit steering + custom face/shoulder buttons + D-pad menu navigation, and triggers controller rumble from car collision/skid telemetry.
+- **E6 — Extended Draw Distance**:
+  - Extend Screamer 1's managed animated-object visibility from `40,000` to `48,000` units and its coarse gate from `52,000` to `62,400`.
+  - Double Screamer 2/Rally's five shared scenery/object admission paths from `52,000` to `104,000` units with in-place immediate changes. Official track enumeration remains below the exact 1,600-pair output-buffer capacity.
+- **E7 — Statically Integrated SDL Gamepad & Rumble Bridge**:
+  - `crates/screamer-hooks` is linked into the bundled `dosbox-staging` binary and called on the main thread at the end of `GFX_Events()`. It locates the game's Data Object in `MemBase`, injects independent analog L2/R2 triggers + 10-bit steering + custom face/shoulder buttons + D-pad menu navigation, and triggers controller rumble from car collision/skid telemetry.
 
 ---
 
@@ -83,8 +86,8 @@ All binary patches and memory offsets are keyed strictly by SHA-256 digest:
   - Implement and unit-test `le.rs` (Watcom LE parser + fixup overlap verifier), `edition.rs` (SHA-256 detection), `fixes.rs` (binary patch table), `game_cfg.rs` (`SCREAMER.CFG`, `SETUP.CFG`, `CONTROLS.CFG`, `CHOICE.DAT` synthesizers), `runtime.rs` (read-only game sync + CD CUE/ISO handling + save mirroring), and `config.rs` (`launcher.cfg`).
 - **M3 — Settings GUI & CLI (`crates/screamer-launcher/src/form.rs`, `ui.rs`, `main.rs`)**:
   - Implement the 4-tab `eframe`/`egui` settings window (`Play`, `Picture`, `Controls`, `Buttons`), presets (`Original 1995`, `Enhanced`, `Steam Deck`, `Custom`), and CLI flags (`--no-window`, `--settings`, `--check`, `--controllers`).
-- **M4 — In-Process Input & Rumble Hook (`crates/screamer-hooks`)**:
-  - Implement `libscreamer_hooks.so` / `screamerhooks.dll` for `dosbox-staging` memory/input hooking and SDL gamepad rumble.
+- **M4 — Statically Integrated Input & Rumble Hook (`crates/screamer-hooks`)**:
+  - Build `screamer-hooks` as a Rust static library linked into the bundled Linux and Windows `dosbox-staging` binaries; no runtime hook `.so`/`.dll` is shipped.
 - **M5 — Linux Wrapper (`linux/screamer-play`), Packaging (`packaging/appimage`), & CI (`.github/workflows/build.yml`)**:
   - Complete end-to-end launcher script, AppImage builder, GitHub Actions workflow, and `README.md`.
 - **M6 — Full End-to-End Headless Verification & Final Clean Audit**:
