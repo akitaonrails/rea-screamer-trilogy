@@ -281,11 +281,15 @@ fn parse_bool(v: &str) -> Option<bool> {
 }
 
 pub const ORIGINAL: (u32, u32) = (0, 0);
+pub const FULLSCREEN: (u32, u32) = (1, 1);
 
 fn parse_resolution(v: &str) -> Option<(u32, u32)> {
     let lower = v.trim().to_ascii_lowercase();
     if lower == "original" || lower == "off" {
         return Some(ORIGINAL);
+    }
+    if lower == "fullscreen" || lower == "full" || lower == "desktop" {
+        return Some(FULLSCREEN);
     }
     let (w, h) = lower.split_once('x')?;
     let w: u32 = w.trim().parse().ok()?;

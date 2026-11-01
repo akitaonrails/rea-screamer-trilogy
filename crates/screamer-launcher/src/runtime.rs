@@ -515,19 +515,31 @@ pub fn prepare_runtime(
     }
 
     let selected = discovered.select_executable(settings.renderer_choice())?;
-    let res = settings.race_resolution().unwrap_or((1920, 1080));
+    let race_res = settings.race_resolution();
+    let fullscreen = race_res == Some(crate::config::FULLSCREEN);
+    let res = match race_res {
+        None | Some(crate::config::FULLSCREEN) => (1280, 960),
+        Some(wh) => wh,
+    };
     let widescreen = settings.widescreen.unwrap_or(false);
     let vsync = settings.vsync.unwrap_or(true);
     let voodoo_enabled = selected.edition.role == Renderer::Glide3dfx;
-    let texture_filtering = settings.texture_filter == Some(TextureFilter::Smooth);
+    let filter = settings.texture_filter.unwrap_or(TextureFilter::Original);
+    let texture_filtering = filter == TextureFilter::Smooth;
+    let glshader = match filter {
+        TextureFilter::Original => "crt-auto",
+        TextureFilter::Sharp => "sharp",
+        TextureFilter::Smooth => "bilinear",
+    };
 
     let conf_text = build_dosbox_conf(&DosboxConfOptions {
-        fullscreen: false,
+        fullscreen,
         resolution: res,
         widescreen,
         vsync,
         voodoo_enabled,
         texture_filtering,
+        glshader,
         c_drive_dir: runtime_dir,
         cd_image_path: discovered.cd_image.as_deref(),
         exe_name: &selected.file_name,

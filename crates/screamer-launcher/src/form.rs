@@ -28,12 +28,11 @@ impl Picture {
         vsync: None,
     };
 
-    pub fn enhanced(screen: Option<(u32, u32)>) -> Picture {
-        let resolution = screen.and_then(landscape).or(Some((1920, 1080)));
+    pub fn enhanced(_screen: Option<(u32, u32)>) -> Picture {
         Picture {
             renderer: RendererChoice::Auto,
-            resolution,
-            widescreen: resolution.is_some_and(|(w, h)| w * 3 > h * 4),
+            resolution: Some((1920, 1080)),
+            widescreen: true,
             texture_filter: TextureFilter::Smooth,
             fps_limit: Some(60),
             vsync: Some(true),
@@ -71,13 +70,13 @@ pub enum Layout {
 }
 
 pub const ACTIONS: [(usize, &str); 7] = [
-    (4, "Handbrake / Alt"),
+    (0, "Accelerate"),
+    (4, "Brake / Delete"),
     (5, "Gear up"),
     (3, "Gear down"),
-    (2, "Change view"),
-    (7, "Pause"),
-    (0, "Select (menus)"),
-    (1, "Back (menus)"),
+    (2, "Change camera"),
+    (1, "Back / Pause"),
+    (7, "Start / Confirm"),
 ];
 
 pub const PAD_BUTTONS: [(u8, &str); 10] = [
@@ -130,9 +129,9 @@ pub const VSYNCS: [(Option<bool>, &str); 3] = [
 ];
 
 pub const FILTERS: [(TextureFilter, &str); 3] = [
-    (TextureFilter::Original, "Original"),
-    (TextureFilter::Smooth, "Smooth"),
-    (TextureFilter::Sharp, "Sharp"),
+    (TextureFilter::Original, "CRT Monitor"),
+    (TextureFilter::Sharp, "Sharp (Pixel)"),
+    (TextureFilter::Smooth, "Smooth (Bilinear)"),
 ];
 
 pub const RUMBLES: [(u32, &str); 4] = [(0, "Off"), (30, "Light"), (60, "Medium"), (100, "Strong")];
@@ -167,7 +166,7 @@ pub const SCALERS: [(Scaler, &str, &str); 4] = [
     ),
 ];
 
-pub const WINDOW: (f32, f32) = (920.0, 660.0);
+pub const WINDOW: (f32, f32) = (980.0, 700.0);
 
 pub fn window_zoom(screen: Option<(u32, u32)>, native: f32) -> f32 {
     let native = if native > 0.0 { native } else { 1.0 };
@@ -182,21 +181,16 @@ pub fn window_zoom(screen: Option<(u32, u32)>, native: f32) -> f32 {
 }
 
 pub fn resolutions(screen: Option<(u32, u32)>) -> Vec<(Option<(u32, u32)>, String)> {
-    let common = [(1920, 1080), (2560, 1440), (3840, 2160)];
-    let mut out = vec![(None, "Original".to_string())];
-    if let Some(s) = screen.and_then(landscape)
-        && !common.contains(&s)
-    {
-        out.push((Some(s), format!("Screen {}×{}", s.0, s.1)));
+    let mut out = vec![
+        (None, "4:3 (1280×960)".to_string()),
+        (Some((1280, 720)), "720p".to_string()),
+        (Some((1600, 900)), "900p".to_string()),
+        (Some((1920, 1080)), "1080p".to_string()),
+    ];
+    if screen.and_then(landscape) == Some(STEAM_DECK_SCREEN) {
+        out.push((Some(STEAM_DECK_SCREEN), "Steam Deck".to_string()));
     }
-    for (w, h) in common {
-        let label = match h {
-            1080 => "1080p",
-            1440 => "1440p",
-            _ => "4K",
-        };
-        out.push((Some((w, h)), label.to_string()));
-    }
+    out.push((Some(config::FULLSCREEN), "Fullscreen".to_string()));
     out
 }
 
@@ -314,7 +308,16 @@ impl Form {
         put("game", path(&self.game));
         put("saves", path(&self.saves));
         put("renderer", Some(p.renderer.key().into()));
-        put("resolution", p.resolution.map(|(w, h)| format!("{w}x{h}")));
+        put(
+            "resolution",
+            p.resolution.map(|(w, h)| {
+                if (w, h) == config::FULLSCREEN {
+                    "fullscreen".to_string()
+                } else {
+                    format!("{w}x{h}")
+                }
+            }),
+        );
         put("widescreen", p.widescreen.then(|| "true".into()));
         put("fps_limit", p.fps_limit.map(|f| f.to_string()));
         put("vsync", p.vsync.map(|v| v.to_string()));
@@ -366,7 +369,7 @@ mod tests {
         let f2 = form(&saved);
         assert_eq!(f2.which, Game::ScreamerRally);
         assert_eq!(f2.look, Look::Enhanced);
-        assert_eq!(f2.picture.resolution, Some((2560, 1440)));
+        assert_eq!(f2.picture.resolution, Some((1920, 1080)));
         assert!(f2.picture.widescreen);
         assert_eq!(f2.picture.fps_limit, Some(60));
     }

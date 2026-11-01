@@ -17,7 +17,7 @@ use eframe::egui::{
 
 use screamer_launcher::config::{RendererChoice, Settings};
 use screamer_launcher::edition::Game;
-use screamer_launcher::form::{self, Form, Layout, Look, Picture};
+use screamer_launcher::form::{self, Form, Layout, Look};
 use screamer_launcher::runtime::{self, DiscoveredTrilogy};
 
 const CHASSIS: Color32 = Color32::from_rgb(0x0e, 0x17, 0x2a);
@@ -196,11 +196,23 @@ impl<'a> Window<'a> {
             .is_none_or(|d| d.can_use_dos_glide());
         form.set_which(form.which, has_glide, screen);
 
+        let initial_tab = match std::env::var("SCREAMER_TAB")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "picture" => Tab::Picture,
+            "controls" => Tab::Controls,
+            "buttons" => Tab::Buttons,
+            _ => Tab::Play,
+        };
+
         Self {
             checked: form.game.clone(),
             trilogy,
             form,
-            tab: Tab::Play,
+            tab: initial_tab,
             screen,
             resolutions: form::resolutions(screen),
             controllers: detect_controllers(),
@@ -630,23 +642,23 @@ impl Window<'_> {
 
         heading(ui, "Look");
         ui.add_space(4.0);
-        let enhanced_note = match Picture::enhanced(self.screen).resolution {
-            Some((w, h)) => format!("{w}×{h} widescreen, 60 fps, smooth filtering."),
-            None => "Hor+ widescreen, 60 fps, smooth filtering.".to_string(),
-        };
         let best = form::recommended(self.screen);
         let orig_title = format!("Original {}", self.form.which.year());
         let cards = [
             (
                 Look::Original,
                 orig_title.as_str(),
-                "4:3 aspect, 30 fps timer, as shipped.",
+                "4:3 window, CRT shader, as shipped.",
             ),
-            (Look::Enhanced, "Enhanced", enhanced_note.as_str()),
+            (
+                Look::Enhanced,
+                "Enhanced",
+                "1080p Hor+ widescreen, smooth filter.",
+            ),
             (
                 Look::SteamDeck,
                 "Steam Deck",
-                "1280×800 widescreen at 60 fps.",
+                "1280×800 Hor+ widescreen, smooth filter.",
             ),
             (Look::Custom, "Custom", "Pick each setting in Picture."),
         ];
@@ -705,28 +717,12 @@ impl Window<'_> {
             chips_with_disabled(ui, &opts, &mut p.renderer);
         });
 
-        row(ui, "Race resolution", &mut |ui| {
+        row(ui, "Display", &mut |ui| {
             chips(ui, resolutions, &mut p.resolution);
         });
 
-        row(ui, "Textures", &mut |ui| {
+        row(ui, "Shader / Filter", &mut |ui| {
             chips(ui, &form::FILTERS, &mut p.texture_filter);
-        });
-
-        row(ui, "Frame-rate cap", &mut |ui| {
-            let fps_opts: Vec<(Option<u32>, &str, Option<&str>)> = form::FRAME_RATES
-                .into_iter()
-                .map(|(fps, label)| {
-                    let disabled = match fps {
-                        Some(f) if f > 60 => Some(
-                            "The DOS SOS timer ticks at 60 Hz; 60 FPS is the maximum native engine tick rate.",
-                        ),
-                        _ => None,
-                    };
-                    (fps, label, disabled)
-                })
-                .collect();
-            chips_with_disabled(ui, &fps_opts, &mut p.fps_limit);
         });
 
         row(ui, "Vsync", &mut |ui| {
@@ -742,31 +738,15 @@ impl Window<'_> {
             );
         });
 
-        if self.linux {
-            let scaler = &mut self.form.scaler;
-            let res_is_orig = p.resolution.is_none();
-            row(ui, "Scaler", &mut |ui| {
-                let options: Vec<_> = form::SCALERS
-                    .iter()
-                    .map(|s| {
-                        let reason = res_is_orig.then_some(
-                            "Choose an upscaled Race resolution (1080p, 1440p, 4K) to use the Gamescope scaler.",
-                        );
-                        (s.0, s.1, reason)
-                    })
-                    .collect();
-                chips_with_disabled(ui, &options, scaler);
-                let note = form::SCALERS
-                    .iter()
-                    .find(|s| s.0 == *scaler)
-                    .map_or("", |s| s.2);
-                ui.label(
-                    egui::RichText::new(note)
-                        .font(font(13.0))
-                        .color(if res_is_orig { DISABLED_INK } else { MUTED }),
-                );
-            });
-        }
+        ui.add_space(10.0);
+        ui.label(
+            egui::RichText::new(
+                "Note: All three DOS games render internally at 640×480 (3dfx Voodoo / SVGA) or 320×200 (VGA), upscaled to your display by OpenGL, and pace physics via the 50 Hz SOS timer table.",
+            )
+            .font(font(13.0))
+            .color(MUTED),
+        );
+        let _ = self.linux;
 
         if self.form.picture != before {
             self.form.look = Form::look_of(&self.form.picture, self.screen);
@@ -1011,7 +991,7 @@ fn heading(ui: &mut egui::Ui, text: &str) {
 }
 
 fn field(ui: &mut egui::Ui, text: &str) {
-    let (rect, _) = ui.allocate_exact_size(vec2(118.0, 30.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(128.0, 30.0), Sense::hover());
     ui.painter().text(
         rect.left_center(),
         Align2::LEFT_CENTER,

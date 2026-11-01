@@ -244,6 +244,7 @@ pub struct DosboxConfOptions<'a> {
     pub vsync: bool,
     pub voodoo_enabled: bool,
     pub texture_filtering: bool,
+    pub glshader: &'a str,
     pub c_drive_dir: &'a Path,
     pub cd_image_path: Option<&'a Path>,
     pub exe_name: &'a str,
@@ -252,18 +253,10 @@ pub struct DosboxConfOptions<'a> {
 
 /// Generates a clean `dosbox-staging` configuration file for running Screamer 1, 2, or Rally.
 pub fn build_dosbox_conf(opts: &DosboxConfOptions<'_>) -> String {
-    let res_str = if opts.resolution.0 == 0 || opts.resolution.1 == 0 {
-        "desktop".to_string()
+    let win_res_str = if opts.resolution.0 <= 1 || opts.resolution.1 <= 1 {
+        "1280x960".to_string()
     } else {
         format!("{}x{}", opts.resolution.0, opts.resolution.1)
-    };
-    let viewport_line = if opts.widescreen && opts.resolution.0 > 0 && opts.resolution.1 > 0 {
-        format!(
-            "viewport            = {}x{}\n",
-            opts.resolution.0, opts.resolution.1
-        )
-    } else {
-        String::new()
     };
     let aspect_str = if opts.widescreen { "stretch" } else { "auto" };
     let voodoo_mem = if opts.voodoo_enabled { "12" } else { "4" };
@@ -272,10 +265,14 @@ pub fn build_dosbox_conf(opts: &DosboxConfOptions<'_>) -> String {
     } else {
         "false"
     };
-    let glshader = if opts.texture_filtering {
-        "bilinear"
+    let glshader = if opts.glshader.is_empty() {
+        if opts.texture_filtering {
+            "bilinear"
+        } else {
+            "sharp"
+        }
     } else {
-        "sharp"
+        opts.glshader
     };
 
     let mut autoexec = String::new();
@@ -303,8 +300,8 @@ pub fn build_dosbox_conf(opts: &DosboxConfOptions<'_>) -> String {
 [sdl]
 fullscreen          = {fullscreen}
 display             = 0
-fullresolution      = {res_str}
-windowresolution    = {res_str}
+fullresolution      = desktop
+windowresolution    = {win_res_str}
 output              = opengl
 vsync               = {vsync}
 
@@ -314,7 +311,7 @@ memsize             = 31
 
 [render]
 aspect              = {aspect_str}
-{viewport_line}glshader            = {glshader}
+glshader            = {glshader}
 
 [cpu]
 core                = auto
@@ -359,8 +356,7 @@ buttonwrap          = false
 [autoexec]
 {autoexec}"#,
         fullscreen = opts.fullscreen,
-        res_str = res_str,
-        viewport_line = viewport_line,
+        win_res_str = win_res_str,
         vsync = opts.vsync,
         aspect_str = aspect_str,
         voodoo_enabled = opts.voodoo_enabled,
@@ -451,18 +447,19 @@ mod tests {
     fn dosbox_conf_renders_expected_sections() {
         let conf = build_dosbox_conf(&DosboxConfOptions {
             fullscreen: false,
-            resolution: (3840, 2160),
+            resolution: (1920, 1080),
             widescreen: true,
             vsync: true,
             voodoo_enabled: true,
             texture_filtering: true,
+            glshader: "bilinear",
             c_drive_dir: Path::new("/tmp/runtime"),
             cd_image_path: Some(Path::new("/tmp/game/game.ins")),
             exe_name: "STARTH.EXE",
             exit_after_run: true,
         });
-        assert!(conf.contains("windowresolution    = 3840x2160"));
-        assert!(conf.contains("viewport            = 3840x2160"));
+        assert!(conf.contains("windowresolution    = 1920x1080"));
+        assert!(conf.contains("fullresolution      = desktop"));
         assert!(conf.contains("aspect              = stretch"));
         assert!(conf.contains("irq                 = 7"));
         assert!(conf.contains("imgmount d \"/tmp/game/game.ins\" -t iso -fs iso"));

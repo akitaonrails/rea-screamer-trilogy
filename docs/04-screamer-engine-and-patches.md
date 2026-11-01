@@ -103,9 +103,14 @@ There are **two hardcoded 50 FPS (`20 ms`) limits** in the binaries:
    - Consequently, if the game renders at 60 FPS (`16.67 ms`/frame) without patching this clamp, `smoothed_dt` is forced to `0.020s` every frame, causing **all car physics and animations to run `60 * 0.02 = 1.20x` (20% too fast)**!
    - Furthermore, in Screamer 2 and Screamer Rally's in-race timer function (`0x050C5A` in `S2_3DFX`, `0x04F780` in `SR_STRT3FX`), `raw_dt` is multiplied by `1.1` before averaging (`(9.0 * smoothed_dt + 1.1 * raw_dt) / 10.0`).
 
-### 4.3 Exact Patch Table for True 60 FPS (and 100+ FPS) with 1.0x Physics Speed
+### 4.3 Why Both the Spin-Wait (`2` Ticks) and `0.02s` `smoothed_dt` Floor Must Remain Unpatched
+Runtime testing of the offsets below revealed that all three games rely on a **50-entry precomputed physics lookup table** (`400` / `0x190` bytes per entry, indexed by `int(1.0 / smoothed_dt)` for `1..50 Hz`, minimum `dt = 0.02s`):
+- Lowering the `0.02s` floor to `0.004s` in **Screamer 1** overflows the 50-entry table (`int(1.0 / 0.004) = 250 > 50`) and crashes when loading a track.
+- Lowering the `0.02s` floor to `0.004s` in **Screamer 2** causes `smoothed_dt` to diverge from entry `50` (`0.02s`) of the physics table, making all cars jump into the air and collide at the start of a race.
+- Lowering the `2`-tick (`0.02s`) spin-wait to `1` tick (`0.01s`) in **Screamer 1** while keeping the `0.02s` floor runs a `20 ms` physics step every `10 ms` (`1.4x–2.0x` game speed).
+- Therefore, `E1` is kept as `code: &[]` (unpatched) so all three games run at their exact native 50 Hz (`0.02s`) physics step and 1.0x speed.
 
-| Binary | Spin-Wait `cmp reg, 2` -> `1` (`FileOff`) | `double 0.02` Constant (`FileOff`) | `float 0.02f` (`0A D7 A3 3C`) Immediate (`FileOff`) |
+| Binary | Spin-Wait `cmp reg, 2` (`FileOff`) | `double 0.02` Constant (`FileOff`) | `float 0.02f` (`0A D7 A3 3C`) Immediate (`FileOff`) |
 | :--- | :--- | :--- | :--- |
 | **S1 `STARTH.EXE`** | `0x02A448`: `02` -> `01` | `0x0F7470` (`7B 14 AE 47 E1 7A 94 3F`) | `0x02A4D0` (`0A D7 A3 3C`) |
 | **S1 `STARTL.EXE`** | `0x02A438`: `02` -> `01` | `0x0F7470` (`7B 14 AE 47 E1 7A 94 3F`) | `0x02A4C0` (`0A D7 A3 3C`) |

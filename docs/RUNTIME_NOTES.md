@@ -59,27 +59,28 @@ This document records notable observations from running the original 1995–1997
 - **Bypassing DOS Port `0x201` Timing via `MemBase` + `PollControls` Record Skip**:
   - At `cpu_cycles_protected = max`, the game's DOS port `0x201` RC discharge loop (`DetectJoystick`, `max 0x800` iterations) overflows before the simulated capacitor discharges.
   - Across all 8 racing executables, `PollControls` checks `if (record[r].enabled == 1)` before updating `normalized_controls[r]`, while the car physics engine reads `normalized_controls[0..5]` directly without checking `record[r].enabled` (and applies instantaneous full-range `-1023..+1023` analog steering when `record[2].mode == 0`).
-  - `libscreamer_hooks.so` locates the active Data Object inside `*MemBase`, yields individual controls to the keyboard whenever `DataObj[2 + scancode] != 0`, and otherwise sets `record[r].enabled = 2`, `record[2].mode = 0`, and writes live proportional gamepad values directly into `normalized_controls[0,1,2,4,5]`.
-  - Writing `-1` into `normalized_controls[3]` (which is unused in `record[2].mode == 0` analog steering mode but overwritten with `0` by `PollControls` every active race frame) provides an exact `PollControls` heartbeat that distinguishes active racing (`in_race == true`) from menus, intros, and the pause screen (`in_race == false`), allowing D-Pad, Left Stick, `A`/`B`, and `Start`/`Select` to navigate menus via `_Z15KEYBOARD_AddKey8KBD_KEYSb` automatically.
+  - **CRITICAL — `MenuPollInput` Also Calls `PollControls` in Menus**:
+    - In all 3 games (`STARTH.EXE` at `0x025550`, `S2_3DFX.EXE` at `0x03B1E4`, `STRT3FX.EXE` at `0x03B424`), `MenuPollInput` calls `PollControls` on every menu frame and checks `record[0..3]`: if `record[r].ctrl_type == 2` and `record[r].mode != 0` and `normalized_controls[r] != 0`, it converts `normalized_controls[r]` into synthetic menu Up/Down/Left/Right actions!
+    - Writing `-1` into `normalized_controls[3]` or leaving `ctrl_type = 2` while `mode = 1` poisons `MenuPollInput`. Setting `record[r].enabled = 2`, `record[r].ctrl_type = 1`, `record[r].mode = 0`, and `normalized_controls[3] = 0` ensures `MenuPollInput` ignores `normalized_controls` in menus while the race physics engine reads `normalized_controls[0,1,2,4,5]` directly.
+  - **CRITICAL — Watcom `LE` Keyboard State BSS Object vs. Data Object (`has_clean_kbd_array`)**:
+    - In the Watcom `LE` object table, the 130-byte (`0x82`-byte) keyboard scancode state array lives in a separate preceding BSS `LE` object (`Object 2` in Screamer 1, `Object 5` in 3dfx binaries, `Object 3` in SVGA binaries), whereas `data_obj[0..130]` contains initialized ASCII strings (for example, `data_obj[2 + 72] == 'f'` = `102 != 0`).
+    - Checking `data_obj[2 + scancode] != 0` without verifying `has_clean_kbd_array` (`data_obj[2..90].iter().all(|&b| b <= 1)`) mistakes the ASCII byte `'f'` at `data_obj[74]` for a held physical Up Arrow key (`scancode 72`), causing `inject_single_control_block` to reset `record[0].enabled = 1` and cut out gamepad `A`/`R2` throttle!
+    - `inject_single_control_block` therefore checks `gp.throttle == 0 && is_key_down(...)` and requires `has_clean_kbd_array` (`data_obj[2..90]` all `0` or `1`) before yielding to keyboard scancodes.
+  - **CRITICAL — `clock_gettime` Thread Safety & Page-Aligned Scanning**:
+    - In `dosbox-staging`, `clock_gettime` is invoked from background threads (mixer, OPL, Voodoo threads) as well as re-entrantly from the main thread during `SDL_PollEvent`.
+    - Never call `SDL_GameControllerUpdate()` or `SDL_JoystickUpdate()` inside `clock_gettime` (`dosbox-staging`'s main thread already pumps `SDL_PollEvent`, and calling `SDL_JoystickUpdate()` from `clock_gettime` deadlocks SDL2's non-reentrant joystick mutex on window creation).
+    - Always guard `poll_gamepad_and_inject` with an atomic non-blocking `IN_POLL` try-lock, step by `4096`-byte pages in `locate_binary_data_object`, and throttle uncached RAM scans to at most once every `100 ms` (`LAST_SCAN_ATTEMPT_NS`) so `dosbox-staging` is never CPU-starved while DOS/4GW is booting.
 
 ---
 
-## 7. Screamer 1 `UpdateFrameTiming` 50-Entry Physics Lookup Table (`0x80e8[1..50]`)
+## 7. Why the 50 Hz (`0.02s`) SOS Timer & 50-Entry Physics Lookup Table Must Not Be Altered
 
-- In **Screamer (1995)** (`STARTH.EXE` at `0x01FC38..0x01FD62` and `STARTL.EXE` at `0x01FC28..0x01FD52`), `UpdateFrameTiming`:
-  1. Spin-waits at `0x01FC46` (`cmp $0x2, %edx; jb 0x01FC40`) until at least 2 ticks (`20 ms`) of the 100 Hz timer (`0x7f9`) have elapsed.
-  2. Computes `raw_dt = ticks * 0.01` and stores it unclamped into `0x18e08` (and adds it to `total_race_time` at `0x18e10`).
-  3. Computes `smoothed_dt` (`0x18e04`), clamps it to `[0.02, 0.20]` (`0xc70` / `0x01FCD0`), and then immediately indexes a precomputed **50-entry physics lookup table** (`400` / `0x190` bytes per entry, located at `DataObj + 0x80e8..0xcf08`) using `edx = int(1.0 / smoothed_dt)`:
-     ```text
-     1fcd4: fld1
-     1fcd6: fdivs  0x18e04         ; st(0) = 1.0 / smoothed_dt (<= 50.0)
-     ...
-     1fcef: fistpl -0x4(%ebp)      ; edx = int(1.0 / smoothed_dt)
-     ...
-     1fd0f: mov    $0x80e8, %edx
-     1fd19: add    %eax, %edx      ; edx = 0x80e8 + int(1.0 / smoothed_dt) * 400
-     1fd23: mov    %edx, 0xcf08
-     ```
-- Lowering `0.02` (`DBL_0_02` / `FLT_0_02`) to `0.004` in **Screamer 1** causes `int(1.0 / smoothed_dt)` to exceed `50` (up to `250`), advancing `0xcf08` past the end of `0x80e8..0xcf08` and causing an out-of-bounds read when a race level loads.
-- In **Screamer 2 (1996)** (`S2_3DFX.EXE` at `0x050DEC`) and **Screamer Rally (1997)**, Milestone explicitly added a `>= 50.0` bounds check before the `* 0x190` multiplication (`fcomps 0x1ca4; jb ...; movl $0x14948, 0x14ad8`), clamping the table pointer to entry `50` whenever `1.0 / smoothed_dt >= 50.0`.
-- Therefore, for **Screamer 1** (`STARTH.EXE` and `STARTL.EXE`), `E1` patches only the spin-wait threshold (`0x01FC48` / `0x01FC38`: `0x02 -> 0x01`), unlocking 60+ FPS rendering while keeping the `0.02s` (`entry 50`) table index clamp intact.
+- Across all three games (**Screamer**, **Screamer 2**, and **Screamer Rally**), the HMI SOS timer ticks at **100 Hz (`0.01s` per tick)**, and `UpdateFrameTiming` uses `smoothed_dt` (`clamped to [0.02, 0.20]`) to index a precomputed **50-entry physics lookup table** (`400` / `0x190` bytes per entry, indexed by `int(1.0 / smoothed_dt)` for `1..50 Hz`):
+  1. **Screamer (1995) (`STARTH.EXE` at `0x01FC38..0x01FD62`, `STARTL.EXE` at `0x01FC28..0x01FD52`)**:
+     - Has **no upper bounds check** on `int(1.0 / smoothed_dt)` before multiplying by `0x190` (`400`) and adding `0x80e8`.
+     - If the `0.02s` (`DBL_0_02` / `FLT_0_02`) floor is lowered to `0.004s`, `int(1.0 / smoothed_dt)` exceeds `50` (up to `250`), reading out of bounds past `0xcf08` and crashing when a level loads.
+     - Conversely, if the `2`-tick (`20 ms`) spin-wait at `0x01FC48` is lowered to `1` tick (`10 ms`) while keeping the `0.02s` floor, every `10 ms` frame advances car physics by `20 ms`, making the game run at **1.4x–2.0x speed**!
+  2. **Screamer 2 (1996) (`S2_3DFX.EXE` at `0x050DEC`) & Screamer Rally (1997)**:
+     - Milestone added a `>= 50.0` clamp on the physics table pointer (`entry 50`, which holds precomputed suspension/gravity/friction coefficients for `dt = 0.02s`).
+     - If the `0.02s` `smoothed_dt` clamp is lowered to `0.004s`, `smoothed_dt` (`0.004s..0.01s`) no longer matches the `0.02s` coefficients in `entry 50` of the physics table, causing suspension forces on frame 1 to spike and **all cars to jump into the air and crash into each other at the start of a race**!
+- **Rule**: Keep both the timer spin-wait and the `0.02s` (`50 Hz`) `smoothed_dt` floor completely unpatched (`code: &[]` for `E1`) across all 8 executables so all three games run at their exact 1.0x physics speed and suspension stability.

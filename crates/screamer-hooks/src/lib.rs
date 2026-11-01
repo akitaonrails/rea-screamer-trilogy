@@ -513,6 +513,22 @@ mod unix_hook {
     /// Bitmask of synthetic keys currently held via `KEYBOARD_AddKey`.
     static HELD_KEYS_MASK: AtomicUsize = AtomicUsize::new(0);
 
+    /// Action-to-pad-button mapping (1=A, 2=B, 3=X, 4=Y, 5=LB, 6=RB, 7=Back, 8=Start).
+    /// Indices match `form::ACTIONS` / `config::MODERN_BUTTONS`:
+    /// 0: Accelerate/Select (A=1), 1: Back/Cancel (B=2), 2: Camera (Y=4),
+    /// 3: Gear Down (LB=5), 4: Brake/Backspace (X=3), 5: Gear Up (RB=6),
+    /// 6: Pause/Back (Back=7), 7: Start/Confirm (Start=8).
+    static BUTTON_MAP: [AtomicUsize; 8] = [
+        AtomicUsize::new(1),
+        AtomicUsize::new(2),
+        AtomicUsize::new(4),
+        AtomicUsize::new(5),
+        AtomicUsize::new(3),
+        AtomicUsize::new(6),
+        AtomicUsize::new(7),
+        AtomicUsize::new(8),
+    ];
+
     const KEY_BIT_UP: usize = SYNTH_KEY_BIT_UP;
     const KEY_BIT_DOWN: usize = SYNTH_KEY_BIT_DOWN;
     const KEY_BIT_LEFT: usize = SYNTH_KEY_BIT_LEFT;
@@ -560,6 +576,24 @@ mod unix_hook {
         {
             IS_SCREAMER_1.store(true, Ordering::Relaxed);
         }
+        if let Ok(btns) = std::env::var("SCREAMER_BUTTONS") {
+            let trimmed = btns.trim();
+            if trimmed.eq_ignore_ascii_case("original") {
+                for (i, slot) in BUTTON_MAP.iter().enumerate() {
+                    slot.store(i + 1, Ordering::Relaxed);
+                }
+            } else if !trimmed.eq_ignore_ascii_case("modern") {
+                let parsed: Vec<usize> = trimmed
+                    .split(',')
+                    .filter_map(|s| s.trim().parse::<usize>().ok())
+                    .collect();
+                if parsed.len() == 8 {
+                    for (i, &val) in parsed.iter().enumerate() {
+                        BUTTON_MAP[i].store(if val == 0 { i + 1 } else { val }, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
     }
 
     #[derive(Default)]
@@ -581,6 +615,22 @@ mod unix_hook {
         dpad_down: bool,
         dpad_left: bool,
         dpad_right: bool,
+    }
+
+    impl RawPadState {
+        fn button(&self, id: usize) -> bool {
+            match id {
+                1 => self.a,
+                2 => self.b,
+                3 => self.x,
+                4 => self.y,
+                5 => self.lb,
+                6 => self.rb,
+                7 => self.back,
+                8 => self.start,
+                _ => false,
+            }
+        }
     }
 
     unsafe fn read_controller_or_joystick(now_ns: u64) -> Option<RawPadState> {
@@ -913,11 +963,20 @@ mod unix_hook {
                 move_y(0, pedals_y);
             }
         }
+        let btn_accel = pad.button(BUTTON_MAP[0].load(Ordering::Relaxed));
+        let btn_cancel = pad.button(BUTTON_MAP[1].load(Ordering::Relaxed))
+            || pad.button(BUTTON_MAP[6].load(Ordering::Relaxed));
+        let btn_cam = pad.button(BUTTON_MAP[2].load(Ordering::Relaxed));
+        let btn_gear_down = pad.button(BUTTON_MAP[3].load(Ordering::Relaxed));
+        let btn_brake = pad.button(BUTTON_MAP[4].load(Ordering::Relaxed));
+        let btn_gear_up = pad.button(BUTTON_MAP[5].load(Ordering::Relaxed));
+        let btn_start = pad.button(BUTTON_MAP[7].load(Ordering::Relaxed));
+
         if !joy_btn_ptr.is_null() {
             let joy_btn: JoystickButtonFn = unsafe { std::mem::transmute(joy_btn_ptr) };
             unsafe {
-                joy_btn(0, 0, pad.a || pad.rb);
-                joy_btn(0, 1, pad.b || pad.lb);
+                joy_btn(0, 0, btn_accel || btn_gear_up);
+                joy_btn(0, 1, btn_cancel || btn_gear_down);
             }
         }
 
@@ -925,12 +984,15 @@ mod unix_hook {
         // - D-Pad always navigates Up/Down/Left/Right; Left Stick also navigates menus when
         //   no race throttle/brake button or trigger is held and the stick is pushed along
         //   a dominant cardinal axis (preventing accidental Up/Down keystrokes while steering)
-        // - A (South) and Start emit Enter (confirm menu item / confirm driver name / start race)
-        // - B (East) and Back/Select emit Esc (back out of menu / pause race)
-        // - X (West) emits Backspace (delete character on Screamer 2/Rally name input)
-        // - Y (North) emits Camera toggle ('M' in Screamer 1, 'C' in Screamer 2/Rally)
-        let pedals_idle =
-            !pad.a && !pad.x && pad.r2 < 2000 && pad.l2 < 2000 && (pad.ry as i32).abs() < 8000;
+        // - Accelerate (A) and Start emit Enter (confirm menu item / confirm driver name / start race)
+        // - Cancel (B) and Back/Select emit Esc (back out of menu / pause race)
+        // - Brake (X) emits Backspace (delete character on Screamer 2/Rally name input)
+        // - Camera (Y) emits Camera toggle ('M' in Screamer 1, 'C' in Screamer 2/Rally)
+        let pedals_idle = !btn_accel
+            && !btn_brake
+            && pad.r2 < 2000
+            && pad.l2 < 2000
+            && (pad.ry as i32).abs() < 8000;
         let lx_abs = (pad.lx as i32).abs();
         let ly_abs = (pad.ly as i32).abs();
         let stick_menu_up = pedals_idle && pad.ly < -22000 && lx_abs < 10000;
@@ -951,16 +1013,16 @@ mod unix_hook {
         if pad.dpad_right || stick_menu_right {
             key_mask |= KEY_BIT_RIGHT;
         }
-        if pad.a || pad.start {
+        if btn_accel || btn_start {
             key_mask |= KEY_BIT_ENTER;
         }
-        if pad.b || pad.back {
+        if btn_cancel {
             key_mask |= KEY_BIT_ESC;
         }
-        if pad.x {
+        if btn_brake && !btn_cancel {
             key_mask |= KEY_BIT_BACKSPACE;
         }
-        if pad.y {
+        if btn_cam {
             key_mask |= KEY_BIT_CAMERA;
         }
 
@@ -981,7 +1043,7 @@ mod unix_hook {
         } else {
             0
         };
-        let a_throttle = if pad.a { 1023 } else { 0 };
+        let a_throttle = if btn_accel { 1023 } else { 0 };
         let throttle_norm = r2_norm.max(stick_throttle).max(a_throttle).clamp(0, 1023);
 
         let l2_norm = ((pad.l2 as i32).clamp(0, 32767) * 1023) / 32767;
@@ -990,15 +1052,15 @@ mod unix_hook {
         } else {
             0
         };
-        let x_brake = if pad.x { 1023 } else { 0 };
+        let x_brake = if btn_brake { 1023 } else { 0 };
         let brake_norm = l2_norm.max(stick_brake).max(x_brake).clamp(0, 1023);
 
         let gp_race = GamepadRaceState {
             throttle: throttle_norm,
             brake: brake_norm,
             steer: steer_norm,
-            gear_up: pad.rb,
-            gear_down: pad.lb,
+            gear_up: btn_gear_up,
+            gear_down: btn_gear_down,
         };
 
         let active_mask = key_mask | HELD_KEYS_MASK.load(Ordering::Relaxed);
