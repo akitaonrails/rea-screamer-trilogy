@@ -791,6 +791,12 @@ fn detect_gpu_info() -> (String, bool, bool) {
             return (nv, has_nvidia, has_amd);
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some((gpu, nv, amd)) = win32_detect_gpu() {
+            return (gpu, nv, amd);
+        }
+    }
     ("OpenGL 2.0+ GPU".to_string(), false, false)
 }
 
@@ -853,5 +859,149 @@ fn detect_display_mode() -> ((u32, u32), u32) {
             }
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(mode) = win32_detect_display_mode() {
+            return mode;
+        }
+    }
     ((1920, 1080), 60)
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct DisplayDeviceW {
+    cb: u32,
+    device_name: [u16; 32],
+    device_string: [u16; 128],
+    state_flags: u32,
+    device_id: [u16; 128],
+    device_key: [u16; 128],
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct DevModeW {
+    dm_device_name: [u16; 32],
+    dm_spec_version: u16,
+    dm_driver_version: u16,
+    dm_size: u16,
+    dm_driver_extra: u16,
+    dm_fields: u32,
+    dm_position_x: i32,
+    dm_position_y: i32,
+    dm_display_orientation: u32,
+    dm_display_fixed_output: u32,
+    dm_color: i16,
+    dm_duplex: i16,
+    dm_y_resolution: i16,
+    dm_tt_option: i16,
+    dm_collate: i16,
+    dm_form_name: [u16; 32],
+    dm_log_pixels: u16,
+    dm_bits_per_pel: u32,
+    dm_pels_width: u32,
+    dm_pels_height: u32,
+    dm_display_flags: u32,
+    dm_display_frequency: u32,
+    dm_padding: [u8; 64],
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn EnumDisplayDevicesW(
+        lp_device: *const u16,
+        i_dev_num: u32,
+        lp_display_device: *mut DisplayDeviceW,
+        dw_flags: u32,
+    ) -> i32;
+    fn EnumDisplaySettingsW(
+        lpsz_device_name: *const u16,
+        i_mode_num: u32,
+        lp_dev_mode: *mut DevModeW,
+    ) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+fn utf16_z_to_string(buf: &[u16]) -> String {
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..end]).trim().to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn win32_detect_gpu() -> Option<(String, bool, bool)> {
+    const DISPLAY_DEVICE_ATTACHED_TO_DESKTOP: u32 = 0x00000001;
+    let mut has_nvidia = false;
+    let mut has_amd = false;
+    let mut best_gpu: Option<String> = None;
+
+    for idx in 0..16u32 {
+        let mut dev: DisplayDeviceW = unsafe { std::mem::zeroed() };
+        dev.cb = std::mem::size_of::<DisplayDeviceW>() as u32;
+        if unsafe { EnumDisplayDevicesW(std::ptr::null(), idx, &mut dev, 0) } == 0 {
+            break;
+        }
+        if dev.state_flags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP == 0 {
+            continue;
+        }
+        let name = utf16_z_to_string(&dev.device_string);
+        if name.is_empty() {
+            continue;
+        }
+        let lower = name.to_ascii_lowercase();
+        if lower.contains("nvidia") {
+            has_nvidia = true;
+            best_gpu = Some(name);
+        } else if lower.contains("amd") || lower.contains("radeon") {
+            if !lower.contains("610m") {
+                has_amd = true;
+            }
+            if best_gpu.is_none() {
+                best_gpu = Some(name);
+            }
+        } else if best_gpu.is_none() {
+            best_gpu = Some(name);
+        }
+    }
+    best_gpu.map(|g| (g, has_nvidia, has_amd))
+}
+
+#[cfg(target_os = "windows")]
+fn win32_detect_display_mode() -> Option<((u32, u32), u32)> {
+    const DISPLAY_DEVICE_ATTACHED_TO_DESKTOP: u32 = 0x00000001;
+    const ENUM_CURRENT_SETTINGS: u32 = u32::MAX;
+    let mut best_res = (1920u32, 1080u32);
+    let mut best_hz = 60u32;
+    let mut best_score = 0u64;
+
+    for idx in 0..16u32 {
+        let mut dev: DisplayDeviceW = unsafe { std::mem::zeroed() };
+        dev.cb = std::mem::size_of::<DisplayDeviceW>() as u32;
+        if unsafe { EnumDisplayDevicesW(std::ptr::null(), idx, &mut dev, 0) } == 0 {
+            break;
+        }
+        if dev.state_flags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP == 0 {
+            continue;
+        }
+        let mut dm: DevModeW = unsafe { std::mem::zeroed() };
+        dm.dm_size = std::mem::size_of::<DevModeW>() as u16;
+        if unsafe { EnumDisplaySettingsW(dev.device_name.as_ptr(), ENUM_CURRENT_SETTINGS, &mut dm) }
+            != 0
+        {
+            let w = dm.dm_pels_width;
+            let h = dm.dm_pels_height;
+            let hz = dm.dm_display_frequency.max(60);
+            if w >= 640 && h >= 480 {
+                let is_landscape = if w >= h { 1_000_000u64 } else { 0 };
+                let score = is_landscape + (hz as u64) * 1000 + (w as u64);
+                if score > best_score {
+                    best_score = score;
+                    best_res = (w, h);
+                    best_hz = hz;
+                }
+            }
+        }
+    }
+    (best_score > 0).then_some((best_res, best_hz))
 }

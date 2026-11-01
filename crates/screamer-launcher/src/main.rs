@@ -1,7 +1,7 @@
 mod ui;
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
 use screamer_launcher::config::{self, MachineCapabilities, Settings};
@@ -141,6 +141,11 @@ fn locate_config_file() -> PathBuf {
             return local;
         }
     }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return PathBuf::from(appdata)
+            .join("ScreamerLauncher")
+            .join(config::FILE_NAME);
+    }
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
         return PathBuf::from(xdg)
             .join("screamer-launcher")
@@ -156,6 +161,18 @@ fn locate_config_file() -> PathBuf {
 }
 
 fn default_runtime_dir(game_slug: &str) -> PathBuf {
+    if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+        return PathBuf::from(local_appdata)
+            .join("ScreamerLauncher")
+            .join("runtime")
+            .join(game_slug);
+    }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return PathBuf::from(appdata)
+            .join("ScreamerLauncher")
+            .join("runtime")
+            .join(game_slug);
+    }
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         return PathBuf::from(xdg)
             .join("screamer-launcher")
@@ -176,6 +193,12 @@ fn default_runtime_dir(game_slug: &str) -> PathBuf {
 }
 
 fn default_saves_dir(game_slug: &str) -> PathBuf {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return PathBuf::from(appdata)
+            .join("ScreamerLauncher")
+            .join("saves")
+            .join(game_slug);
+    }
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         return PathBuf::from(xdg)
             .join("screamer-launcher")
@@ -279,22 +302,13 @@ fn run_check(settings: &Settings, filter_game: Option<Game>) -> Result<ExitCode,
 
 fn run_controllers(_seconds: u32) -> Result<ExitCode, String> {
     println!("Scanning connected controllers...");
-    let sys_input = Path::new("/sys/class/input");
-    let mut found = 0usize;
-    if sys_input.is_dir()
-        && let Ok(entries) = fs::read_dir(sys_input)
-    {
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with("js") {
-                let dev_name = fs::read_to_string(e.path().join("device/name")).unwrap_or_default();
-                println!("  /dev/input/{name}: {}", dev_name.trim());
-                found += 1;
-            }
+    let controllers = ui::detect_controllers();
+    if controllers.is_empty() {
+        println!("  No controllers currently connected.");
+    } else {
+        for (idx, name) in controllers.iter().enumerate() {
+            println!("  Controller #{}: {name}", idx + 1);
         }
-    }
-    if found == 0 {
-        println!("  No /dev/input/js* controllers currently connected.");
     }
     Ok(ExitCode::SUCCESS)
 }

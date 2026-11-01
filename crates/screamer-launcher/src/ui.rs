@@ -311,21 +311,32 @@ fn check_trilogy(folder: &str) -> DiscoveredTrilogy {
     runtime::discover_trilogy(Path::new(trimmed))
 }
 
-fn detect_controllers() -> Vec<String> {
+pub(crate) fn detect_controllers() -> Vec<String> {
     let mut out = Vec::new();
-    let sys_input = Path::new("/sys/class/input");
-    if sys_input.is_dir()
-        && let Ok(entries) = std::fs::read_dir(sys_input)
+    #[cfg(target_os = "linux")]
     {
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with("js")
-                && let Ok(dev) = std::fs::read_to_string(e.path().join("device/name"))
-            {
-                let trimmed = dev.trim();
-                if !trimmed.is_empty() {
-                    out.push(trimmed.to_string());
+        let sys_input = Path::new("/sys/class/input");
+        if sys_input.is_dir()
+            && let Ok(entries) = std::fs::read_dir(sys_input)
+        {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if name.starts_with("js")
+                    && let Ok(dev) = std::fs::read_to_string(e.path().join("device/name"))
+                {
+                    let trimmed = dev.trim();
+                    if !trimmed.is_empty() {
+                        out.push(trimmed.to_string());
+                    }
                 }
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        for idx in 0..4u32 {
+            if win32_joy_poll(idx).is_some() {
+                out.push(format!("XInput / WinMM Controller #{}", idx + 1));
             }
         }
     }
@@ -347,6 +358,29 @@ fn pick_folder_dialog(title: &str) -> Option<PathBuf> {
         }
         if let Ok(out) = Command::new("kdialog")
             .args(["--getexistingdirectory", ".", "--title", title])
+            .output()
+            && out.status.success()
+        {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(PathBuf::from(s));
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let script = format!(
+            "Add-Type -AssemblyName System.Windows.Forms; \
+             $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
+             $d.Description = '{}'; \
+             if ($d.ShowDialog() -eq 'OK') {{ Write-Output $d.SelectedPath }}",
+            title.replace('\'', "''")
+        );
+        if let Ok(out) = Command::new("powershell")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .output()
             && out.status.success()
         {
@@ -1248,10 +1282,98 @@ impl PadPoller {
         m
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    fn read_mask(&mut self) -> u16 {
+        for idx in 0..4u32 {
+            if let Some(mask) = win32_joy_poll(idx) {
+                return mask;
+            }
+        }
+        0
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     fn read_mask(&mut self) -> u16 {
         0
     }
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct JoyInfoEx {
+    dw_size: u32,
+    dw_flags: u32,
+    dw_xpos: u32,
+    dw_ypos: u32,
+    dw_zpos: u32,
+    dw_rpos: u32,
+    dw_upos: u32,
+    dw_vpos: u32,
+    dw_buttons: u32,
+    dw_button_number: u32,
+    dw_pov: u32,
+    dw_reserved1: u32,
+    dw_reserved2: u32,
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "winmm")]
+unsafe extern "system" {
+    fn joyGetPosEx(u_joy_id: u32, pji: *mut JoyInfoEx) -> u32;
+}
+
+#[cfg(target_os = "windows")]
+fn win32_joy_poll(idx: u32) -> Option<u16> {
+    const JOY_RETURNALL: u32 = 0x0000_00FF;
+    let mut info = JoyInfoEx {
+        dw_size: std::mem::size_of::<JoyInfoEx>() as u32,
+        dw_flags: JOY_RETURNALL,
+        dw_xpos: 32767,
+        dw_ypos: 32767,
+        dw_zpos: 32767,
+        dw_rpos: 32767,
+        dw_upos: 32767,
+        dw_vpos: 32767,
+        dw_buttons: 0,
+        dw_button_number: 0,
+        dw_pov: 0xFFFF,
+        dw_reserved1: 0,
+        dw_reserved2: 0,
+    };
+    if unsafe { joyGetPosEx(idx, &mut info) } != 0 {
+        return None;
+    }
+    let mut m = 0u16;
+    if info.dw_buttons & (1 << 0) != 0 {
+        m |= form::PAD_A;
+    }
+    if info.dw_buttons & (1 << 1) != 0 {
+        m |= form::PAD_B;
+    }
+    if info.dw_buttons & (1 << 4) != 0 {
+        m |= form::PAD_LB;
+    }
+    if info.dw_buttons & (1 << 5) != 0 {
+        m |= form::PAD_RB;
+    }
+    if info.dw_buttons & (1 << 7) != 0 {
+        m |= form::PAD_START;
+    }
+    if info.dw_ypos < 16384
+        || (info.dw_pov <= 4500 || (info.dw_pov >= 31500 && info.dw_pov < 36000))
+    {
+        m |= form::PAD_UP;
+    }
+    if info.dw_ypos > 49152 || (info.dw_pov >= 13500 && info.dw_pov <= 22500) {
+        m |= form::PAD_DOWN;
+    }
+    if info.dw_xpos < 16384 || (info.dw_pov >= 22500 && info.dw_pov <= 31500) {
+        m |= form::PAD_LEFT;
+    }
+    if info.dw_xpos > 49152 || (info.dw_pov >= 4500 && info.dw_pov <= 13500) {
+        m |= form::PAD_RIGHT;
+    }
+    Some(m)
 }
 
 trait RoleLabel {
