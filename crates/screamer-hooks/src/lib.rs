@@ -184,7 +184,7 @@ pub fn locate_data_object(mem: &[u8]) -> Option<usize> {
 }
 
 /// Locates both the Data Object base offset in `mem` and the matching
-/// [`BinaryControlSpec`] at any byte alignment in guest RAM, disambiguating
+/// [`BinaryControlSpec`] on 4096-byte page boundaries, disambiguating
 /// binaries that share an anchor offset (`S1_STARTH` vs `S1_STARTL`,
 /// `SR_STRT3FX` vs `SR_START65H`) via optional `game_hint` / `exe_hint` or by
 /// inspecting `record[0]` at `controls_base_offset`.
@@ -193,57 +193,38 @@ pub fn locate_binary_data_object(
     game_hint: Option<&str>,
     exe_hint: Option<&str>,
 ) -> Option<(usize, &'static BinaryControlSpec)> {
+    let page_size = 4096usize;
     let sig_len = ANCHOR_SIGNATURE.len();
-    if mem.len() < sig_len {
-        return None;
-    }
-
+    let mut page_base = 0usize;
     let mut fallback: Option<(usize, &'static BinaryControlSpec)> = None;
-    let mut search_from = 0usize;
-    let first_byte_lower = ANCHOR_SIGNATURE[0].to_ascii_lowercase();
-    let first_byte_upper = ANCHOR_SIGNATURE[0].to_ascii_uppercase();
 
-    while search_from + sig_len <= mem.len() {
-        let rel = mem[search_from..mem.len() - sig_len + 1]
-            .iter()
-            .position(|&b| b == first_byte_lower || b == first_byte_upper);
-        let Some(offset) = rel else {
-            break;
-        };
-        let pos = search_from + offset;
-        search_from = pos + 1;
-
-        if !mem[pos..pos + sig_len].eq_ignore_ascii_case(ANCHOR_SIGNATURE) {
-            continue;
-        }
-
+    while page_base + page_size <= mem.len() {
         for spec in BINARY_CONTROL_SPECS {
-            if pos < spec.anchor_offset {
-                continue;
-            }
-            let base = pos - spec.anchor_offset;
-            let rem = &mem[base..];
-
-            if let Some(exe) = exe_hint
-                && (!spec.exe_env.eq_ignore_ascii_case(exe)
-                    || game_hint.is_some_and(|g| !spec.game_env.eq_ignore_ascii_case(g)))
+            let pos = page_base + spec.anchor_offset;
+            if pos + sig_len <= mem.len()
+                && mem[pos..pos + sig_len].eq_ignore_ascii_case(ANCHOR_SIGNATURE)
             {
-                continue;
-            }
+                if let Some(exe) = exe_hint
+                    && (!spec.exe_env.eq_ignore_ascii_case(exe)
+                        || game_hint.is_some_and(|g| !spec.game_env.eq_ignore_ascii_case(g)))
+                {
+                    continue;
+                }
 
-            let is_live = is_valid_control_block(rem, spec.controls_base_offset)
-                || (spec.block_count == 4
-                    && spec.controls_base_offset >= 0x180
-                    && is_valid_control_block(rem, spec.controls_base_offset - 0x180));
-            if is_live {
-                return Some((base, spec));
-            }
-            if base.is_multiple_of(4096) {
-                fallback = Some((base, spec));
-            } else if fallback.is_none() {
-                fallback = Some((base, spec));
+                let rem = &mem[page_base..];
+                let is_live = is_valid_control_block(rem, spec.controls_base_offset)
+                    || (spec.block_count == 4
+                        && spec.controls_base_offset >= 0x180
+                        && is_valid_control_block(rem, spec.controls_base_offset - 0x180));
+                if is_live {
+                    return Some((page_base, spec));
+                }
+                if fallback.is_none() {
+                    fallback = Some((page_base, spec));
+                }
             }
         }
+        page_base += page_size;
     }
     fallback
 }
@@ -516,7 +497,9 @@ mod unix_hook {
     static RUMBLE_PCT: AtomicUsize = AtomicUsize::new(60);
     static LAST_POLL_NS: AtomicU64 = AtomicU64::new(0);
     static LAST_OPEN_ATTEMPT_NS: AtomicU64 = AtomicU64::new(0);
+    static LAST_SCAN_ATTEMPT_NS: AtomicU64 = AtomicU64::new(0);
     static LAST_RACE_HEARTBEAT_NS: AtomicU64 = AtomicU64::new(0);
+    static IN_POLL: AtomicBool = AtomicBool::new(false);
 
     static CONTROLLER_PTR: AtomicUsize = AtomicUsize::new(0);
     static JOYSTICK_PTR: AtomicUsize = AtomicUsize::new(0);
@@ -682,11 +665,6 @@ mod unix_hook {
         }
 
         if !gc.is_null() {
-            let upd_ptr = unsafe { dlsym_default(b"SDL_GameControllerUpdate\0") };
-            if !upd_ptr.is_null() {
-                let upd_fn: unsafe extern "C" fn() = unsafe { std::mem::transmute(upd_ptr) };
-                unsafe { upd_fn() };
-            }
             let axis_ptr = unsafe { dlsym_default(b"SDL_GameControllerGetAxis\0") };
             let btn_ptr = unsafe { dlsym_default(b"SDL_GameControllerGetButton\0") };
             if axis_ptr.is_null() || btn_ptr.is_null() {
@@ -714,11 +692,6 @@ mod unix_hook {
                 dpad_right: unsafe { btn_fn(gc, 14) } != 0,
             })
         } else if !js.is_null() {
-            let upd_ptr = unsafe { dlsym_default(b"SDL_JoystickUpdate\0") };
-            if !upd_ptr.is_null() {
-                let upd_fn: unsafe extern "C" fn() = unsafe { std::mem::transmute(upd_ptr) };
-                unsafe { upd_fn() };
-            }
             let axis_ptr = unsafe { dlsym_default(b"SDL_JoystickGetAxis\0") };
             let btn_ptr = unsafe { dlsym_default(b"SDL_JoystickGetButton\0") };
             let hat_ptr = unsafe { dlsym_default(b"SDL_JoystickGetHat\0") };
@@ -804,6 +777,12 @@ mod unix_hook {
         };
 
         if !cache_valid {
+            let last_scan = LAST_SCAN_ATTEMPT_NS.load(Ordering::Relaxed);
+            if now_ns != 0 && now_ns.wrapping_sub(last_scan) < 100_000_000 {
+                return false;
+            }
+            LAST_SCAN_ATTEMPT_NS.store(now_ns, Ordering::Relaxed);
+
             let game_env = std::env::var("SCREAMER_GAME").ok();
             let exe_env = std::env::var("SCREAMER_EXE").ok();
             if let Some((found_base, found_spec)) = locate_binary_data_object(
@@ -876,6 +855,20 @@ mod unix_hook {
     }
 
     unsafe fn poll_gamepad_and_inject(now_ns: u64) {
+        if IN_POLL
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+        struct PollGuard;
+        impl Drop for PollGuard {
+            fn drop(&mut self) {
+                IN_POLL.store(false, Ordering::Release);
+            }
+        }
+        let _guard = PollGuard;
+
         init_once();
         if !ENABLED.load(Ordering::Relaxed) {
             return;

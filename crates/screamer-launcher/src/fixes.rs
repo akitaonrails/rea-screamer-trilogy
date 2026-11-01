@@ -477,11 +477,7 @@ pub static SR_STRT3FX_FIXES: FixSet = FixSet {
             id: "E1",
             what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
-            code: &[Piece {
-                at: At::Image(0x0005_04e4),
-                expected: &[0x01],
-                ops: &[Op::Raw(&[0x02])],
-            }],
+            code: &[],
         },
         Fix {
             id: "E2",
@@ -522,11 +518,7 @@ pub static SR_START65H_FIXES: FixSet = FixSet {
             id: "E1",
             what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
-            code: &[Piece {
-                at: At::Image(0x0004_02d4),
-                expected: &[0x01],
-                ops: &[Op::Raw(&[0x02])],
-            }],
+            code: &[],
         },
         Fix {
             id: "E2",
@@ -567,11 +559,7 @@ pub static SR_STARTH_FIXES: FixSet = FixSet {
             id: "E1",
             what: "Pace at exact 50 Hz (2 ticks of 100 Hz SOS timer = 0.02s) matching 50-entry physics table",
             optional: true,
-            code: &[Piece {
-                at: At::Image(0x0004_04bc),
-                expected: &[0x01],
-                ops: &[Op::Raw(&[0x02])],
-            }],
+            code: &[],
         },
         Fix {
             id: "E2",
