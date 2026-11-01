@@ -255,59 +255,177 @@ fn find_cd_image(root_dir: &Path, exe_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Result of scanning a folder (or parent trilogy folder) for all 3 Screamer games.
+#[derive(Debug, Clone, Default)]
+pub struct DiscoveredTrilogy {
+    /// Discovered games indexed by `Game::index()` (`0` = Screamer, `1` = Screamer 2, `2` = Screamer Rally).
+    pub games: [Option<DiscoveredGame>; 3],
+    /// If the user's path pointed directly at one specific game folder, which game it was.
+    pub direct_game: Option<Game>,
+}
+
+impl DiscoveredTrilogy {
+    pub fn get(&self, game: Game) -> Option<&DiscoveredGame> {
+        self.games[game.index()].as_ref()
+    }
+
+    pub fn any_found(&self) -> bool {
+        self.games.iter().any(|g| g.is_some())
+    }
+
+    pub fn count(&self) -> usize {
+        self.games.iter().filter(|g| g.is_some()).count()
+    }
+}
+
+/// Scans `dir`, its `games/` child, and sibling directories to discover all
+/// installed games in the Screamer trilogy (`Screamer`, `Screamer 2`, and
+/// `Screamer Rally`) from a single path.
+pub fn discover_trilogy(dir: &Path) -> DiscoveredTrilogy {
+    let mut out = DiscoveredTrilogy::default();
+    if !dir.exists() {
+        return out;
+    }
+
+    if let Ok(direct) = scan_game_dir(dir) {
+        let idx = direct.game.index();
+        out.direct_game = Some(direct.game);
+        out.games[idx] = Some(direct);
+    }
+
+    let mut containers = vec![dir.to_path_buf(), dir.join("games")];
+    if let Some(parent) = dir.parent() {
+        containers.push(parent.to_path_buf());
+        containers.push(parent.join("games"));
+        if let Some(grand) = parent.parent() {
+            containers.push(grand.to_path_buf());
+            containers.push(grand.join("games"));
+        }
+    }
+
+    for container in containers {
+        if !container.is_dir() {
+            continue;
+        }
+        // Check well-known trilogy subdirectory names first for deterministic ordering
+        for sub_name in [
+            "screamer",
+            "screamer1",
+            "Screamer",
+            "screamer2",
+            "Screamer 2",
+            "Screamer2",
+            "screamer-rally",
+            "screamer_rally",
+            "Screamer Rally",
+            "ScreamerRally",
+        ] {
+            let cand = container.join(sub_name);
+            if cand.is_dir()
+                && let Ok(disc) = scan_game_dir(&cand)
+            {
+                let idx = disc.game.index();
+                if out.games[idx].is_none() {
+                    out.games[idx] = Some(disc);
+                }
+            }
+        }
+        // Also scan any other immediate child directory
+        if let Ok(entries) = fs::read_dir(&container) {
+            let mut subdirs: Vec<PathBuf> = entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect();
+            subdirs.sort();
+            for sub in subdirs {
+                if out.games.iter().all(|g| g.is_some()) {
+                    break;
+                }
+                if let Ok(disc) = scan_game_dir(&sub) {
+                    let idx = disc.game.index();
+                    if out.games[idx].is_none() {
+                        out.games[idx] = Some(disc);
+                    }
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// Resolves `dir` (which may be a parent trilogy directory or a single game
+/// directory) to the [`DiscoveredGame`] for `preferred` (or falls back to the
+/// directly pointed-at game if `dir` is a single game folder).
+pub fn resolve_game_dir(dir: &Path, preferred: Game) -> Result<DiscoveredGame, String> {
+    if !dir.exists() {
+        return Err(format!("Game directory does not exist: {}", dir.display()));
+    }
+    let trilogy = discover_trilogy(dir);
+    if let Some(disc) = trilogy.get(preferred) {
+        return Ok(disc.clone());
+    }
+    if let Some(direct) = trilogy.direct_game
+        && let Some(disc) = trilogy.get(direct)
+    {
+        return Ok(disc.clone());
+    }
+    if let Some(first) = trilogy.games.into_iter().flatten().next() {
+        return Ok(first);
+    }
+    Err(format!(
+        "No supported Screamer, Screamer 2, or Screamer Rally executables found in {}",
+        dir.display()
+    ))
+}
+
 impl DiscoveredGame {
-    /// Chooses the best executable in `self.executables` for `choice`.
+    pub fn can_use_dos_glide(&self) -> bool {
+        self.game == Game::ScreamerRally
+            || (self.game == Game::Screamer2
+                && (!self.has_windows_stub_glide2x || self.has_genuine_dos_glide2x))
+    }
+
+    /// Chooses the best executable in `self.executables` for `choice`, falling
+    /// back to `Auto` if `choice` is not available for `self.game` so shared
+    /// trilogy settings work across all three games without error.
     pub fn select_executable(&self, choice: RendererChoice) -> Result<&DiscoveredExe, String> {
         let find_renderer = |r: Renderer| self.executables.iter().find(|e| e.edition.role == r);
 
-        match choice {
-            RendererChoice::Auto => {
-                // For Screamer Rally, STRT3FX.EXE works out of the box with DOSBox Voodoo.
-                // For Screamer 2, S2_3DFX.EXE requires a genuine DOS GLIDE2X.OVL; if only the
-                // 31 KB Windows stub is present, prefer START65H.EXE (640x480 16-bit SVGA).
-                if let Some(voodoo) = find_renderer(Renderer::Glide3dfx)
-                    && (self.game != Game::Screamer2
-                        || !self.has_windows_stub_glide2x
-                        || self.has_genuine_dos_glide2x)
-                {
-                    return Ok(voodoo);
+        let lookup = match choice {
+            RendererChoice::Auto => None,
+            RendererChoice::Voodoo => {
+                if self.can_use_dos_glide() {
+                    find_renderer(Renderer::Glide3dfx)
+                } else {
+                    None
                 }
-                if let Some(svga16) = find_renderer(Renderer::Svga16Bit) {
-                    return Ok(svga16);
-                }
-                if let Some(svga8) = find_renderer(Renderer::Svga8Bit) {
-                    return Ok(svga8);
-                }
-                if let Some(vga) = find_renderer(Renderer::VgaLow) {
-                    return Ok(vga);
-                }
-                Err("No playable racing executable found in game folder".into())
             }
-            RendererChoice::Voodoo => find_renderer(Renderer::Glide3dfx).ok_or_else(|| {
-                format!(
-                    "{} does not have a 3dfx Voodoo executable",
-                    self.game.title()
-                )
-            }),
-            RendererChoice::Svga16Bit => find_renderer(Renderer::Svga16Bit).ok_or_else(|| {
-                format!(
-                    "{} does not have a 16-bit SVGA executable",
-                    self.game.title()
-                )
-            }),
-            RendererChoice::Svga8Bit => find_renderer(Renderer::Svga8Bit).ok_or_else(|| {
-                format!(
-                    "{} does not have an 8-bit SVGA executable",
-                    self.game.title()
-                )
-            }),
-            RendererChoice::Vga => find_renderer(Renderer::VgaLow).ok_or_else(|| {
-                format!(
-                    "{} does not have a low-res VGA executable",
-                    self.game.title()
-                )
-            }),
+            RendererChoice::Svga16Bit => find_renderer(Renderer::Svga16Bit),
+            RendererChoice::Svga8Bit => find_renderer(Renderer::Svga8Bit),
+            RendererChoice::Vga => find_renderer(Renderer::VgaLow),
+        };
+        if let Some(exe) = lookup {
+            return Ok(exe);
         }
+
+        // Auto / graceful fallback for options not present in this game:
+        if let Some(voodoo) = find_renderer(Renderer::Glide3dfx)
+            && self.can_use_dos_glide()
+        {
+            return Ok(voodoo);
+        }
+        if let Some(svga16) = find_renderer(Renderer::Svga16Bit) {
+            return Ok(svga16);
+        }
+        if let Some(svga8) = find_renderer(Renderer::Svga8Bit) {
+            return Ok(svga8);
+        }
+        if let Some(vga) = find_renderer(Renderer::VgaLow) {
+            return Ok(vga);
+        }
+        Err("No playable racing executable found in game folder".into())
     }
 }
 
@@ -588,6 +706,13 @@ fn copy_matching_files<F: Fn(&str) -> bool>(
 
 /// Locates the `dosbox-staging` (or `dosbox`) executable to run.
 pub fn find_dosbox(explicit: Option<&Path>) -> Option<PathBuf> {
+    find_dosbox_with_hint(explicit, None)
+}
+
+/// Locates the `dosbox-staging` (or `dosbox`) executable, checking `explicit`,
+/// `SCREAMER_DOSBOX`, relative `dosbox-staging/` folders next to `game_dir`,
+/// the launcher's own directory, and `PATH`.
+pub fn find_dosbox_with_hint(explicit: Option<&Path>, game_dir: Option<&Path>) -> Option<PathBuf> {
     if let Some(p) = explicit
         && p.is_file()
     {
@@ -599,10 +724,37 @@ pub fn find_dosbox(explicit: Option<&Path>) -> Option<PathBuf> {
             return Some(p);
         }
     }
+    if let Some(mut cur) = game_dir {
+        for _ in 0..4 {
+            for rel in [
+                "dosbox-staging/dosbox",
+                "dosbox-staging/dosbox.exe",
+                "dosbox/dosbox",
+                "dosbox/dosbox.exe",
+                "DOSBOX/dosbox.exe",
+            ] {
+                let cand = cur.join(rel);
+                if cand.is_file() {
+                    return Some(cand);
+                }
+            }
+            if let Some(parent) = cur.parent() {
+                cur = parent;
+            } else {
+                break;
+            }
+        }
+    }
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        for cand in ["dosbox-staging", "dosbox", "dosbox.exe"] {
+        for cand in [
+            "dosbox-staging",
+            "dosbox",
+            "dosbox.exe",
+            "dosbox-staging/dosbox",
+            "dosbox-staging/dosbox.exe",
+        ] {
             let p = dir.join(cand);
             if p.is_file() {
                 return Some(p);

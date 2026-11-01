@@ -44,7 +44,7 @@ This document records notable observations from running the original 1995–1997
 
 | Game | Selected Executable | Verified Patches Applied | Graphics Mode Entered | CD Audio & SB16 Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Screamer (1995)** | `STARTH.EXE` (`SVGA 640x480`) | `F2`, `F3`, `E1`, `E2`, `E5` (7 writes) | `VESA 640x480 256-colour mode 101h` | `SCREAM.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
+| **Screamer (1995)** | `STARTH.EXE` (`SVGA 640x480`) | `F2`, `F3`, `E1`, `E2`, `E5` (6 writes) | `VESA 640x480 256-colour mode 101h` | `SCREAM.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
 | **Screamer 2 (1996)** (3dfx) | `S2_3DFX.EXE` (`3dfx Voodoo Glide`) | `E1`, `E2`, `E5` (8 writes) | `3dfx Voodoo SVGA 640x480 16-bit mode 00h` | `GAME.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
 | **Screamer 2 (1996)** (SVGA16) | `START65H.EXE` (`SVGA 640x480 16-bit`) | `F5`, `E1`, `E2`, `E5` (9 writes) | `VESA 640x480 16-bit mode 111h` | `GAME.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
 | **Screamer Rally (1997)** | `STRT3FX.EXE` (`3dfx Voodoo Glide`) | `E1`, `E2`, `E5` (7 writes) | `3dfx Voodoo SVGA 640x480 16-bit mode 00h` | `srally.iso` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
@@ -61,3 +61,25 @@ This document records notable observations from running the original 1995–1997
   - Across all 8 racing executables, `PollControls` checks `if (record[r].enabled == 1)` before updating `normalized_controls[r]`, while the car physics engine reads `normalized_controls[0..5]` directly without checking `record[r].enabled` (and applies instantaneous full-range `-1023..+1023` analog steering when `record[2].mode == 0`).
   - `libscreamer_hooks.so` locates the active Data Object inside `*MemBase`, yields individual controls to the keyboard whenever `DataObj[2 + scancode] != 0`, and otherwise sets `record[r].enabled = 2`, `record[2].mode = 0`, and writes live proportional gamepad values directly into `normalized_controls[0,1,2,4,5]`.
   - Writing `-1` into `normalized_controls[3]` (which is unused in `record[2].mode == 0` analog steering mode but overwritten with `0` by `PollControls` every active race frame) provides an exact `PollControls` heartbeat that distinguishes active racing (`in_race == true`) from menus, intros, and the pause screen (`in_race == false`), allowing D-Pad, Left Stick, `A`/`B`, and `Start`/`Select` to navigate menus via `_Z15KEYBOARD_AddKey8KBD_KEYSb` automatically.
+
+---
+
+## 7. Screamer 1 `UpdateFrameTiming` 50-Entry Physics Lookup Table (`0x80e8[1..50]`)
+
+- In **Screamer (1995)** (`STARTH.EXE` at `0x01FC38..0x01FD62` and `STARTL.EXE` at `0x01FC28..0x01FD52`), `UpdateFrameTiming`:
+  1. Spin-waits at `0x01FC46` (`cmp $0x2, %edx; jb 0x01FC40`) until at least 2 ticks (`20 ms`) of the 100 Hz timer (`0x7f9`) have elapsed.
+  2. Computes `raw_dt = ticks * 0.01` and stores it unclamped into `0x18e08` (and adds it to `total_race_time` at `0x18e10`).
+  3. Computes `smoothed_dt` (`0x18e04`), clamps it to `[0.02, 0.20]` (`0xc70` / `0x01FCD0`), and then immediately indexes a precomputed **50-entry physics lookup table** (`400` / `0x190` bytes per entry, located at `DataObj + 0x80e8..0xcf08`) using `edx = int(1.0 / smoothed_dt)`:
+     ```text
+     1fcd4: fld1
+     1fcd6: fdivs  0x18e04         ; st(0) = 1.0 / smoothed_dt (<= 50.0)
+     ...
+     1fcef: fistpl -0x4(%ebp)      ; edx = int(1.0 / smoothed_dt)
+     ...
+     1fd0f: mov    $0x80e8, %edx
+     1fd19: add    %eax, %edx      ; edx = 0x80e8 + int(1.0 / smoothed_dt) * 400
+     1fd23: mov    %edx, 0xcf08
+     ```
+- Lowering `0.02` (`DBL_0_02` / `FLT_0_02`) to `0.004` in **Screamer 1** causes `int(1.0 / smoothed_dt)` to exceed `50` (up to `250`), advancing `0xcf08` past the end of `0x80e8..0xcf08` and causing an out-of-bounds read when a race level loads.
+- In **Screamer 2 (1996)** (`S2_3DFX.EXE` at `0x050DEC`) and **Screamer Rally (1997)**, Milestone explicitly added a `>= 50.0` bounds check before the `* 0x190` multiplication (`fcomps 0x1ca4; jb ...; movl $0x14948, 0x14ad8`), clamping the table pointer to entry `50` whenever `1.0 / smoothed_dt >= 50.0`.
+- Therefore, for **Screamer 1** (`STARTH.EXE` and `STARTL.EXE`), `E1` patches only the spin-wait threshold (`0x01FC48` / `0x01FC38`: `0x02 -> 0x01`), unlocking 60+ FPS rendering while keeping the `0.02s` (`entry 50`) table index clamp intact.

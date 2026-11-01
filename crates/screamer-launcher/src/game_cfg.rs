@@ -272,6 +272,11 @@ pub fn build_dosbox_conf(opts: &DosboxConfOptions<'_>) -> String {
     } else {
         "false"
     };
+    let glshader = if opts.texture_filtering {
+        "bilinear"
+    } else {
+        "sharp"
+    };
 
     let mut autoexec = String::new();
     autoexec.push_str("@echo off\n");
@@ -309,7 +314,7 @@ memsize             = 31
 
 [render]
 aspect              = {aspect_str}
-{viewport_line}glshader            = sharp
+{viewport_line}glshader            = {glshader}
 
 [cpu]
 core                = auto

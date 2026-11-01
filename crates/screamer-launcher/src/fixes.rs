@@ -170,6 +170,13 @@ const WIDESCREEN_16_9_STUB: &[u8; 31] = &[
     0xc3, // ret
 ];
 
+/// Expected 31 bytes inside the unreferenced `SetCameraMatrix_Unused` duplicate function.
+const UNUSED_CAM_CAVE_31: &[u8; 31] = &[
+    0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff, 0x0f, 0xbf, 0xed,
+    0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb, 0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8,
+    0x52,
+];
+
 /// IEEE-754 double `0.02` (`20 ms` = 50 FPS floor).
 const DBL_0_02: &[u8; 8] = &[0x7b, 0x14, 0xae, 0x47, 0xe1, 0x7a, 0x94, 0x3f];
 /// IEEE-754 double `0.004` (`4 ms` = 250 FPS floor).
@@ -206,25 +213,13 @@ pub static S1_STARTH_FIXES: FixSet = FixSet {
         },
         Fix {
             id: "E1",
-            what: "Unlock 60+ FPS spin-wait and lower smoothed_dt 0.02s floor to 0.004s",
+            what: "Unlock 60+ FPS spin-wait (keep 0.02s floor intact for 50-entry physics table)",
             optional: true,
-            code: &[
-                Piece {
-                    at: At::Image(0x0001_fc48),
-                    expected: &[0x02],
-                    ops: &[Op::Raw(&[0x01])],
-                },
-                Piece {
-                    at: At::Image(0x0010_0c70),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0001_fcd0),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-            ],
+            code: &[Piece {
+                at: At::Image(0x0001_fc48),
+                expected: &[0x02],
+                ops: &[Op::Raw(&[0x01])],
+            }],
         },
         Fix {
             id: "E2",
@@ -233,11 +228,7 @@ pub static S1_STARTH_FIXES: FixSet = FixSet {
             code: &[
                 Piece {
                     at: At::Image(0x0008_b722),
-                    expected: &[
-                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
-                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
-                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
-                    ],
+                    expected: UNUSED_CAM_CAVE_31,
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
@@ -277,25 +268,13 @@ pub static S1_STARTL_FIXES: FixSet = FixSet {
         },
         Fix {
             id: "E1",
-            what: "Unlock 60+ FPS spin-wait and lower smoothed_dt 0.02s floor to 0.004s",
+            what: "Unlock 60+ FPS spin-wait (keep 0.02s floor intact for 50-entry physics table)",
             optional: true,
-            code: &[
-                Piece {
-                    at: At::Image(0x0001_fc38),
-                    expected: &[0x02],
-                    ops: &[Op::Raw(&[0x01])],
-                },
-                Piece {
-                    at: At::Image(0x0010_0c70),
-                    expected: DBL_0_02,
-                    ops: &[Op::Raw(DBL_0_004)],
-                },
-                Piece {
-                    at: At::Image(0x0001_fcc0),
-                    expected: FLT_0_02,
-                    ops: &[Op::Raw(FLT_0_004)],
-                },
-            ],
+            code: &[Piece {
+                at: At::Image(0x0001_fc38),
+                expected: &[0x02],
+                ops: &[Op::Raw(&[0x01])],
+            }],
         },
         Fix {
             id: "E2",
@@ -304,11 +283,7 @@ pub static S1_STARTL_FIXES: FixSet = FixSet {
             code: &[
                 Piece {
                     at: At::Image(0x0008_b472),
-                    expected: &[
-                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
-                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
-                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
-                    ],
+                    expected: UNUSED_CAM_CAVE_31,
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
@@ -398,11 +373,7 @@ pub static S2_3DFX_FIXES: FixSet = FixSet {
             code: &[
                 Piece {
                     at: At::Image(0x0008_481e),
-                    expected: &[
-                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
-                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
-                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
-                    ],
+                    expected: UNUSED_CAM_CAVE_31,
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
@@ -479,11 +450,7 @@ pub static S2_START65H_FIXES: FixSet = FixSet {
             code: &[
                 Piece {
                     at: At::Image(0x0007_eb4e),
-                    expected: &[
-                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
-                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
-                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
-                    ],
+                    expected: UNUSED_CAM_CAVE_31,
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
@@ -550,11 +517,7 @@ pub static S2_STARTH_FIXES: FixSet = FixSet {
             code: &[
                 Piece {
                     at: At::Image(0x0007_f70e),
-                    expected: &[
-                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
-                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
-                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
-                    ],
+                    expected: UNUSED_CAM_CAVE_31,
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
@@ -639,11 +602,7 @@ pub static SR_STRT3FX_FIXES: FixSet = FixSet {
             code: &[
                 Piece {
                     at: At::Image(0x0008_2dee),
-                    expected: &[
-                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
-                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
-                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
-                    ],
+                    expected: UNUSED_CAM_CAVE_31,
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
@@ -705,11 +664,7 @@ pub static SR_START65H_FIXES: FixSet = FixSet {
             code: &[
                 Piece {
                     at: At::Image(0x0007_264e),
-                    expected: &[
-                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
-                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
-                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
-                    ],
+                    expected: UNUSED_CAM_CAVE_31,
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {
@@ -771,11 +726,7 @@ pub static SR_STARTH_FIXES: FixSet = FixSet {
             code: &[
                 Piece {
                     at: At::Image(0x0007_7afe),
-                    expected: &[
-                        0x0f, 0xbf, 0xc9, 0x0f, 0xbf, 0xf6, 0x0f, 0xbf, 0xdb, 0x0f, 0xbf, 0xff,
-                        0x0f, 0xbf, 0xed, 0x0f, 0xbf, 0xc0, 0xd1, 0xf9, 0xd1, 0xfe, 0xd1, 0xfb,
-                        0xd1, 0xff, 0xd1, 0xfd, 0xd1, 0xf8, 0x52,
-                    ],
+                    expected: UNUSED_CAM_CAVE_31,
                     ops: &[Op::Raw(WIDESCREEN_16_9_STUB)],
                 },
                 Piece {

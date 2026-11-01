@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use crate::config::{self, RendererChoice, Scaler, Settings, TextureFilter};
+use crate::edition::Game;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Picture {
@@ -102,6 +103,7 @@ pub enum Look {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Form {
+    pub which: Game,
     pub game: String,
     pub saves: String,
     pub picture: Picture,
@@ -165,7 +167,7 @@ pub const SCALERS: [(Scaler, &str, &str); 4] = [
     ),
 ];
 
-pub const WINDOW: (f32, f32) = (880.0, 640.0);
+pub const WINDOW: (f32, f32) = (920.0, 660.0);
 
 pub fn window_zoom(screen: Option<(u32, u32)>, native: f32) -> f32 {
     let native = if native > 0.0 { native } else { 1.0 };
@@ -205,8 +207,13 @@ impl Form {
                 .map(|p| p.display().to_string())
                 .unwrap_or_default()
         };
+        let which = s.which_game();
+        let mut renderer = s.renderer_choice();
+        if !renderer.is_supported_for(which, true) {
+            renderer = RendererChoice::Auto;
+        }
         let picture = Picture {
-            renderer: s.renderer_choice(),
+            renderer,
             resolution: s.race_resolution(),
             widescreen: s.widescreen == Some(true),
             texture_filter: s.texture_filter.unwrap_or(TextureFilter::Original),
@@ -215,6 +222,7 @@ impl Form {
         };
         let buttons = s.buttons.unwrap_or(config::DEFAULT_BUTTONS);
         Form {
+            which,
             game: path(&s.game),
             saves: path(&s.saves),
             picture,
@@ -225,6 +233,14 @@ impl Form {
             scaler: s.scaler.unwrap_or(Scaler::Nearest),
             buttons,
             layout: Form::layout_of(&buttons),
+        }
+    }
+
+    pub fn set_which(&mut self, which: Game, has_dos_glide: bool, screen: Option<(u32, u32)>) {
+        self.which = which;
+        if !self.picture.renderer.is_supported_for(which, has_dos_glide) {
+            self.picture.renderer = RendererChoice::Auto;
+            self.look = Form::look_of(&self.picture, screen);
         }
     }
 
@@ -294,6 +310,7 @@ impl Form {
             };
         };
         let path = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
+        put("which", Some(self.which.slug().into()));
         put("game", path(&self.game));
         put("saves", path(&self.saves));
         put("renderer", Some(p.renderer.key().into()));
@@ -334,6 +351,7 @@ mod tests {
     #[test]
     fn default_template_starts_as_original_look() {
         let f = form(config::TEMPLATE);
+        assert_eq!(f.which, Game::Screamer);
         assert_eq!(f.look, Look::Original);
         assert_eq!(f.picture, Picture::ORIGINAL);
         assert!(f.gamepad_axes);
@@ -342,12 +360,26 @@ mod tests {
     #[test]
     fn enhanced_look_roundtrips_through_save() {
         let mut f = form(config::TEMPLATE);
+        f.set_which(Game::ScreamerRally, true, SCREEN);
         f.set_look(Look::Enhanced, SCREEN);
         let saved = f.save(config::TEMPLATE);
         let f2 = form(&saved);
+        assert_eq!(f2.which, Game::ScreamerRally);
         assert_eq!(f2.look, Look::Enhanced);
         assert_eq!(f2.picture.resolution, Some((2560, 1440)));
         assert!(f2.picture.widescreen);
         assert_eq!(f2.picture.fps_limit, Some(60));
+    }
+
+    #[test]
+    fn switching_game_resets_unsupported_renderer() {
+        let mut f = form(config::TEMPLATE);
+        f.set_which(Game::ScreamerRally, true, SCREEN);
+        f.picture.renderer = RendererChoice::Voodoo;
+        assert_eq!(f.picture.renderer, RendererChoice::Voodoo);
+
+        // Switching to Screamer (1995), which does not have 3dfx Voodoo, resets renderer to Auto
+        f.set_which(Game::Screamer, true, SCREEN);
+        assert_eq!(f.picture.renderer, RendererChoice::Auto);
     }
 }

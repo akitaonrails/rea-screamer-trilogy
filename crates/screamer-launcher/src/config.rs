@@ -6,8 +6,11 @@
 
 use std::path::PathBuf;
 
+use crate::edition::Game;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Settings {
+    pub which: Option<Game>,
     pub game: Option<PathBuf>,
     pub runtime: Option<PathBuf>,
     pub saves: Option<PathBuf>,
@@ -56,12 +59,33 @@ impl RendererChoice {
 
     pub fn label(self) -> &'static str {
         match self {
-            RendererChoice::Auto => "Auto (Best Available)",
-            RendererChoice::Voodoo => "3dfx Voodoo Glide (640x480)",
-            RendererChoice::Svga16Bit => "SVGA 16-bit 65K Colors (640x480)",
-            RendererChoice::Svga8Bit => "SVGA 8-bit 256 Colors (640x480)",
-            RendererChoice::Vga => "VGA Low-Res (320x200)",
+            RendererChoice::Auto => "Auto",
+            RendererChoice::Voodoo => "3dfx Voodoo",
+            RendererChoice::Svga16Bit => "SVGA 16-bit",
+            RendererChoice::Svga8Bit => "SVGA 8-bit",
+            RendererChoice::Vga => "VGA 320×200",
         }
+    }
+
+    /// Returns `Some(reason)` when `self` is not supported by `game` (so the UI
+    /// grays out the chip and explains why on hover).
+    pub fn disabled_reason(self, game: Game, has_dos_glide: bool) -> Option<&'static str> {
+        match (game, self) {
+            (Game::Screamer, RendererChoice::Voodoo | RendererChoice::Svga16Bit) => Some(
+                "Screamer (1995) only shipped with 8-bit SVGA (640×480) and VGA (320×200) renderers.",
+            ),
+            (Game::Screamer2 | Game::ScreamerRally, RendererChoice::Vga) => Some(
+                "Screamer 2 and Screamer Rally use 640×480 3dfx Voodoo, 16-bit SVGA, or 8-bit SVGA.",
+            ),
+            (Game::Screamer2, RendererChoice::Voodoo) if !has_dos_glide => Some(
+                "3dfx Voodoo in Screamer 2 requires DOS GLIDE2X.OVL (automatically linked when Screamer Rally is in the same trilogy folder).",
+            ),
+            _ => None,
+        }
+    }
+
+    pub fn is_supported_for(self, game: Game, has_dos_glide: bool) -> bool {
+        self.disabled_reason(game, has_dos_glide).is_none()
     }
 
     pub fn parse(v: &str) -> Option<RendererChoice> {
@@ -156,10 +180,14 @@ pub const FILE_NAME: &str = "launcher.cfg";
 pub const TEMPLATE: &str = r"# Screamer Trilogy (Screamer / Screamer 2 / Screamer Rally) launcher settings.
 #
 # One setting per line as key = value; lines starting with # are comments.
-# Command-line options (--game, --runtime, --saves, etc.) override this file
-# for one run.
+# Command-line options (--game, --which, --runtime, --saves, etc.) override this
+# file for one run.
 
-# The folder with your installed Screamer, Screamer 2, or Screamer Rally copy.
+# Which game in the trilogy to launch: screamer, screamer2, or screamer-rally.
+which = screamer
+
+# The folder with your installed Screamer game(s) — either a parent trilogy
+# folder containing screamer/, screamer2/, screamer-rally/ or a single game folder.
 # The game folder is only read, never modified.
 game =
 
@@ -213,9 +241,10 @@ pub const USAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "\n\n",
     "\
-ScreamerLauncher [options]
+ScreamerLauncher [1|2|rally] [options]
 
-  --game <folder>          the folder with Screamer, Screamer 2, or Screamer Rally (remembered)
+  --which <1|2|rally>      select game: screamer (1), screamer2 (2), or screamer-rally (rally)
+  --game <folder>          the trilogy root folder or a single game folder (remembered)
   --saves <folder>         where your saves are kept
   --runtime <folder>       where the launcher keeps its private runtime copy
   --dosbox <path>          explicit path to dosbox-staging executable
@@ -230,14 +259,14 @@ ScreamerLauncher [options]
   --rumble <0-100>|off     gamepad rumble strength
   --buttons <layout>       pad buttons: original, modern, or 8 numbers
 
-These override launcher.cfg for one run (only --game is remembered). Without
-options the settings window opens first.
+These override launcher.cfg for one run (--game and --which are remembered).
+Without options the settings window opens first.
 
   --no-window              play with the saved settings, no window
   --settings [--linux]     only the settings window (exit 0: play, 3: closed)
 
-ScreamerLauncher --check [--game <folder>]
-  checks the game folder, identifies the Screamer edition, and verifies all binary fixes
+ScreamerLauncher --check [--game <folder>] [--which <1|2|rally>]
+  checks all discovered games in the trilogy folder and verifies all binary fixes
 
 ScreamerLauncher --controllers [seconds]
   lists connected gamepads and logs axis/button events"
@@ -303,6 +332,10 @@ impl Settings {
                 warnings.push(format!("{FILE_NAME} line {}: {what} {value:?}", n + 1));
             };
             match key {
+                "which" => match Game::parse(value) {
+                    Some(g) => s.which = Some(g),
+                    None => bad("which needs screamer, screamer2, or screamer-rally, not"),
+                },
                 "game" => s.game = Some(value.into()),
                 "runtime" => s.runtime = Some(value.into()),
                 "saves" => s.saves = Some(value.into()),
@@ -359,6 +392,7 @@ impl Settings {
 
     pub fn merged(self, over: Settings) -> Settings {
         Settings {
+            which: over.which.or(self.which),
             game: over.game.or(self.game),
             runtime: over.runtime.or(self.runtime),
             saves: over.saves.or(self.saves),
@@ -375,6 +409,10 @@ impl Settings {
             buttons: over.buttons.or(self.buttons),
             scaler: over.scaler.or(self.scaler),
         }
+    }
+
+    pub fn which_game(&self) -> Game {
+        self.which.unwrap_or(Game::Screamer)
     }
 
     pub fn rumble_strength(&self) -> u32 {
@@ -421,6 +459,14 @@ impl Settings {
                     .ok_or_else(|| format!("{name} needs a value\n\n{USAGE}"))
             };
             match arg.as_str() {
+                flag @ ("--which" | "--play") => {
+                    let v = value(flag)?;
+                    s.which = Some(Game::parse(&v).ok_or_else(|| {
+                        format!(
+                            "{flag} needs 1 (screamer), 2 (screamer2), or rally (screamer-rally), not {v}\n\n{USAGE}"
+                        )
+                    })?);
+                }
                 "--game" => s.game = Some(value("--game")?.into()),
                 "--runtime" => s.runtime = Some(value("--runtime")?.into()),
                 "--saves" => s.saves = Some(value("--saves")?.into()),
@@ -485,7 +531,13 @@ impl Settings {
                     }
                 }
                 "--help" | "-h" | "/?" => return Err(USAGE.into()),
-                other => return Err(format!("unknown argument {other}\n\n{USAGE}")),
+                other => {
+                    if let Some(g) = Game::parse(other) {
+                        s.which = Some(g);
+                    } else {
+                        return Err(format!("unknown argument {other}\n\n{USAGE}"));
+                    }
+                }
             }
         }
         Ok(s)

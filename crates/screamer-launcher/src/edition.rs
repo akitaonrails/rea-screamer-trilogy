@@ -18,11 +18,49 @@ pub enum GameTitle {
 pub type Game = GameTitle;
 
 impl GameTitle {
+    pub const ALL: [GameTitle; 3] = [
+        GameTitle::Screamer,
+        GameTitle::Screamer2,
+        GameTitle::ScreamerRally,
+    ];
+
+    pub const fn index(self) -> usize {
+        match self {
+            GameTitle::Screamer => 0,
+            GameTitle::Screamer2 => 1,
+            GameTitle::ScreamerRally => 2,
+        }
+    }
+
     pub const fn display_name(self) -> &'static str {
         match self {
             GameTitle::Screamer => "Screamer (1995)",
             GameTitle::Screamer2 => "Screamer 2 (1996)",
             GameTitle::ScreamerRally => "Screamer Rally (1997)",
+        }
+    }
+
+    pub const fn short_title(self) -> &'static str {
+        match self {
+            GameTitle::Screamer => "Screamer",
+            GameTitle::Screamer2 => "Screamer 2",
+            GameTitle::ScreamerRally => "Screamer Rally",
+        }
+    }
+
+    pub const fn year(self) -> &'static str {
+        match self {
+            GameTitle::Screamer => "1995",
+            GameTitle::Screamer2 => "1996",
+            GameTitle::ScreamerRally => "1997",
+        }
+    }
+
+    pub const fn studio_credit(self) -> &'static str {
+        match self {
+            GameTitle::Screamer => "1995 · Graffiti · Virgin Interactive",
+            GameTitle::Screamer2 => "1996 · Milestone · Virgin Interactive",
+            GameTitle::ScreamerRally => "1997 · Milestone · Virgin Interactive",
         }
     }
 
@@ -35,6 +73,17 @@ impl GameTitle {
             GameTitle::Screamer => "screamer",
             GameTitle::Screamer2 => "screamer2",
             GameTitle::ScreamerRally => "screamer-rally",
+        }
+    }
+
+    pub fn parse(v: &str) -> Option<GameTitle> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "1" | "s1" | "screamer" | "screamer1" | "screamer-1" => Some(GameTitle::Screamer),
+            "2" | "s2" | "screamer2" | "screamer-2" => Some(GameTitle::Screamer2),
+            "3" | "sr" | "rally" | "screamer-rally" | "screamerrally" | "screamer_rally" => {
+                Some(GameTitle::ScreamerRally)
+            }
+            _ => None,
         }
     }
 }

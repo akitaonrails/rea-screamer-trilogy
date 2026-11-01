@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use screamer_launcher::config::{self, Settings};
+use screamer_launcher::edition::Game;
 use screamer_launcher::runtime;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +32,7 @@ fn run() -> Result<ExitCode, String> {
     let cli_settings = Settings::parse_args(filtered_args)?;
 
     let cfg_path = locate_config_file();
-    let cfg_text = if cfg_path.is_file() {
+    let mut cfg_text = if cfg_path.is_file() {
         fs::read_to_string(&cfg_path).unwrap_or_else(|_| config::TEMPLATE.to_string())
     } else {
         if let Some(parent) = cfg_path.parent() {
@@ -41,23 +42,34 @@ fn run() -> Result<ExitCode, String> {
         config::TEMPLATE.to_string()
     };
 
-    // If --game was passed on CLI, remember it in launcher.cfg.
-    let cfg_text = if let Some(g) = &cli_settings.game {
-        let updated = config::set_key(&cfg_text, "game", &g.display().to_string());
-        let _ = fs::write(&cfg_path, &updated);
-        updated
-    } else {
-        cfg_text
-    };
+    // Remember --game and --which passed on the CLI in launcher.cfg.
+    let mut cfg_dirty = false;
+    if let Some(g) = &cli_settings.game {
+        cfg_text = config::set_key(&cfg_text, "game", &g.display().to_string());
+        cfg_dirty = true;
+    }
+    if let Some(w) = cli_settings.which {
+        cfg_text = config::set_key(&cfg_text, "which", w.slug());
+        cfg_dirty = true;
+    }
+    if cfg_dirty {
+        let _ = fs::write(&cfg_path, &cfg_text);
+    }
 
     let (file_settings, warnings) = Settings::parse_file(&cfg_text);
     for w in warnings {
         eprintln!("warning: {w}");
     }
-    let settings = file_settings.merged(cli_settings.clone());
+    let mut settings = file_settings.merged(cli_settings.clone());
+    if settings.game.is_none()
+        && let Ok(env_dir) = std::env::var("SCREAMER_GAME_DIR")
+        && !env_dir.trim().is_empty()
+    {
+        settings.game = Some(PathBuf::from(env_dir));
+    }
 
     match mode {
-        Mode::Check => run_check(&settings),
+        Mode::Check => run_check(&settings, cli_settings.which),
         Mode::Controllers { seconds } => run_controllers(seconds),
         Mode::SettingsOnly { linux } => match ui::show(&cfg_path, &cfg_text, linux)? {
             ui::Outcome::Play => Ok(ExitCode::SUCCESS),
@@ -183,39 +195,67 @@ fn default_saves_dir(game_slug: &str) -> PathBuf {
         .join(game_slug)
 }
 
-fn run_check(settings: &Settings) -> Result<ExitCode, String> {
+fn run_check(settings: &Settings, filter_game: Option<Game>) -> Result<ExitCode, String> {
     let game_dir = settings
         .game
         .as_deref()
         .ok_or_else(|| "No game folder set. Pass --game <folder>.".to_string())?;
-    let disc = runtime::scan_game_dir(game_dir)?;
-    println!("Game:       {}", disc.game.title());
-    println!("Source dir: {}", disc.exe_dir.display());
-    if let Some(cd) = &disc.cd_image {
-        println!("CD image:   {}", cd.display());
-    } else {
-        println!("CD image:   none (directory mount fallback)");
+    let trilogy = runtime::discover_trilogy(game_dir);
+    if !trilogy.any_found() {
+        return Err(format!(
+            "No supported Screamer, Screamer 2, or Screamer Rally executables found in {}",
+            game_dir.display()
+        ));
     }
-    if disc.has_genuine_dos_glide2x {
-        println!("Glide OVL:  Genuine DOS 3dfx GLIDE2X.OVL detected");
-    } else if disc.has_windows_stub_glide2x {
+
+    let mut checked_any = false;
+    for g in Game::ALL {
+        if filter_game.is_some_and(|fg| fg != g) {
+            continue;
+        }
+        let Some(disc) = trilogy.get(g) else {
+            continue;
+        };
+        if checked_any {
+            println!();
+        }
+        checked_any = true;
+        println!("Game:       {}", disc.game.title());
+        println!("Source dir: {}", disc.exe_dir.display());
+        if let Some(cd) = &disc.cd_image {
+            println!("CD image:   {}", cd.display());
+        } else {
+            println!("CD image:   none (directory mount fallback)");
+        }
+        if disc.has_genuine_dos_glide2x {
+            println!("Glide OVL:  Genuine DOS 3dfx GLIDE2X.OVL detected");
+        } else if disc.has_windows_stub_glide2x {
+            println!(
+                "Glide OVL:  Windows port-0x600 stub detected (auto-selecting 16-bit SVGA START65H.EXE unless DOS GLIDE2X.OVL is supplied)"
+            );
+        }
+
+        let verified = runtime::verify_discovered_game(disc, &settings.skipped_fixes())?;
+        for (name, ed, write_count) in &verified {
+            println!(
+                "Verified:   {name:<12} -> {:<56} ({write_count} patch writes verified)",
+                ed.name
+            );
+        }
+        let selected = disc.select_executable(settings.renderer_choice())?;
         println!(
-            "Glide OVL:  Windows port-0x600 stub detected (auto-selecting 16-bit SVGA START65H.EXE unless DOS GLIDE2X.OVL is supplied)"
+            "Selected:   {} ({})",
+            selected.file_name, selected.edition.name
         );
     }
 
-    let verified = runtime::verify_discovered_game(&disc, &settings.skipped_fixes())?;
-    for (name, ed, write_count) in &verified {
-        println!(
-            "Verified:   {name:<12} -> {:<40} ({write_count} patch writes verified)",
-            ed.name
-        );
+    if !checked_any && let Some(fg) = filter_game {
+        return Err(format!(
+            "{} was not found under {}",
+            fg.display_name(),
+            game_dir.display()
+        ));
     }
-    let selected = disc.select_executable(settings.renderer_choice())?;
-    println!(
-        "Selected:   {} ({})",
-        selected.file_name, selected.edition.name
-    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -266,7 +306,7 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
         .game
         .as_deref()
         .ok_or_else(|| "No game folder set. Pass --game <folder>.".to_string())?;
-    let disc = runtime::scan_game_dir(game_dir)?;
+    let disc = runtime::resolve_game_dir(game_dir, settings.which_game())?;
     let slug = disc.game.slug();
     let runtime_dir = settings
         .runtime
@@ -279,10 +319,13 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
 
     let prepared =
         runtime::prepare_runtime(&disc, settings, &runtime_dir, Some(saves_dir.as_path()))?;
-    let dosbox = runtime::find_dosbox(settings.dosbox.as_deref()).ok_or_else(|| {
-        "Could not find dosbox-staging (or dosbox). Install dosbox-staging or pass --dosbox <path>."
-            .to_string()
-    })?;
+    let dosbox =
+        runtime::find_dosbox_with_hint(settings.dosbox.as_deref(), Some(game_dir)).ok_or_else(
+            || {
+                "Could not find dosbox-staging (or dosbox). Install dosbox-staging or pass --dosbox <path>."
+                    .to_string()
+            },
+        )?;
 
     let mut cmd = Command::new(&dosbox);
     cmd.current_dir(&prepared.runtime_dir)

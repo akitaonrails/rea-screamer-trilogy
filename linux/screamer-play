@@ -1,10 +1,11 @@
 #!/bin/sh
-# Plays Screamer (1995), Screamer 2 (1996), or Screamer Rally (1997) on Linux.
+# Unified launcher for the Screamer trilogy:
+#   Screamer (1995), Screamer 2 (1996), and Screamer Rally (1997).
 #
-#   screamer-play           show the settings window, then start the game
-#   screamer-play --play    start the game with saved settings (no window)
-#   screamer-play stop      end the game
-#   screamer-play status    running or idle
+#   screamer-play [1|2|rally]          show the settings window, then start the game
+#   screamer-play --play [1|2|rally]   start the game with saved settings (no window)
+#   screamer-play stop                 end the game
+#   screamer-play status               running or idle
 #
 # Optional environment:
 #   SCREAMER_LAUNCHER   path to ScreamerLauncher binary
@@ -111,7 +112,7 @@ start() {
 }
 
 settings() {
-  env $GPU "$LAUNCHER" --settings --linux 2>/dev/null
+  env $GPU "$LAUNCHER" --settings --linux "$@" 2>/dev/null
   rc=$?
   case $rc in
     0|4) return 0 ;;
@@ -123,12 +124,12 @@ settings() {
 GPU=$(gpu_env)
 
 case "${1:-}" in
-  "")
+  ""|1|2|3|s1|s2|sr|screamer|screamer1|screamer2|rally|screamer-rally)
     if running; then echo "already running"; exit 0; fi
     if [ -z "$LAUNCHER" ] || [ ! -x "$LAUNCHER" ]; then
       echo "ScreamerLauncher not found next to screamer-play (or set SCREAMER_LAUNCHER)"; exit 1
     fi
-    settings || exit 0
+    settings "$@" || exit 0
     start ;;
   --play|start)
     shift
