@@ -48,3 +48,16 @@ This document records notable observations from running the original 1995–1997
 | **Screamer 2 (1996)** (3dfx) | `S2_3DFX.EXE` (`3dfx Voodoo Glide`) | `E1`, `E2`, `E5` (8 writes) | `3dfx Voodoo SVGA 640x480 16-bit mode 00h` | `GAME.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
 | **Screamer 2 (1996)** (SVGA16) | `START65H.EXE` (`SVGA 640x480 16-bit`) | `F5`, `E1`, `E2`, `E5` (9 writes) | `VESA 640x480 16-bit mode 111h` | `GAME.DAT` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
 | **Screamer Rally (1997)** | `STRT3FX.EXE` (`3dfx Voodoo Glide`) | `E1`, `E2`, `E5` (7 writes) | `3dfx Voodoo SVGA 640x480 16-bit mode 00h` | `srally.iso` mounted, `48000 Hz` CD-DA + `SB16 IRQ 7` |
+
+---
+
+## 6. Direct Guest RAM (`MemBase`) Gamepad Injection & `SDL_Joystick*` Fallback
+
+- **`SDL_Joystick*` Fallback for Newer Controllers**:
+  - `dosbox-staging v0.82.2`'s statically linked SDL2 does not include newer controller GUIDs (such as the `8BitDo Ultimate 2 Wireless Controller`, GUID `0300f6b6c82d00000b31000014010000`) in its built-in `SDL_GameControllerDB`, causing `SDL_GameControllerOpen(0)` to return `NULL`.
+  - Falling back to `SDL_JoystickOpen` / `SDL_JoystickGetAxis` / `SDL_JoystickGetButton` / `SDL_JoystickGetHat` / `SDL_JoystickRumble` opens any connected XInput/evdev controller immediately and supports hot-plug/wake-from-sleep reconnection.
+- **Bypassing DOS Port `0x201` Timing via `MemBase` + `PollControls` Record Skip**:
+  - At `cpu_cycles_protected = max`, the game's DOS port `0x201` RC discharge loop (`DetectJoystick`, `max 0x800` iterations) overflows before the simulated capacitor discharges.
+  - Across all 8 racing executables, `PollControls` checks `if (record[r].enabled == 1)` before updating `normalized_controls[r]`, while the car physics engine reads `normalized_controls[0..5]` directly without checking `record[r].enabled` (and applies instantaneous full-range `-1023..+1023` analog steering when `record[2].mode == 0`).
+  - `libscreamer_hooks.so` locates the active Data Object inside `*MemBase`, yields individual controls to the keyboard whenever `DataObj[2 + scancode] != 0`, and otherwise sets `record[r].enabled = 2`, `record[2].mode = 0`, and writes live proportional gamepad values directly into `normalized_controls[0,1,2,4,5]`.
+  - Writing `-1` into `normalized_controls[3]` (which is unused in `record[2].mode == 0` analog steering mode but overwritten with `0` by `PollControls` every active race frame) provides an exact `PollControls` heartbeat that distinguishes active racing (`in_race == true`) from menus, intros, and the pause screen (`in_race == false`), allowing D-Pad, Left Stick, `A`/`B`, and `Start`/`Select` to navigate menus via `_Z15KEYBOARD_AddKey8KBD_KEYSb` automatically.
