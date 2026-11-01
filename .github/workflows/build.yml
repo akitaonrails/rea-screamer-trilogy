@@ -137,7 +137,7 @@ jobs:
             "$OLDPWD/target/dosbox-staging-build" "$package")
           cp target/release/ScreamerLauncher.exe \
              README.md CHANGELOG.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "$package/"
-          ntldd -R "$package/ScreamerLauncher.exe" \
+          { ntldd -R "$package/ScreamerLauncher.exe" || [ "$?" -eq 1 ]; } \
             | sed -e 's/^[[:blank:]]*//g' \
             | cut -d ' ' -f 3 \
             | grep -E -i '(mingw|clang)(32|64)' \
