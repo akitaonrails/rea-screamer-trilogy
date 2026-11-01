@@ -86,17 +86,19 @@ This document records notable observations from running the original 1995–1997
 
 ---
 
-## 8. Screamer Rally (`STRT3FX.EXE`) & Screamer 2 (`S2_3DFX.EXE`) `MAXCACHE` Crash (`F7`)
+## 8. Screamer Rally (`STRT3FX.EXE`) & Screamer 2 (`S2_3DFX.EXE`) Texture-Cache Crashes (`F7`, `F8`)
 
-- **Symptom**: In **Screamer Rally** (`STRT3FX.EXE`) and **Screamer 2** (`S2_3DFX.EXE`), loading a track or driving mid-way through a race under `voodoo_memsize = 12` (8 MB TMU0) causes the game to abruptly quit back to DOS.
+- **Symptom**: In **Screamer Rally** (`STRT3FX.EXE`) and **Screamer 2** (`S2_3DFX.EXE`), loading a track or driving mid-way through a race can abruptly quit back to DOS.
 - **Root Cause**:
   - In `STRT3FX.EXE` (`0x01C26C..0x01C29C`) and `S2_3DFX.EXE` (`0x01DBBC..0x01DBEC`), the 3dfx Glide texture cache manager stores cached texture descriptors in a fixed **1,024-entry array** (`MAXCACHE = 0x400`, 32 bytes per slot).
   - As textures are uploaded to TMU0, the game advances `next_tmu_addr` until it reaches `grTexMaxAddress(GR_TMU0)` (`tmu_max_addr`), at which point it resets `cache_count = 0` and wraps around.
   - On a real 1996 3dfx Voodoo 1 (`4 MB` total = `2 MB FBI + 2 MB TMU0`), `2 MB` of TMU RAM fits roughly `32..256` textures before wrapping around `tmu_max_addr`, so `cache_count` never reaches `1,024`.
   - When `voodoo_memsize = 12` (`4 MB FBI + 8 MB TMU0`) was configured, `tmu_max_addr` was `8 MB`, allowing more than `1,024` textures to be uploaded before `next_tmu_addr` wrapped around. On texture #1,025 (`cmp edx, 0x400; jle ...`), the game executed `printf("MAXCACHE\n"); exit(-1);`!
-- **Two-Part Fix**:
+  - A separate software descriptor pool contains **3,064 entries of 56 bytes** (`0xBF8 * 0x38 = 0x29E40`). If a track keeps all entries live and requests another texture, the loader executes `printf("Superato limite texture cache"); exit(-1);`. This is independent of the 1,024-entry TMU residency ring and remained reachable after `F7`.
+- **Three-Part Fix**:
   1. Set `voodoo_memsize = 4` (`2 MB FBI + 2 MB TMU0`) in `dosbox.conf` so `grTexMaxAddress(GR_TMU0)` reports the authentic 2 MB Voodoo 1 TMU0 size.
   2. Apply binary patch **`F7`** (`S2_3DFX.EXE` at `0x01DBC1`, `STRT3FX.EXE` at `0x01C271`), replacing the `printf("MAXCACHE\n"); exit(-1);` abort path (`27` bytes) with a ring-buffer wrap (`xor edx, edx; mov [cache_count], edx; mov ecx, [tmu_start_addr]; mov [tmu_curr_addr], ecx; jmp retry`) so the 1,024-slot table can never terminate the game.
+  3. Apply binary patch **`F8`** at the 3,064-entry pool exhaustion path. Because reaching it proves every descriptor—including descriptor zero—is live, excess textures are mapped to descriptor zero and loading continues. The independent texture-buffer bounds check remains intact; bypassing it would permit memory corruption.
 
 ---
 
