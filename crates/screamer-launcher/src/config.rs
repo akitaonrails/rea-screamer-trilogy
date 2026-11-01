@@ -730,7 +730,11 @@ fn detect_gpu_info() -> (String, bool, bool) {
                             let m = rest.trim();
                             if !m.is_empty() {
                                 has_nvidia = true;
-                                nvidia_model = Some(format!("NVIDIA {m}"));
+                                nvidia_model = Some(if m.starts_with("NVIDIA") {
+                                    m.to_string()
+                                } else {
+                                    format!("NVIDIA {m}")
+                                });
                             }
                         }
                     }
