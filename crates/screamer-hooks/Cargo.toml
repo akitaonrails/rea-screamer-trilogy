@@ -1,0 +1,11 @@
+[package]
+name = "screamer-hooks"
+version = "0.5.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "In-process hook library loaded into dosbox-staging by ScreamerLauncher for direct analog gamepad input, triggers, and car telemetry rumble"
+
+[lib]
+name = "screamer_hooks"
+crate-type = ["cdylib", "rlib"]
