@@ -56,7 +56,7 @@ pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
         game_env: "screamer2",
         exe_env: "S2_3DFX.EXE",
         anchor_offset: 0x104A,
-        controls_base_offset: 0x17FC0,
+        controls_base_offset: 0x18140,
         block_count: 4,
     },
     BinaryControlSpec {
@@ -64,7 +64,7 @@ pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
         game_env: "screamer2",
         exe_env: "START65H.EXE",
         anchor_offset: 0x1206,
-        controls_base_offset: 0x17710,
+        controls_base_offset: 0x17890,
         block_count: 4,
     },
     BinaryControlSpec {
@@ -72,7 +72,7 @@ pub const BINARY_CONTROL_SPECS: &[BinaryControlSpec] = &[
         game_env: "screamer2",
         exe_env: "STARTH.EXE",
         anchor_offset: 0x0E46,
-        controls_base_offset: 0x17594,
+        controls_base_offset: 0x17714,
         block_count: 4,
     },
     BinaryControlSpec {
@@ -118,6 +118,7 @@ pub const ANCHOR_SIGNATURE: &[u8] = b"%s\\config\\controls.cfg\0";
 /// `dosbox-staging` `KBD_KEYS` enum values verified from `_Z21KEYBOARD_GetScanCode18KBD_KEYSb`.
 pub mod kbd_keys {
     pub const KBD_ESC: u32 = 49;
+    pub const KBD_BACKSPACE: u32 = 51;
     pub const KBD_ENTER: u32 = 52;
     pub const KBD_SPACE: u32 = 53;
     pub const KBD_C: u32 = 32;
@@ -127,6 +128,18 @@ pub mod kbd_keys {
     pub const KBD_DOWN: u32 = 88;
     pub const KBD_RIGHT: u32 = 89;
 }
+
+/// Synthetic key bitmask flags used by [`inject_race_controls_with_synth_mask`]
+/// so synthetic arrow keys emitted for menu navigation never get mistaken for
+/// physical keyboard overrides during a race.
+pub const SYNTH_KEY_BIT_UP: usize = 1 << 0;
+pub const SYNTH_KEY_BIT_DOWN: usize = 1 << 1;
+pub const SYNTH_KEY_BIT_LEFT: usize = 1 << 2;
+pub const SYNTH_KEY_BIT_RIGHT: usize = 1 << 3;
+pub const SYNTH_KEY_BIT_ENTER: usize = 1 << 4;
+pub const SYNTH_KEY_BIT_ESC: usize = 1 << 5;
+pub const SYNTH_KEY_BIT_CAMERA: usize = 1 << 6;
+pub const SYNTH_KEY_BIT_BACKSPACE: usize = 1 << 7;
 
 /// Normalized race controls ready to inject into `normalized_controls[0..5]`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -201,7 +214,10 @@ pub fn locate_binary_data_object(
                 }
                 if let Some(matched) = BINARY_CONTROL_SPECS.iter().find(|s| {
                     s.anchor_offset == spec.anchor_offset
-                        && is_valid_control_block(rem, s.controls_base_offset)
+                        && (is_valid_control_block(rem, s.controls_base_offset)
+                            || (s.block_count == 4
+                                && s.controls_base_offset >= 0x180
+                                && is_valid_control_block(rem, s.controls_base_offset - 0x180)))
                 }) {
                     return Some((page_base, matched));
                 }
@@ -213,23 +229,33 @@ pub fn locate_binary_data_object(
     None
 }
 
-/// Injects `gp` into Player 1's control block inside `data_obj` (starting at
-/// `spec.controls_base_offset`), yielding individual controls to the keyboard
-/// whenever `data_obj[2 + scancode] != 0`.
-///
-/// Returns `true` if `PollControls` executed since our previous injection
-/// (detected via the `-1` heartbeat sentinel in `normalized_controls[3]`).
-pub fn inject_race_controls(
+fn is_synth_scancode(scancode: i32, synth_key_mask: usize) -> bool {
+    match scancode {
+        72 => (synth_key_mask & SYNTH_KEY_BIT_UP) != 0,
+        80 => (synth_key_mask & SYNTH_KEY_BIT_DOWN) != 0,
+        75 => (synth_key_mask & SYNTH_KEY_BIT_LEFT) != 0,
+        77 => (synth_key_mask & SYNTH_KEY_BIT_RIGHT) != 0,
+        28 => (synth_key_mask & SYNTH_KEY_BIT_ENTER) != 0,
+        1 => (synth_key_mask & SYNTH_KEY_BIT_ESC) != 0,
+        14 => (synth_key_mask & SYNTH_KEY_BIT_BACKSPACE) != 0,
+        _ => false,
+    }
+}
+
+fn inject_single_control_block(
     data_obj: &mut [u8],
-    spec: &BinaryControlSpec,
+    base: usize,
     gp: &GamepadRaceState,
+    synth_key_mask: usize,
 ) -> bool {
-    let base = spec.controls_base_offset;
     if base + 0xC0 > data_obj.len() || !is_valid_control_block(data_obj, base) {
         return false;
     }
 
     let is_key_down = |buf: &[u8], scancode: i32| -> bool {
+        if is_synth_scancode(scancode, synth_key_mask) {
+            return false;
+        }
         if (1..128).contains(&scancode) {
             let idx = 2 + scancode as usize;
             idx < buf.len() && buf[idx] != 0
@@ -241,16 +267,16 @@ pub fn inject_race_controls(
     let rec_off = |r: usize| base + r * 28;
     let norm_off = |r: usize| base + 0xA8 + r * 4;
 
-    // Check if PollControls overwrote our -1 sentinel in normalized_controls[3]
-    let prev_norm3 = read_i32_le(data_obj, norm_off(3));
-    let poll_controls_ran = prev_norm3 != -1;
-
-    // 0: Accelerate (0..=1023)
+    // 0: Accelerate (0..=1023, ctrl_type=1, mode=0 so MenuPollInput ignores norm[0] in menus)
     let sc0 = read_i32_le(data_obj, rec_off(0) + 0x18);
     if is_key_down(data_obj, sc0) {
         write_i32_le(data_obj, rec_off(0), 1);
+        write_i32_le(data_obj, rec_off(0) + 0x04, 0);
+        write_i32_le(data_obj, rec_off(0) + 0x08, 1);
     } else {
         write_i32_le(data_obj, rec_off(0), 2);
+        write_i32_le(data_obj, rec_off(0) + 0x04, 1);
+        write_i32_le(data_obj, rec_off(0) + 0x08, 0);
         write_i32_le(data_obj, rec_off(0) + 0x14, 1);
         write_i32_le(data_obj, norm_off(0), gp.throttle.clamp(0, 1023));
     }
@@ -277,38 +303,79 @@ pub fn inject_race_controls(
         write_i32_le(data_obj, rec_off(2) + 0x04, 0);
         write_i32_le(data_obj, rec_off(2) + 0x08, 1);
         write_i32_le(data_obj, rec_off(3), 1);
+        write_i32_le(data_obj, rec_off(3) + 0x04, 0);
+        write_i32_le(data_obj, rec_off(3) + 0x08, 1);
     } else {
         write_i32_le(data_obj, rec_off(2), 2);
         write_i32_le(data_obj, rec_off(2) + 0x04, 1);
         write_i32_le(data_obj, rec_off(2) + 0x08, 0);
         write_i32_le(data_obj, rec_off(2) + 0x14, 1);
         write_i32_le(data_obj, norm_off(2), gp.steer.clamp(-1023, 1023));
-        // Keep record[3].enabled = 1 so PollControls writes 0 to norm[3] every race frame
-        write_i32_le(data_obj, rec_off(3), 1);
-        write_i32_le(data_obj, norm_off(3), -1);
+
+        write_i32_le(data_obj, rec_off(3), 2);
+        write_i32_le(data_obj, rec_off(3) + 0x04, 1);
+        write_i32_le(data_obj, rec_off(3) + 0x08, 0);
+        write_i32_le(data_obj, rec_off(3) + 0x14, 1);
+        write_i32_le(data_obj, norm_off(3), 0);
     }
 
-    // 4: Gear Up (0 or 1023)
+    // 4: Gear Up (0 or 1023, ctrl_type=1, mode=0)
     let sc4 = read_i32_le(data_obj, rec_off(4) + 0x18);
     if is_key_down(data_obj, sc4) {
         write_i32_le(data_obj, rec_off(4), 1);
+        write_i32_le(data_obj, rec_off(4) + 0x04, 0);
+        write_i32_le(data_obj, rec_off(4) + 0x08, 1);
     } else {
         write_i32_le(data_obj, rec_off(4), 2);
+        write_i32_le(data_obj, rec_off(4) + 0x04, 1);
+        write_i32_le(data_obj, rec_off(4) + 0x08, 0);
         write_i32_le(data_obj, rec_off(4) + 0x14, 1);
         write_i32_le(data_obj, norm_off(4), if gp.gear_up { 1023 } else { 0 });
     }
 
-    // 5: Gear Down (0 or 1023)
+    // 5: Gear Down (0 or 1023, ctrl_type=1, mode=0)
     let sc5 = read_i32_le(data_obj, rec_off(5) + 0x18);
     if is_key_down(data_obj, sc5) {
         write_i32_le(data_obj, rec_off(5), 1);
+        write_i32_le(data_obj, rec_off(5) + 0x04, 0);
+        write_i32_le(data_obj, rec_off(5) + 0x08, 1);
     } else {
         write_i32_le(data_obj, rec_off(5), 2);
+        write_i32_le(data_obj, rec_off(5) + 0x04, 1);
+        write_i32_le(data_obj, rec_off(5) + 0x08, 0);
         write_i32_le(data_obj, rec_off(5) + 0x14, 1);
         write_i32_le(data_obj, norm_off(5), if gp.gear_down { 1023 } else { 0 });
     }
 
-    poll_controls_ran
+    true
+}
+
+/// Injects `gp` into Player 1's control block inside `data_obj` (starting at
+/// `spec.controls_base_offset`), yielding individual controls to the physical
+/// keyboard whenever `data_obj[2 + scancode] != 0` (excluding synthetic keys in
+/// `synth_key_mask`).
+pub fn inject_race_controls_with_synth_mask(
+    data_obj: &mut [u8],
+    spec: &BinaryControlSpec,
+    gp: &GamepadRaceState,
+    synth_key_mask: usize,
+) -> bool {
+    let base = spec.controls_base_offset;
+    let mut injected = inject_single_control_block(data_obj, base, gp, synth_key_mask);
+    if spec.block_count == 4 && base >= 0x180 {
+        injected |= inject_single_control_block(data_obj, base - 0x180, gp, synth_key_mask);
+    }
+    injected
+}
+
+/// Injects `gp` into Player 1's control block inside `data_obj` with no synthetic
+/// key exclusions.
+pub fn inject_race_controls(
+    data_obj: &mut [u8],
+    spec: &BinaryControlSpec,
+    gp: &GamepadRaceState,
+) -> bool {
+    inject_race_controls_with_synth_mask(data_obj, spec, gp, 0)
 }
 
 /// Applies a radial/axial deadzone (`deadzone_pct` in `0..=30`) to a raw SDL
@@ -434,13 +501,14 @@ mod unix_hook {
     /// Bitmask of synthetic keys currently held via `KEYBOARD_AddKey`.
     static HELD_KEYS_MASK: AtomicUsize = AtomicUsize::new(0);
 
-    const KEY_BIT_UP: usize = 1 << 0;
-    const KEY_BIT_DOWN: usize = 1 << 1;
-    const KEY_BIT_LEFT: usize = 1 << 2;
-    const KEY_BIT_RIGHT: usize = 1 << 3;
-    const KEY_BIT_ENTER: usize = 1 << 4;
-    const KEY_BIT_ESC: usize = 1 << 5;
-    const KEY_BIT_CAMERA: usize = 1 << 6;
+    const KEY_BIT_UP: usize = SYNTH_KEY_BIT_UP;
+    const KEY_BIT_DOWN: usize = SYNTH_KEY_BIT_DOWN;
+    const KEY_BIT_LEFT: usize = SYNTH_KEY_BIT_LEFT;
+    const KEY_BIT_RIGHT: usize = SYNTH_KEY_BIT_RIGHT;
+    const KEY_BIT_ENTER: usize = SYNTH_KEY_BIT_ENTER;
+    const KEY_BIT_ESC: usize = SYNTH_KEY_BIT_ESC;
+    const KEY_BIT_CAMERA: usize = SYNTH_KEY_BIT_CAMERA;
+    const KEY_BIT_BACKSPACE: usize = SYNTH_KEY_BIT_BACKSPACE;
 
     unsafe fn dlsym_default(name: &[u8]) -> *mut c_void {
         let Ok(cstr) = CStr::from_bytes_with_nul(name) else {
@@ -661,7 +729,11 @@ mod unix_hook {
         }
     }
 
-    unsafe fn update_guest_ram_and_check_in_race(gp: &GamepadRaceState, now_ns: u64) -> bool {
+    unsafe fn update_guest_ram_and_check_in_race(
+        gp: &GamepadRaceState,
+        synth_key_mask: usize,
+        now_ns: u64,
+    ) -> bool {
         let membase_sym = unsafe { dlsym_default(b"MemBase\0") as *const *mut u8 };
         if membase_sym.is_null() {
             return false;
@@ -681,7 +753,13 @@ mod unix_hook {
             anchor_pos + ANCHOR_SIGNATURE.len() <= guest_ram.len()
                 && guest_ram[anchor_pos..anchor_pos + ANCHOR_SIGNATURE.len()]
                     .eq_ignore_ascii_case(ANCHOR_SIGNATURE)
-                && is_valid_control_block(&guest_ram[base..], spec.controls_base_offset)
+                && (is_valid_control_block(&guest_ram[base..], spec.controls_base_offset)
+                    || (spec.block_count == 4
+                        && spec.controls_base_offset >= 0x180
+                        && is_valid_control_block(
+                            &guest_ram[base..],
+                            spec.controls_base_offset - 0x180,
+                        )))
         } else {
             false
         };
@@ -710,12 +788,16 @@ mod unix_hook {
         }
 
         let spec = &BINARY_CONTROL_SPECS[spec_idx];
-        let poll_ran = inject_race_controls(&mut guest_ram[base..], spec, gp);
-        if poll_ran {
+        let injected = inject_race_controls_with_synth_mask(
+            &mut guest_ram[base..],
+            spec,
+            gp,
+            synth_key_mask,
+        );
+        if injected {
             LAST_RACE_HEARTBEAT_NS.store(now_ns, Ordering::Relaxed);
         }
-        let last_hb = LAST_RACE_HEARTBEAT_NS.load(Ordering::Relaxed);
-        last_hb != 0 && now_ns.wrapping_sub(last_hb) <= 150_000_000
+        injected
     }
 
     unsafe fn emit_edge_keys(new_mask: usize) {
@@ -743,6 +825,7 @@ mod unix_hook {
             (KEY_BIT_ENTER, kbd_keys::KBD_ENTER),
             (KEY_BIT_ESC, kbd_keys::KBD_ESC),
             (KEY_BIT_CAMERA, cam_key),
+            (KEY_BIT_BACKSPACE, kbd_keys::KBD_BACKSPACE),
         ];
 
         for &(bit, key) in bindings {
@@ -806,10 +889,39 @@ mod unix_hook {
             }
         }
 
-        // Compute normalized race controls (-1023..1023 steer, 0..1023 throttle/brake)
-        let last_hb = LAST_RACE_HEARTBEAT_NS.load(Ordering::Relaxed);
-        let was_in_race = last_hb != 0 && now_ns.wrapping_sub(last_hb) <= 150_000_000;
+        // Synthesize edge-triggered keyboard keys for Menus / Name Input / Intro / Pause / Camera:
+        // - D-Pad & Left Stick navigate Up/Down/Left/Right (including Screamer 1's 3-slot letter wheel)
+        // - A (South) and Start emit Enter (confirm menu item / confirm driver name / start race)
+        // - B (East) and Back/Select emit Esc (back out of menu / pause race)
+        // - X (West) emits Backspace (delete character on Screamer 2/Rally name input)
+        // - Y (North) emits Camera toggle ('M' in Screamer 1, 'C' in Screamer 2/Rally)
+        let mut key_mask = 0usize;
+        if pad.dpad_up || pad.ly < -16384 {
+            key_mask |= KEY_BIT_UP;
+        }
+        if pad.dpad_down || pad.ly > 16384 {
+            key_mask |= KEY_BIT_DOWN;
+        }
+        if pad.dpad_left || pad.lx < -16384 {
+            key_mask |= KEY_BIT_LEFT;
+        }
+        if pad.dpad_right || pad.lx > 16384 {
+            key_mask |= KEY_BIT_RIGHT;
+        }
+        if pad.a || pad.start {
+            key_mask |= KEY_BIT_ENTER;
+        }
+        if pad.b || pad.back {
+            key_mask |= KEY_BIT_ESC;
+        }
+        if pad.x {
+            key_mask |= KEY_BIT_BACKSPACE;
+        }
+        if pad.y {
+            key_mask |= KEY_BIT_CAMERA;
+        }
 
+        // Compute normalized race controls (-1023..1023 steer, 0..1023 throttle/brake)
         let mut steer_norm = ((steer_x as i32) * 1023 / 32767).clamp(-1023, 1023);
         if steer_norm == 0 {
             if pad.dpad_left {
@@ -826,7 +938,7 @@ mod unix_hook {
         } else {
             0
         };
-        let a_throttle = if was_in_race && pad.a { 1023 } else { 0 };
+        let a_throttle = if pad.a { 1023 } else { 0 };
         let throttle_norm = r2_norm.max(stick_throttle).max(a_throttle).clamp(0, 1023);
 
         let l2_norm = ((pad.l2 as i32).clamp(0, 32767) * 1023) / 32767;
@@ -835,41 +947,21 @@ mod unix_hook {
         } else {
             0
         };
-        let brake_norm = l2_norm.max(stick_brake).clamp(0, 1023);
+        let x_brake = if pad.x { 1023 } else { 0 };
+        let brake_norm = l2_norm.max(stick_brake).max(x_brake).clamp(0, 1023);
 
         let gp_race = GamepadRaceState {
             throttle: throttle_norm,
             brake: brake_norm,
             steer: steer_norm,
-            gear_up: pad.rb || (was_in_race && pad.b),
-            gear_down: pad.lb || (was_in_race && pad.x),
+            gear_up: pad.rb,
+            gear_down: pad.lb,
         };
 
-        let in_race = unsafe { update_guest_ram_and_check_in_race(&gp_race, now_ns) };
+        let active_mask = key_mask | HELD_KEYS_MASK.load(Ordering::Relaxed);
+        let in_race =
+            unsafe { update_guest_ram_and_check_in_race(&gp_race, active_mask, now_ns) };
 
-        // Synthesize edge-triggered keyboard keys for Menus / Intro / Pause / Camera
-        let mut key_mask = 0usize;
-        if pad.dpad_up || (!in_race && pad.ly < -16384) {
-            key_mask |= KEY_BIT_UP;
-        }
-        if pad.dpad_down || (!in_race && pad.ly > 16384) {
-            key_mask |= KEY_BIT_DOWN;
-        }
-        if !in_race && (pad.dpad_left || pad.lx < -16384) {
-            key_mask |= KEY_BIT_LEFT;
-        }
-        if !in_race && (pad.dpad_right || pad.lx > 16384) {
-            key_mask |= KEY_BIT_RIGHT;
-        }
-        if !in_race && (pad.a || pad.start) {
-            key_mask |= KEY_BIT_ENTER;
-        }
-        if pad.back || (in_race && pad.start) || (!in_race && pad.b) {
-            key_mask |= KEY_BIT_ESC;
-        }
-        if pad.y {
-            key_mask |= KEY_BIT_CAMERA;
-        }
         unsafe { emit_edge_keys(key_mask) };
 
         // Optional subtle rumble feedback when braking hard in race
@@ -1017,23 +1109,26 @@ mod tests {
             gear_down: false,
         };
 
-        // First injection: norm[3] was 0 (written by PollControls), so returns true
         assert!(inject_race_controls(&mut data_obj, spec, &gp));
         assert_eq!(read_i32_le(&data_obj, base), 2); // record[0].enabled = 2 (PollControls skips)
+        assert_eq!(read_i32_le(&data_obj, base + 0x04), 1); // record[0].ctrl_type = 1 (MenuPollInput ignores)
+        assert_eq!(read_i32_le(&data_obj, base + 0x08), 0); // record[0].mode = 0
         assert_eq!(read_i32_le(&data_obj, base + 0xA8), 900); // norm[0] = throttle
         assert_eq!(read_i32_le(&data_obj, base + 0xA8 + 4), 450); // norm[1] = brake
         assert_eq!(read_i32_le(&data_obj, base + 2 * 28 + 0x08), 0); // record[2].mode = 0 (full analog steer)
         assert_eq!(read_i32_le(&data_obj, base + 0xA8 + 8), -600); // norm[2] = steer
-        assert_eq!(read_i32_le(&data_obj, base + 0xA8 + 12), -1); // norm[3] = -1 heartbeat sentinel
+        assert_eq!(read_i32_le(&data_obj, base + 0xA8 + 12), 0); // norm[3] = 0 (never -1, so MenuPollInput is never poisoned)
         assert_eq!(read_i32_le(&data_obj, base + 0xA8 + 16), 1023); // norm[4] = gear_up
 
-        // Second injection without PollControls running: norm[3] is still -1 -> returns false
-        assert!(!inject_race_controls(&mut data_obj, spec, &gp));
-
-        // Now press keyboard Up arrow (scancode 72 at data_obj[2 + 72])
+        // If Up arrow (72) is set in data_obj[2 + 72] due to synthetic gamepad D-Pad Up,
+        // inject_race_controls_with_synth_mask keeps gamepad control active (enabled = 2).
         data_obj[2 + 72] = 1;
-        inject_race_controls(&mut data_obj, spec, &gp);
-        // record[0].enabled is restored to 1 so PollControls handles keyboard Up arrow natively
+        inject_race_controls_with_synth_mask(&mut data_obj, spec, &gp, SYNTH_KEY_BIT_UP);
+        assert_eq!(read_i32_le(&data_obj, base), 2);
+
+        // When physical keyboard Up arrow is pressed (synth_key_mask = 0),
+        // record[0].enabled is restored to 1 so PollControls handles keyboard Up arrow natively.
+        inject_race_controls_with_synth_mask(&mut data_obj, spec, &gp, 0);
         assert_eq!(read_i32_le(&data_obj, base), 1);
     }
 

@@ -501,14 +501,13 @@ pub fn prepare_runtime(
         .map_err(|e| format!("{}: {e}", setup_cfg_path.display()))?;
 
     let controls_cfg_path = config_dir.join("CONTROLS.CFG");
-    if !controls_cfg_path.exists() {
-        let keys = KeyBindings::default_for(discovered.game);
-        fs::write(
-            &controls_cfg_path,
-            build_controls_cfg(discovered.game, keys),
-        )
-        .map_err(|e| format!("{}: {e}", controls_cfg_path.display()))?;
-    }
+    remove_if_exists(&controls_cfg_path)?;
+    let keys = KeyBindings::default_for(discovered.game);
+    fs::write(
+        &controls_cfg_path,
+        build_controls_cfg(discovered.game, keys),
+    )
+    .map_err(|e| format!("{}: {e}", controls_cfg_path.display()))?;
 
     // Sync user saves in if a saves directory is configured.
     if let Some(saves) = saves_dir {
@@ -561,9 +560,40 @@ fn stage_source_tree(src_dir: &Path, dst_dir: &Path) -> Result<(), String> {
             continue;
         };
         let upper = name.to_ascii_uppercase();
-        // Skip mutable directories and files we generate or patch ourselves.
-        if upper == "CONFIG" || upper == "SCREAMER.CFG" || KNOWN_EXE_NAMES.contains(&upper.as_str())
-        {
+        // Skip files we generate or patch ourselves.
+        if upper == "SCREAMER.CFG" || KNOWN_EXE_NAMES.contains(&upper.as_str()) {
+            continue;
+        }
+        if upper == "CONFIG" {
+            if src_path.is_dir() {
+                let dst_config = dst_dir.join("CONFIG");
+                fs::create_dir_all(&dst_config)
+                    .map_err(|e| format!("{}: {e}", dst_config.display()))?;
+                if let Ok(cfg_entries) = fs::read_dir(&src_path) {
+                    for cfg_entry in cfg_entries.flatten() {
+                        let cp = cfg_entry.path();
+                        if !cp.is_file() {
+                            continue;
+                        }
+                        let Some(cn) = cp.file_name().and_then(|s| s.to_str()) else {
+                            continue;
+                        };
+                        let cupper = cn.to_ascii_uppercase();
+                        if cupper == "SETUP.CFG" || cupper == "CONTROLS.CFG" {
+                            continue;
+                        }
+                        let target = dst_config.join(&cupper);
+                        if target.exists() || target.symlink_metadata().is_ok() {
+                            continue;
+                        }
+                        if is_save_file(&cupper) {
+                            let _ = fs::copy(&cp, &target);
+                        } else {
+                            let _ = link_or_copy(&cp, &target);
+                        }
+                    }
+                }
+            }
             continue;
         }
         // If Screamer 2 has the 31 KB Windows stub glide2x.ovl, do not shadow DOSBox's built-in
