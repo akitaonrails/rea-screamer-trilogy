@@ -24,19 +24,22 @@ fi
 echo "==> Building static libscreamer_hooks.a..."
 cargo build --release -p screamer-hooks --manifest-path "${ROOT_DIR}/Cargo.toml"
 
-if [[ ! -f "${BUILD_DIR}/build.ninja" ]]; then
-    rm -rf "${BUILD_DIR}"
-    echo "==> Configuring dosbox-staging with meson..."
-    meson setup "${BUILD_DIR}" "${SUBMODULE_DIR}" \
-        -Dbuildtype=release \
-        -Ddefault_library=static \
-        -Duse_sdl2_net=false \
-        -Duse_mt32emu=false \
-        -Duse_slirp=false \
-        -Duse_fluidsynth=false \
-        -Duse_zlib_ng=false \
-        -Dunit_tests=disabled
+echo "==> Configuring dosbox-staging with meson..."
+MESON_SETUP_ARGS=()
+if [[ -f "${BUILD_DIR}/build.ninja" ]]; then
+    MESON_SETUP_ARGS+=(--reconfigure)
 fi
+meson setup "${BUILD_DIR}" "${SUBMODULE_DIR}" \
+    "${MESON_SETUP_ARGS[@]}" \
+    -Dbuildtype=release \
+    -Ddefault_library=shared \
+    -Dtry_static_libs=iir \
+    -Duse_sdl2_net=false \
+    -Duse_mt32emu=false \
+    -Duse_slirp=false \
+    -Duse_fluidsynth=false \
+    -Duse_zlib_ng=false \
+    -Dunit_tests=disabled
 
 echo "==> Compiling dosbox-staging with static libscreamer_hooks.a..."
 ninja -C "${BUILD_DIR}" dosbox

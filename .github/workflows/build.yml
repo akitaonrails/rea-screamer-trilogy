@@ -7,109 +7,119 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.95.0
+
 jobs:
   linux-packages:
-    name: Test and build Linux package & AppImage
-    runs-on: ubuntu-24.04
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: recursive
-
-      - name: Install Linux build dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y zip file libgl1-mesa-dev libxkbcommon-dev libwayland-dev \
-            meson ninja-build pkg-config libsdl2-dev libopusfile-dev libspeexdsp-dev \
-            libasound2-dev libpng-dev zlib1g-dev
-
+          sudo apt-get install -y --no-install-recommends \
+            curl file libasound2-dev libgl1-mesa-dev libopusfile-dev libpng-dev \
+            libsdl2-dev libspeexdsp-dev libwayland-dev libxkbcommon-dev \
+            meson ninja-build patchelf pkg-config xz-utils zip zlib1g-dev
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
-
-      - name: Check formatting
-        run: cargo fmt --all --check
-
-      - name: Unit tests (host)
-        run: cargo test --workspace
-
-      - name: Linux helper tests (GPU choice, scalers)
-        run: sh linux/tests/gpu-env.sh && sh linux/tests/scaler.sh
-
-      - name: Lint (Linux target)
-        run: cargo clippy --release --workspace -- -D warnings
-
-      - name: Build bundled dosbox and ScreamerLauncher
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rustfmt
+          rustup default "$RUST_VERSION"
+      - name: Test and lint
+        run: |
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          sh linux/tests/gpu-env.sh
+          sh linux/tests/scaler.sh
+      - name: Build launcher and bundled DOSBox
         run: |
           ./scripts/build-dosbox.sh
-          cargo build --release --workspace
-
+          cargo build --release --workspace --locked
       - name: Package Linux zip and AppImage
+        shell: bash
         run: |
-          name=ScreamerLauncher-${GITHUB_REF_NAME//\//-}
-          mkdir -p "dist/$name-linux"
-          cp target/release/ScreamerLauncher \
-             target/release/dosbox \
-             README.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "dist/$name-linux/"
-          cp -r target/release/resources "dist/$name-linux/resources"
-          cp -r linux "dist/$name-linux/linux"
-          (cd dist && zip -r "$name-linux-x86_64.zip" "$name-linux")
-          packaging/appimage/build.sh "dist/$name-linux" dist/appimage
-          mv dist/appimage/ScreamerLauncher-x86_64.AppImage "dist/$name-x86_64.AppImage"
-          echo "LINUX_ZIP=dist/$name-linux-x86_64.zip" >> "$GITHUB_ENV"
-          echo "APPIMAGE=dist/$name-x86_64.AppImage" >> "$GITHUB_ENV"
-
-      - uses: actions/upload-artifact@v4
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/screamer-launcher/Cargo.toml | head -1)"
+          name="ScreamerLauncher-v${version}"
+          package="dist/${name}-linux-x86_64"
+          mkdir -p "$package/lib"
+          cp target/release/ScreamerLauncher target/release/dosbox \
+             README.md CHANGELOG.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "$package/"
+          cp -r target/release/resources "$package/resources"
+          cp -r linux "$package/linux"
+          for binary in "$package/ScreamerLauncher" "$package/dosbox"; do
+            while read -r libpath; do
+              case "$(basename "$libpath")" in
+                libSDL2*|libopus*|libogg*|libspeexdsp*|libpng*|libz-ng*)
+                  cp -L "$libpath" "$package/lib/"
+                  ;;
+              esac
+            done < <(ldd "$binary" | awk '/=> \// {print $3}')
+            patchelf --set-rpath '$ORIGIN/lib' "$binary"
+          done
+          (cd dist && zip -r "${name}-linux-x86_64.zip" "${name}-linux-x86_64")
+          packaging/appimage/build.sh "$package" dist/appimage
+          mv dist/appimage/ScreamerLauncher-x86_64.AppImage "dist/${name}-x86_64.AppImage"
+          echo "LINUX_ZIP=dist/${name}-linux-x86_64.zip" >> "$GITHUB_ENV"
+          echo "APPIMAGE=dist/${name}-x86_64.AppImage" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ScreamerLauncher-linux-zip
-          path: ${{ env.LINUX_ZIP }}
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ScreamerLauncher-linux-appimage
-          path: ${{ env.APPIMAGE }}
+          name: ScreamerLauncher-linux
+          path: |
+            ${{ env.LINUX_ZIP }}
+            ${{ env.APPIMAGE }}
+          if-no-files-found: error
 
   windows-packages:
-    name: Build Windows package (ScreamerLauncher.exe + dosbox.exe)
-    runs-on: windows-latest
+    name: Windows x86_64
+    runs-on: windows-2025
     defaults:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: recursive
-
-      - uses: msys2/setup-msys2@v2
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
         with:
           msystem: MINGW64
           update: true
           install: >-
+            git
+            mingw-w64-x86_64-cmake
             mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-rust
             mingw-w64-x86_64-meson
             mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-ntldd
             mingw-w64-x86_64-opusfile
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-rust
+            mingw-w64-x86_64-SDL2
             mingw-w64-x86_64-speexdsp
             mingw-w64-x86_64-libpng
             mingw-w64-x86_64-zlib
             zip
-            git
-
-      - name: Build static screamer-hooks, dosbox.exe, and ScreamerLauncher.exe
+      - name: Build launcher and bundled DOSBox
         run: |
-          if git -C vendor/dosbox-staging apply --check ../../patches/dosbox-staging-screamer-hooks.patch 2>/dev/null; then
-            git -C vendor/dosbox-staging apply ../../patches/dosbox-staging-screamer-hooks.patch
-          fi
-          cargo build --release --workspace
+          rustc --version
+          cargo build --release --workspace --locked
+          git -C vendor/dosbox-staging apply ../../patches/dosbox-staging-screamer-hooks.patch
           meson setup target/dosbox-staging-build vendor/dosbox-staging \
             -Dbuildtype=release \
-            -Ddefault_library=static \
+            -Ddefault_library=shared \
+            -Dtry_static_libs=iir \
             -Duse_sdl2_net=false \
             -Duse_mt32emu=false \
             -Duse_slirp=false \
@@ -117,39 +127,85 @@ jobs:
             -Duse_zlib_ng=false \
             -Dunit_tests=disabled
           ninja -C target/dosbox-staging-build dosbox.exe
-
       - name: Package Windows zip
         run: |
-          name=ScreamerLauncher-${GITHUB_REF_NAME//\//-}
-          mkdir -p "dist/$name-windows"
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/screamer-launcher/Cargo.toml | head -1)"
+          name="ScreamerLauncher-v${version}"
+          package="$PWD/dist/${name}-windows-x86_64"
+          mkdir -p "$package"
+          (cd vendor/dosbox-staging && scripts/create-package.sh -p msys2 -f \
+            "$OLDPWD/target/dosbox-staging-build" "$package")
           cp target/release/ScreamerLauncher.exe \
-             target/dosbox-staging-build/dosbox.exe \
-             README.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "dist/$name-windows/"
-          cp -r vendor/dosbox-staging/contrib/resources "dist/$name-windows/resources"
-          for dll in $(ldd target/dosbox-staging-build/dosbox.exe | awk '/=> \/mingw64\/bin\// {print $3}'); do
-            cp -L "$dll" "dist/$name-windows/"
-          done
-          (cd dist && zip -r "$name-windows-x86_64.zip" "$name-windows")
-          echo "WINDOWS_ZIP=dist/$name-windows-x86_64.zip" >> "$GITHUB_ENV"
-
-      - uses: actions/upload-artifact@v4
+             README.md CHANGELOG.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "$package/"
+          ntldd -R "$package/ScreamerLauncher.exe" \
+            | sed -e 's/^[[:blank:]]*//g' \
+            | cut -d ' ' -f 3 \
+            | grep -E -i '(mingw|clang)(32|64)' \
+            | sed -e 's|\\|/|g' \
+            | xargs -r cp --target-directory="$package/"
+          (cd dist && zip -r "${name}-windows-x86_64.zip" "${name}-windows-x86_64")
+          echo "WINDOWS_ZIP=dist/${name}-windows-x86_64.zip" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ScreamerLauncher-windows-zip
+          name: ScreamerLauncher-windows
           path: ${{ env.WINDOWS_ZIP }}
+          if-no-files-found: error
+
+  source-archive:
+    name: Corresponding source
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: recursive
+      - name: Create recursive source archive
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/screamer-launcher/Cargo.toml | head -1)"
+          name="ScreamerLauncher-v${version}-source"
+          mkdir -p dist
+          tar --exclude-vcs --exclude='./target' --exclude='./dist' \
+            --transform="s,^\./,${name}/," -cJf "dist/${name}.tar.xz" .
+          echo "SOURCE_TAR=dist/${name}.tar.xz" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ScreamerLauncher-source
+          path: ${{ env.SOURCE_TAR }}
+          if-no-files-found: error
 
   release:
-    name: Publish a release for version tags
+    name: Publish tagged release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux-packages, windows-packages]
-    runs-on: ubuntu-24.04
+    needs: [linux-packages, windows-packages, source-archive]
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify tag matches package version
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/screamer-launcher/Cargo.toml | head -1)"
+          test "$GITHUB_REF_NAME" = "v${version}"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: ScreamerLauncher-*
           merge-multiple: true
-      - name: Create the GitHub release
+          path: dist
+      - name: Create checksums
+        run: (cd dist && sha256sum *.zip *.AppImage *.tar.xz > SHA256SUMS)
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.tar.xz
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes ./*.zip ./*.AppImage
+        run: >-
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --repo "$GITHUB_REPOSITORY"
+          --title "$GITHUB_REF_NAME"
+          --verify-tag
+          --generate-notes

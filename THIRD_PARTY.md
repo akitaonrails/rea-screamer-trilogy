@@ -14,18 +14,19 @@ source. Add a row before bundling anything new.
 | `libc` (Linux target) / `windows-sys` (Windows target) | MIT OR Apache-2.0 | https://github.com/rust-lang/libc , https://github.com/microsoft/windows-rs |
 | Rust standard library | MIT OR Apache-2.0 | https://github.com/rust-lang/rust |
 
-## Compiled into `libscreamer_hooks.so` / `screamerhooks.dll`
+## Statically compiled into the bundled `dosbox` / `dosbox.exe`
 
 | Component | Licence | Source |
 | --- | --- | --- |
 | Our own code (`crates/screamer-hooks`) | MIT OR Apache-2.0 | this repository |
-| Dynamic runtime symbols resolved via `dlsym` / `GetProcAddress` against `dosbox-staging` and `libSDL3` / `libSDL2` | GPL-2.0-or-later (`dosbox-staging`), Zlib (`SDL`) | https://github.com/dosbox-staging/dosbox-staging , https://github.com/libsdl-org/SDL |
+| `dosbox-staging` v0.82.2 plus the source patch under `patches/` | GPL-2.0-or-later | https://github.com/dosbox-staging/dosbox-staging/tree/v0.82.2 |
+| SDL2, Opus/Opusfile, SpeexDSP, libpng, zlib and their transitive runtime libraries | Zlib, BSD-3-Clause, Xiph BSD, BSD-2-Clause, Libpng, Zlib | https://github.com/libsdl-org/SDL , https://opus-codec.org/ , https://www.speex.org/ , https://libpng.org/ , https://zlib.net/ |
 
 ## Bundled in the Linux AppImage (`packaging/appimage`)
 
 | Component | Licence | Source |
 | --- | --- | --- |
-| `dosbox-staging` v0.82.2 (unmodified upstream release binary; licence and source notes under `usr/share/doc/dosbox-staging`) | GPL-2.0-or-later | https://github.com/dosbox-staging/dosbox-staging/releases/tag/v0.82.2 |
+| The project-built `dosbox-staging` v0.82.2 executable and selected shared libraries listed above | GPL-2.0-or-later and the libraries' respective licences | recursive corresponding-source archive attached to each release |
 | AppImage runtime (added by `appimagetool`) | MIT | https://github.com/AppImage/type2-runtime |
 | The AppImage icon `packaging/appimage/screamer-launcher.png` | ours (MIT OR Apache-2.0), set in Barlow (OFL) | this repository |
 
