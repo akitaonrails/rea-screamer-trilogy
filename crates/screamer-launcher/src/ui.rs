@@ -252,14 +252,16 @@ impl<'a> Window<'a> {
 
     fn fit_screen(&mut self, ctx: &egui::Context) {
         self.sized = true;
+        let native = ctx.native_pixels_per_point().unwrap_or(1.0);
+        // egui reports the monitor in logical points; the Steam Deck check,
+        // the resolution list and the zoom all work in pixels.
         if let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) {
-            let mon = (monitor.x as u32, monitor.y as u32);
+            let mon = form::physical_size((monitor.x, monitor.y), native);
             if mon.0 >= 640 && mon.1 >= 480 {
                 self.screen = Some(mon);
                 self.resolutions = form::resolutions(self.screen, self.form.picture.resolution);
             }
         }
-        let native = ctx.native_pixels_per_point().unwrap_or(1.0);
         let zoom = form::window_zoom(self.screen, native);
         if zoom == 1.0 {
             return;

@@ -217,6 +217,20 @@ pub const SCALERS: [(Scaler, &str, &str); 4] = [
 
 pub const WINDOW: (f32, f32) = (980.0, 700.0);
 
+/// A size in egui points as physical pixels, given the display's native
+/// pixels per point (1.0 when unknown or invalid).
+pub fn physical_size(points: (f32, f32), native: f32) -> (u32, u32) {
+    let scale = if native.is_finite() && native > 0.0 {
+        native
+    } else {
+        1.0
+    };
+    (
+        (points.0 * scale).round() as u32,
+        (points.1 * scale).round() as u32,
+    )
+}
+
 pub fn window_zoom(screen: Option<(u32, u32)>, native: f32) -> f32 {
     let native = if native > 0.0 { native } else { 1.0 };
     let Some((w, h)) = screen else {
@@ -513,5 +527,14 @@ mod tests {
         assert_eq!(custom[4], (Some((2560, 1440)), "2560×1440".to_string()));
         assert_eq!(custom[5].0, Some(config::FULLSCREEN));
         assert_eq!(resolutions(None, None).len(), 5);
+    }
+
+    #[test]
+    fn monitor_points_become_pixels() {
+        // A Steam Deck at 1.25x scaling reports 1024x640 points.
+        assert_eq!(physical_size((1024.0, 640.0), 1.25), STEAM_DECK_SCREEN);
+        assert_eq!(physical_size((1920.0, 1080.0), 2.0), (3840, 2160));
+        assert_eq!(physical_size((1920.0, 1080.0), 0.0), (1920, 1080));
+        assert_eq!(physical_size((1366.4, 768.0), 1.0), (1366, 768));
     }
 }
