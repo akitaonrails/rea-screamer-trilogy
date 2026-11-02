@@ -11,6 +11,8 @@
 #   SCREAMER_LAUNCHER   path to ScreamerLauncher binary
 #   SCREAMER_DOSBOX     path to bundled dosbox binary
 #   SCREAMER_WAIT       set: wait for the game to end (used by AppImage)
+#   SCREAMER_SCREEN     WIDTHxHEIGHT for "resolution = fullscreen" (default:
+#                       the current mode from xrandr, else 1920x1080)
 set -u
 HERE=$(dirname "$(readlink -f "$0")")
 LAUNCHER=${SCREAMER_LAUNCHER:-}
@@ -74,6 +76,16 @@ has_gamescope() {
   fi
 }
 
+# The screen's size as WIDTHxHEIGHT (the current mode xrandr reports;
+# SCREAMER_SCREEN overrides it), or nothing when it cannot be told.
+screen_size() {
+  if [ -n "${SCREAMER_SCREEN:-}" ]; then
+    echo "$SCREAMER_SCREEN"
+  else
+    xrandr --current 2>/dev/null | awk '/\*/ { print $1; exit }'
+  fi
+}
+
 launch() {
   if [ -n "${SCREAMER_LAUNCH_CMD:-}" ]; then
     "$SCREAMER_LAUNCH_CMD" "$@"
@@ -89,8 +101,18 @@ start() {
   if [ -z "$LAUNCHER" ] || [ ! -x "$LAUNCHER" ]; then
     echo "ScreamerLauncher not found next to screamer-play (or set SCREAMER_LAUNCHER)"; exit 1
   fi
-  res=$(get_key resolution); W=1920; H=1080
-  if [ -n "$res" ] && [ "$res" != "original" ]; then W=${res%x*}; H=${res#*x}; fi
+  # The game's size inside gamescope. Same spellings the launcher accepts
+  # (1920X1080, spaces, CRLF). "fullscreen" is the screen's own size;
+  # "original" (a 1280x960 window) and anything that is not WIDTHxHEIGHT
+  # keep 1920x1080, which gamescope scales to the screen.
+  res=$(get_key resolution | tr -d '\r \t' | tr 'A-Z' 'a-z'); W=1920; H=1080
+  case $res in
+    fullscreen|full|desktop) res=$(screen_size) ;;
+  esac
+  case $res in
+    *[!0-9x]*|x*|*x|*x*x*|"") ;;
+    *x*) W=${res%x*}; H=${res#*x} ;;
+  esac
   F=$(get_key scaler); F=${F:-nearest}
   if [ -n "${GAMESCOPE_WAYLAND_DISPLAY:-}" ] || ! has_gamescope; then
     launch "$LAUNCHER" --no-window "$@"

@@ -30,4 +30,21 @@ done
 printf 'resolution = 1920x1080\n' > "$CFGDIR/launcher.cfg"
 start > /dev/null
 case "$(cat "$T/ran")" in *"-F nearest --"*) echo "ok   default is nearest" ;; *) echo "FAIL default"; fails=$((fails + 1)) ;; esac
+# The race size: WIDTHxHEIGHT as written (any case/spacing); fullscreen is
+# the screen's size; original and anything else keep 1920x1080.
+size_case() {  # resolution, screen, expected "-w W -h H"
+  printf 'resolution = %s\nscaler = fsr\n' "$1" > "$CFGDIR/launcher.cfg"
+  SCREAMER_SCREEN=$2 start > /dev/null
+  case "$(cat "$T/ran")" in
+    *"gamescope $3 -f "*) echo "ok   size '$1' (screen '$2')" ;;
+    *) echo "FAIL size '$1' (screen '$2'): $(cat "$T/ran")"; fails=$((fails + 1)) ;;
+  esac
+}
+size_case 2560x1440 "" "-w 2560 -h 1440"
+size_case " 3840X2160" "" "-w 3840 -h 2160"
+size_case fullscreen 2560x1600 "-w 2560 -h 1600"
+size_case fullscreen bogus "-w 1920 -h 1080"
+size_case original 2560x1600 "-w 1920 -h 1080"
+size_case 1920x "" "-w 1920 -h 1080"
+size_case abc "" "-w 1920 -h 1080"
 [ "$fails" = 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
