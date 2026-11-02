@@ -894,70 +894,181 @@ fn is_save_file(name: &str) -> bool {
     upper.ends_with(".SAV") || upper == "CHOICE.DAT"
 }
 
-/// Copies persistent saves (`*.SAV`, `CHOICE.DAT`, `REPLAYS/*.RPL`) from `saves_dir`
-/// into `runtime_dir`, newest wins ([`mirror_file`]).
+/// Name of the save-sync state inside the runtime folder.
+pub const SAVE_STATE: &str = ".screamer-saves";
+
+/// A save file's size and modification time (nanoseconds), precise enough
+/// to see a rewrite within the same second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SaveStamp {
+    pub size: u64,
+    pub mtime_ns: u128,
+}
+
+/// Per save (upper-case relative path): its stamp in the saves folder and in
+/// the runtime folder as of the last sync.
+pub type SaveState = BTreeMap<String, (SaveStamp, SaveStamp)>;
+
+fn save_stamp(path: &Path) -> Option<SaveStamp> {
+    let meta = fs::metadata(path).ok().filter(|m| m.is_file())?;
+    Some(SaveStamp {
+        size: meta.len(),
+        mtime_ns: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos()),
+    })
+}
+
+pub fn parse_save_state(text: &str) -> SaveState {
+    text.lines()
+        .filter_map(|line| {
+            let mut p = line.splitn(5, '\t');
+            let mut num = || p.next()?.parse::<u128>().ok();
+            let saves = SaveStamp {
+                size: num()? as u64,
+                mtime_ns: num()?,
+            };
+            let runtime = SaveStamp {
+                size: num()? as u64,
+                mtime_ns: num()?,
+            };
+            Some((p.next()?.to_owned(), (saves, runtime)))
+        })
+        .collect()
+}
+
+pub fn format_save_state(state: &SaveState) -> String {
+    state
+        .iter()
+        .map(|(rel, (s, r))| {
+            format!(
+                "{}\t{}\t{}\t{}\t{rel}\n",
+                s.size, s.mtime_ns, r.size, r.mtime_ns
+            )
+        })
+        .collect()
+}
+
+/// The persistent saves below `root` (`*.SAV` and `CHOICE.DAT` in the root
+/// and `CONFIG/`, `REPLAYS/*.RPL`), by upper-case relative path.
+fn save_files(root: &Path) -> BTreeMap<String, PathBuf> {
+    let mut out = BTreeMap::new();
+    let mut scan = |dir: &str, pred: &dyn Fn(&str) -> bool| {
+        let Ok(entries) = fs::read_dir(native(root, dir)) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if path.is_file() && pred(name) {
+                let rel = if dir.is_empty() {
+                    name.to_ascii_uppercase()
+                } else {
+                    format!("{dir}/{}", name.to_ascii_uppercase())
+                };
+                out.insert(rel, path);
+            }
+        }
+    };
+    scan("", &is_save_file);
+    scan("CONFIG", &is_save_file);
+    scan("REPLAYS", &|n| n.to_ascii_uppercase().ends_with(".RPL"));
+    out
+}
+
+/// Copies a save as a fresh file that keeps its exact modification time.
+fn copy_save(from: &Path, to: &Path) -> io::Result<()> {
+    let modified = fs::metadata(from)?.modified()?;
+    install_copy(from, to)?;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(to)?
+        .set_modified(modified)
+}
+
+fn read_save_state(runtime_dir: &Path) -> Option<SaveState> {
+    fs::read_to_string(runtime_dir.join(SAVE_STATE))
+        .ok()
+        .map(|t| parse_save_state(&t))
+}
+
+fn write_save_state(runtime_dir: &Path, state: &SaveState) -> Result<(), String> {
+    let path = runtime_dir.join(SAVE_STATE);
+    install(&path, format_save_state(state)).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Brings persistent saves (`*.SAV`, `CHOICE.DAT`, `REPLAYS/*.RPL`) into
+/// `runtime_dir` at launch. Against the state recorded at the last sync:
+/// a save changed in `saves_dir` (the player restored or copied one in, even
+/// an older file) wins; otherwise a save changed in the runtime folder (the
+/// last session ended before its saves were copied back) is copied out.
+/// Saves with no recorded state yet: the newer one wins ([`mirror_file`]).
 pub fn sync_saves_in(saves_dir: &Path, runtime_dir: &Path) -> Result<(), String> {
     if !saves_dir.exists() {
         return Ok(());
     }
-    copy_matching_files(saves_dir, runtime_dir, is_save_file)?;
-    let saves_cfg = saves_dir.join("CONFIG");
-    if saves_cfg.is_dir() {
-        copy_matching_files(&saves_cfg, &runtime_dir.join("CONFIG"), is_save_file)?;
+    let err = |p: &Path, e: io::Error| format!("copy {}: {e}", p.display());
+    let recorded = read_save_state(runtime_dir).unwrap_or_default();
+    let in_saves = save_files(saves_dir);
+    let in_runtime = save_files(runtime_dir);
+    let mut state = SaveState::new();
+    for rel in in_saves.keys().chain(in_runtime.keys()) {
+        if state.contains_key(rel) {
+            continue;
+        }
+        let sp = in_saves
+            .get(rel)
+            .cloned()
+            .unwrap_or_else(|| native(saves_dir, rel));
+        let rp = in_runtime
+            .get(rel)
+            .cloned()
+            .unwrap_or_else(|| native(runtime_dir, rel));
+        let (s, r) = (save_stamp(&sp), save_stamp(&rp));
+        match recorded.get(rel) {
+            None => {
+                mirror_file(&sp, &rp).map_err(|e| err(&rp, e))?;
+            }
+            Some((rs, rr)) => {
+                if s.is_some() && (s != Some(*rs) || r.is_none()) {
+                    copy_save(&sp, &rp).map_err(|e| err(&rp, e))?;
+                } else if r.is_some() && (r != Some(*rr) || s.is_none()) {
+                    copy_save(&rp, &sp).map_err(|e| err(&sp, e))?;
+                }
+            }
+        }
+        if let (Some(s), Some(r)) = (save_stamp(&sp), save_stamp(&rp)) {
+            state.insert(rel.clone(), (s, r));
+        }
     }
-    let saves_rep = saves_dir.join("REPLAYS");
-    if saves_rep.is_dir() {
-        copy_matching_files(&saves_rep, &runtime_dir.join("REPLAYS"), |n| {
-            n.to_ascii_uppercase().ends_with(".RPL")
-        })?;
-    }
-    Ok(())
+    write_save_state(runtime_dir, &state)
 }
 
-/// Copies persistent saves (`*.SAV`, `CHOICE.DAT`, `REPLAYS/*.RPL`) from `runtime_dir`
-/// back to `saves_dir`, newest wins ([`mirror_file`]).
+/// Copies persistent saves (`*.SAV`, `CHOICE.DAT`, `REPLAYS/*.RPL`) from
+/// `runtime_dir` back to `saves_dir` when their contents differ, and records
+/// the synced state for the next launch.
 pub fn sync_saves_out(runtime_dir: &Path, saves_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(saves_dir).map_err(|e| format!("{}: {e}", saves_dir.display()))?;
-    copy_matching_files(runtime_dir, saves_dir, is_save_file)?;
-    let rt_cfg = runtime_dir.join("CONFIG");
-    if rt_cfg.is_dir() {
-        let saves_cfg = saves_dir.join("CONFIG");
-        fs::create_dir_all(&saves_cfg).map_err(|e| format!("{}: {e}", saves_cfg.display()))?;
-        copy_matching_files(&rt_cfg, &saves_cfg, is_save_file)?;
-    }
-    let rt_rep = runtime_dir.join("REPLAYS");
-    if rt_rep.is_dir() {
-        let saves_rep = saves_dir.join("REPLAYS");
-        fs::create_dir_all(&saves_rep).map_err(|e| format!("{}: {e}", saves_rep.display()))?;
-        copy_matching_files(&rt_rep, &saves_rep, |n| {
-            n.to_ascii_uppercase().ends_with(".RPL")
-        })?;
-    }
-    Ok(())
-}
-
-fn copy_matching_files<F: Fn(&str) -> bool>(
-    src_dir: &Path,
-    dst_dir: &Path,
-    pred: F,
-) -> Result<(), String> {
-    let Ok(entries) = fs::read_dir(src_dir) else {
-        return Ok(());
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if !p.is_file() {
-            continue;
+    let in_saves = save_files(saves_dir);
+    let mut state = SaveState::new();
+    for (rel, rp) in save_files(runtime_dir) {
+        let sp = in_saves
+            .get(&rel)
+            .cloned()
+            .unwrap_or_else(|| native(saves_dir, &rel));
+        let same = matches!((fs::read(&rp), fs::read(&sp)), (Ok(a), Ok(b)) if a == b);
+        if !same {
+            copy_save(&rp, &sp).map_err(|e| format!("copy {}: {e}", sp.display()))?;
         }
-        let Some(name) = p.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if pred(name) {
-            let dst = dst_dir.join(name);
-            mirror_file(&p, &dst).map_err(|e| format!("copy {}: {e}", dst.display()))?;
+        if let (Some(s), Some(r)) = (save_stamp(&sp), save_stamp(&rp)) {
+            state.insert(rel, (s, r));
         }
     }
-    Ok(())
+    write_save_state(runtime_dir, &state)
 }
 
 fn normalize(path: &Path) -> PathBuf {
@@ -1045,7 +1156,7 @@ pub fn check_separate(game: &Path, folder: &Path) -> Result<(), String> {
 /// Copies `from` over `to` when `to` is missing or older: an earlier
 /// modification time, or the same second with another size. The copy keeps
 /// `from`'s modification time. Returns true when a copy was made. Used for
-/// saves in both directions, so an older save never replaces a newer one.
+/// saves that have no recorded sync state yet.
 pub fn mirror_file(from: &Path, to: &Path) -> io::Result<bool> {
     let Ok(meta) = fs::metadata(from) else {
         return Ok(false);
@@ -1564,6 +1675,113 @@ mod tests {
             fs::set_permissions(&d, fs::Permissions::from_mode(0o755)).unwrap();
             fs::remove_dir_all(d).unwrap();
         }
+    }
+
+    /// A saves folder and a runtime folder synced once (state recorded).
+    fn synced_pair(name: &str) -> (PathBuf, PathBuf) {
+        let saves = temp(&format!("{name}-saves"));
+        let rt = temp(&format!("{name}-rt"));
+        fs::create_dir_all(saves.join("CONFIG")).unwrap();
+        fs::create_dir_all(rt.join("CONFIG")).unwrap();
+        fs::write(saves.join("CONFIG/CHOICE.DAT"), b"progress-1").unwrap();
+        set_mtime(&saves.join("CONFIG/CHOICE.DAT"), 5_000);
+        sync_saves_in(&saves, &rt).unwrap();
+        sync_saves_out(&rt, &saves).unwrap();
+        assert!(rt.join(SAVE_STATE).is_file());
+        (saves, rt)
+    }
+
+    #[test]
+    fn a_restored_older_save_wins() {
+        let (saves, rt) = synced_pair("restore");
+        // The player plays on, then restores a backup kept with its old
+        // timestamp (cp -p, rsync, Syncthing).
+        fs::write(rt.join("CONFIG/CHOICE.DAT"), b"progress-2").unwrap();
+        sync_saves_out(&rt, &saves).unwrap();
+        fs::write(saves.join("CONFIG/CHOICE.DAT"), b"backup-0!!").unwrap();
+        set_mtime(&saves.join("CONFIG/CHOICE.DAT"), 1_000);
+
+        sync_saves_in(&saves, &rt).unwrap();
+        assert_eq!(
+            fs::read(rt.join("CONFIG/CHOICE.DAT")).unwrap(),
+            b"backup-0!!"
+        );
+        sync_saves_out(&rt, &saves).unwrap();
+        assert_eq!(
+            fs::read(saves.join("CONFIG/CHOICE.DAT")).unwrap(),
+            b"backup-0!!"
+        );
+        for d in [saves, rt] {
+            fs::remove_dir_all(d).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_session_killed_before_write_back_is_recovered() {
+        let (saves, rt) = synced_pair("crash");
+        // The game saved, but the launcher never copied it back.
+        fs::write(rt.join("CONFIG/CHOICE.DAT"), b"progress-2").unwrap();
+        set_mtime(&rt.join("CONFIG/CHOICE.DAT"), 1_000);
+
+        sync_saves_in(&saves, &rt).unwrap();
+        assert_eq!(
+            fs::read(rt.join("CONFIG/CHOICE.DAT")).unwrap(),
+            b"progress-2"
+        );
+        assert_eq!(
+            fs::read(saves.join("CONFIG/CHOICE.DAT")).unwrap(),
+            b"progress-2"
+        );
+        for d in [saves, rt] {
+            fs::remove_dir_all(d).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_same_second_same_size_change_still_syncs() {
+        let (saves, rt) = synced_pair("same-second");
+        // CHOICE.DAT has a fixed size; the game rewrites it within the second.
+        let path = rt.join("CONFIG/CHOICE.DAT");
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        fs::write(&path, b"progress-2").unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(before)
+            .unwrap();
+
+        sync_saves_out(&rt, &saves).unwrap();
+        assert_eq!(
+            fs::read(saves.join("CONFIG/CHOICE.DAT")).unwrap(),
+            b"progress-2"
+        );
+        // And nothing changes at the next launch.
+        sync_saves_in(&saves, &rt).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"progress-2");
+        for d in [saves, rt] {
+            fs::remove_dir_all(d).unwrap();
+        }
+    }
+
+    #[test]
+    fn save_state_round_trips() {
+        let mut state = SaveState::new();
+        let a = SaveStamp {
+            size: 3,
+            mtime_ns: 1_700_000_000_123_456_789,
+        };
+        state.insert(
+            "REPLAYS/A B.RPL".into(),
+            (
+                a,
+                SaveStamp {
+                    size: 4,
+                    mtime_ns: 9,
+                },
+            ),
+        );
+        assert_eq!(parse_save_state(&format_save_state(&state)), state);
     }
 
     #[test]
