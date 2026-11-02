@@ -45,6 +45,11 @@ jobs:
           sh linux/tests/gpu-env.sh
           sh linux/tests/scaler.sh
           sh linux/tests/supervision.sh
+      - name: Dependency advisories, licenses, and sources
+        run: |
+          cargo install --locked cargo-audit@0.22.1 cargo-deny@0.19.8
+          cargo audit
+          cargo deny check
       - name: Build launcher and bundled DOSBox
         run: |
           ./scripts/build-dosbox.sh
