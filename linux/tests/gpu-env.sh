@@ -5,7 +5,7 @@ set -u
 unset DRI_PRIME __NV_PRIME_RENDER_OFFLOAD __GLX_VENDOR_LIBRARY_NAME
 HERE=$(dirname "$(readlink -f "$0")")
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-export HOME=$T
+. "$HERE/lib/isolate.sh"
 
 fake_nv_lib() { [ -n "${NV_LIB:-}" ]; }
 REA_FUNCTIONS_ONLY=1 REA_PLAY_HERE=$HERE/.. . "$HERE/../screamer-play"
@@ -46,4 +46,5 @@ gpu amd card0 0x1002 amdgpu 1 8589934592
 check "AMD only" amd ""
 check "no GPUs listed" none ""
 DRI_PRIME=0 check "the player's DRI_PRIME wins" inamd ""
+real_dirs_untouched || fails=$((fails + 1))
 [ "$fails" = 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

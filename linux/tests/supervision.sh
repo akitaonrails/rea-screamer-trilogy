@@ -6,7 +6,8 @@ set -u
 unset GAMESCOPE_WAYLAND_DISPLAY DRI_PRIME __NV_PRIME_RENDER_OFFLOAD SCREAMER_LAUNCHER XDG_CONFIG_HOME
 HERE=$(dirname "$(readlink -f "$0")")
 T=$(mktemp -d)
-export T HOME=$T
+export T
+. "$HERE/lib/isolate.sh"
 STALE_PID= STALE_START= OTHER_PID= OTHER_START= PLAY_PID=
 stop_helper() {
   [ -n "$1" ] || return 0
@@ -147,4 +148,5 @@ case "$(cat "$T/calls")" in
 esac
 if [ "$(rea_main status)" = idle ]; then ok "status"; else fail "status"; fi
 
+real_dirs_untouched || fails=$((fails + 1))
 [ "$fails" = 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

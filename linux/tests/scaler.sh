@@ -5,8 +5,8 @@ set -u
 unset GAMESCOPE_WAYLAND_DISPLAY DRI_PRIME __NV_PRIME_RENDER_OFFLOAD
 HERE=$(dirname "$(readlink -f "$0")")
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-unset XDG_CONFIG_HOME
-export HOME=$T SCREAMER_WAIT=1
+export SCREAMER_WAIT=1
+. "$HERE/lib/isolate.sh"
 CFGDIR=$HOME/.config/screamer-launcher
 mkdir -p "$CFGDIR"
 printf '#!/bin/sh\nexit 0\n' > "$T/ScreamerLauncher"
@@ -59,4 +59,5 @@ size_case 0x0 "" "-w 1920 -h 1080"
 size_case 0x1080 "" "-w 1920 -h 1080"
 size_case 01280x0800 "" "-w 1280 -h 800"
 size_case fullscreen 0x0 "-w 1920 -h 1080"
+real_dirs_untouched || fails=$((fails + 1))
 [ "$fails" = 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
