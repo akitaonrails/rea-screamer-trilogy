@@ -154,7 +154,9 @@ mod tests {
         assert!(err.contains("unexpected bytes"));
     }
 
+    /// The real game: `SCREAMER_GAME_DIR=… cargo test -- --ignored`.
     #[test]
+    #[ignore = "needs the real game (SCREAMER_GAME_DIR, SCREAMER1_DIR, SCREAMER2_DIR or SCREAMER_RALLY_DIR)"]
     fn verify_real_game_dirs_from_env_if_present() {
         for var in [
             "SCREAMER_GAME_DIR",
