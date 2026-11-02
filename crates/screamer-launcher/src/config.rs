@@ -275,6 +275,8 @@ pub const OPTIONS: &[OptionSpec] = &[
         "DOSBox",
         "A different dosbox-staging program to run the game with, instead of the bundled one.",
     )
+    .with_placeholder("<program>")
+    .with_needs("a dosbox-staging program")
     .launcher_only(),
     OptionSpec::new(
         "renderer",
@@ -413,8 +415,7 @@ pub fn usage() -> String {
         "  --controllers            list the connected gamepads",
         "  --help                   this text",
         "",
-        "resolution takes WIDTHxHEIGHT, fullscreen (the screen's size) or original;",
-        "--dosbox takes a dosbox-staging program, not a folder.",
+        "resolution takes WIDTHxHEIGHT, fullscreen (the screen's size) or original.",
         "Exit codes: 0 played or checked, 2 an error (see launcher.log next to",
         "launcher.cfg), otherwise the game's own.",
     ];

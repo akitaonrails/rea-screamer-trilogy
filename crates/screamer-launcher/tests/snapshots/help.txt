@@ -8,7 +8,7 @@ Options (the same keys in launcher.cfg; they override it for one run,
   --game <folder>                             Game folder
   --saves <folder>                            Saves folder
   --runtime <folder>                          Runtime folder
-  --dosbox <folder>                           DOSBox
+  --dosbox <program>                          DOSBox
   --renderer auto|3dfx|svga16|svga8|vga       Renderer
   --resolution <WxH>                          Display
   --widescreen on|off                         Widescreen
@@ -34,7 +34,6 @@ Without options the settings window opens first.
   --controllers            list the connected gamepads
   --help                   this text
 
-resolution takes WIDTHxHEIGHT, fullscreen (the screen's size) or original;
---dosbox takes a dosbox-staging program, not a folder.
+resolution takes WIDTHxHEIGHT, fullscreen (the screen's size) or original.
 Exit codes: 0 played or checked, 2 an error (see launcher.log next to
 launcher.cfg), otherwise the game's own.

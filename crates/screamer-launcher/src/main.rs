@@ -101,7 +101,7 @@ fn run() -> Result<ExitCode, String> {
                 let _ = fs::create_dir_all(parent);
             }
             let _ = fsx::write_atomic(&cfg_path, &text);
-            log().line(&format!(
+            log().info(&format!(
                 "first run: wrote {} with the recommended look",
                 cfg_path.display()
             ));
@@ -470,21 +470,21 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
         )?;
 
     let plan = &prepared.plan;
-    log.line(&format!(
+    log.info(&format!(
         "launch: {} from {}",
         disc.game.display_name(),
         disc.exe_dir.display()
     ));
     for (name, count) in &prepared.patched_exes {
         let exe = disc.executables.iter().find(|e| &e.file_name == name);
-        log.line(&format!(
+        log.info(&format!(
             "edition: {name} = {} (SHA-256 {}), {count} patch writes",
             exe.map_or("?", |e| e.edition.name),
             exe.map(|e| rea_launcher::identify::hex(&e.sha256))
                 .unwrap_or_default()
         ));
     }
-    log.line(&format!(
+    log.info(&format!(
         "fixes left out: {}",
         if plan.skipped_fixes.is_empty() {
             "none".to_string()
@@ -492,15 +492,15 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
             plan.skipped_fixes.join(", ")
         }
     ));
-    log.line(&format!(
+    log.info(&format!(
         "exe {}; runtime {}; saves {}; dosbox {}",
         prepared.selected_exe,
         prepared.runtime_dir.display(),
         saves_dir.display(),
         dosbox.display()
     ));
-    log.line(&format!("dosbox args: {}", plan.dosbox_args.join(" ")));
-    log.line(&format!(
+    log.info(&format!("dosbox args: {}", plan.dosbox_args.join(" ")));
+    log.info(&format!(
         "env: {}",
         plan.env
             .iter()
@@ -519,7 +519,7 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
     let status = cmd
         .status()
         .map_err(|e| format!("Failed to start {}: {e}", dosbox.display()))?;
-    log.line(&format!("dosbox ended: {status}"));
+    log.info(&format!("dosbox ended: {status}"));
 
     runtime::sync_saves_out(&prepared.runtime_dir, &saves_dir)?;
 

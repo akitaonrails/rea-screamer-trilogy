@@ -1367,7 +1367,8 @@ mod tests {
         dir
     }
 
-    /// The window over `text`, headless, on a 2560×1440 screen.
+    /// The window over `text`, headless at its design size (980×700), on a
+    /// 2560×1440 screen.
     fn open(text: &str, linux: bool, name: &str) -> Harness<'static, Window> {
         let path = scratch(name).join("launcher.cfg");
         let window = Window::new(
@@ -1378,10 +1379,12 @@ mod tests {
             Vec::new(),
             Rc::new(Cell::new(Outcome::Closed)),
         );
-        let mut ui = testing::harness(&PALETTE, &METRICS, window, |ui, w: &mut Window| {
-            w.sized = true; // the harness has no monitor: keep the given screen
-            w.draw(ui)
-        });
+        let size = vec2(form::WINDOW.0, form::WINDOW.1);
+        let mut ui =
+            testing::harness_sized(&PALETTE, &METRICS, size, window, |ui, w: &mut Window| {
+                w.sized = true; // the harness has no monitor: keep the given screen
+                w.draw(ui)
+            });
         ui.run();
         ui
     }
