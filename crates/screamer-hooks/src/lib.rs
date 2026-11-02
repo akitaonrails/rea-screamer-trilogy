@@ -467,7 +467,9 @@ pub fn combine_triggers(trigger_left: i16, trigger_right: i16, right_stick_y: i1
 }
 
 /// Computes low-frequency and high-frequency rumble intensities (`0..=65535`)
-/// from car speed/collision delta and configured `rumble_pct` (`0..=100`).
+/// from a low-frequency load and a high-frequency level (`0..=1000` each) and
+/// the configured `rumble_pct` (`0..=100`). The race tick currently feeds only
+/// the brake load (low frequency).
 pub fn compute_rumble(impact_delta: u32, skid_level: u32, rumble_pct: u32) -> (u16, u16) {
     if rumble_pct == 0 {
         return (0, 0);

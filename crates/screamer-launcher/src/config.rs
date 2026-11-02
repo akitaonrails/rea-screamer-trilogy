@@ -238,7 +238,7 @@ gamepad_axes = true
 # Gamepad steering deadzone in percent (0 removes the hardcoded 7.8% deadzone).
 deadzone = 0
 
-# Gamepad rumble strength on kerbs, gravel, skids, and wall impacts (0-100).
+# Gamepad rumble strength when braking hard in a race (0-100).
 rumble = 60
 
 # Pad buttons: modern, original, or 8 comma-separated button numbers.
@@ -269,7 +269,7 @@ ScreamerLauncher [1|2|rally] [options]
   --texture-filter <f>     original, fsr, smooth, or sharp
   --gamepad-axes on|off    proportional analog steering & L2/R2 triggers
   --deadzone <0-30>        analog steering deadzone percent (0 removes 7.8% deadzone)
-  --rumble <0-100>|off     gamepad rumble strength
+  --rumble <0-100>|off     gamepad rumble strength when braking hard
   --buttons <layout>       pad buttons: original, modern, or 8 numbers
 
 These override launcher.cfg for one run (--game and --which are remembered).
@@ -281,8 +281,8 @@ Without options the settings window opens first.
 ScreamerLauncher --check [--game <folder>] [--which <1|2|rally>]
   checks all discovered games in the trilogy folder and verifies all binary fixes
 
-ScreamerLauncher --controllers [seconds]
-  lists connected gamepads and logs axis/button events"
+ScreamerLauncher --controllers
+  lists the connected gamepads"
 );
 
 fn parse_bool(v: &str) -> Option<bool> {
@@ -704,6 +704,22 @@ mod tests {
             Settings::parse_args(["--extended-draw-distance".to_string(), "off".to_string()])
                 .unwrap();
         assert_eq!(args.extended_draw_distance, Some(false));
+    }
+
+    #[test]
+    fn help_texts_promise_only_what_the_code_does() {
+        // The hooks feed rumble from brake load only (compute_rumble(brake_load, 0, ..)).
+        let rumble = TEMPLATE
+            .lines()
+            .find(|l| l.contains("rumble strength"))
+            .unwrap();
+        assert!(rumble.contains("braking"));
+        for unsupported in ["kerb", "gravel", "skid", "wall"] {
+            assert!(!rumble.contains(unsupported), "{rumble}");
+        }
+        // --controllers lists pads; it does not log events.
+        assert!(USAGE.contains("--controllers\n  lists the connected gamepads"));
+        assert!(!USAGE.contains("axis/button events"));
     }
 
     #[test]
