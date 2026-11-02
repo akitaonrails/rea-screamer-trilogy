@@ -565,10 +565,6 @@ pub fn prepare_runtime(
     })
 }
 
-fn remove_if_exists(path: &Path) -> Result<(), String> {
-    remove_file(path).map_err(|e| format!("{}: {e}", path.display()))
-}
-
 /// Name of the staging manifest inside the runtime folder.
 pub const MANIFEST: &str = ".screamer-manifest";
 
@@ -884,7 +880,7 @@ fn is_save_file(name: &str) -> bool {
 }
 
 /// Copies persistent saves (`*.SAV`, `CHOICE.DAT`, `REPLAYS/*.RPL`) from `saves_dir`
-/// into `runtime_dir`.
+/// into `runtime_dir`, newest wins ([`mirror_file`]).
 pub fn sync_saves_in(saves_dir: &Path, runtime_dir: &Path) -> Result<(), String> {
     if !saves_dir.exists() {
         return Ok(());
@@ -904,7 +900,7 @@ pub fn sync_saves_in(saves_dir: &Path, runtime_dir: &Path) -> Result<(), String>
 }
 
 /// Copies persistent saves (`*.SAV`, `CHOICE.DAT`, `REPLAYS/*.RPL`) from `runtime_dir`
-/// back to `saves_dir`.
+/// back to `saves_dir`, newest wins ([`mirror_file`]).
 pub fn sync_saves_out(runtime_dir: &Path, saves_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(saves_dir).map_err(|e| format!("{}: {e}", saves_dir.display()))?;
     copy_matching_files(runtime_dir, saves_dir, is_save_file)?;
@@ -943,8 +939,7 @@ fn copy_matching_files<F: Fn(&str) -> bool>(
         };
         if pred(name) {
             let dst = dst_dir.join(name);
-            remove_if_exists(&dst)?;
-            fs::copy(&p, &dst).map_err(|e| format!("copy {}: {e}", dst.display()))?;
+            mirror_file(&p, &dst).map_err(|e| format!("copy {}: {e}", dst.display()))?;
         }
     }
     Ok(())
@@ -1030,6 +1025,27 @@ fn check_separate_from(game: &Path, folder: &Path, cwd: &Path) -> Result<(), Str
 pub fn check_separate(game: &Path, folder: &Path) -> Result<(), String> {
     let cwd = std::env::current_dir().map_err(|error| format!("current directory: {error}"))?;
     check_separate_from(game, folder, &cwd)
+}
+
+/// Copies `from` over `to` when `to` is missing or older: an earlier
+/// modification time, or the same second with another size. The copy keeps
+/// `from`'s modification time. Returns true when a copy was made. Used for
+/// saves in both directions, so an older save never replaces a newer one.
+pub fn mirror_file(from: &Path, to: &Path) -> io::Result<bool> {
+    let Ok(meta) = fs::metadata(from) else {
+        return Ok(false);
+    };
+    let stamp = stamp_of(&meta);
+    if let Ok(dst) = fs::metadata(to) {
+        let dst_mtime = mtime_secs(&dst);
+        if dst_mtime > stamp.mtime || (dst_mtime == stamp.mtime && dst.len() == stamp.size) {
+            return Ok(false);
+        }
+    }
+    install_copy(from, to)?;
+    let file = fs::OpenOptions::new().write(true).open(to)?;
+    file.set_modified(UNIX_EPOCH + Duration::from_secs(stamp.mtime))?;
+    Ok(true)
 }
 
 /// Locates the `dosbox-staging` (or `dosbox`) executable to run.
@@ -1365,6 +1381,75 @@ mod tests {
         assert!(!game.join("new-runtime").exists());
         fs::remove_file(alias).unwrap();
         fs::remove_dir_all(game).unwrap();
+    }
+
+    fn set_mtime(path: &Path, secs: u64) {
+        let f = fs::OpenOptions::new().write(true).open(path).unwrap();
+        f.set_modified(UNIX_EPOCH + Duration::from_secs(secs))
+            .unwrap();
+    }
+
+    #[test]
+    fn mirror_file_copies_only_what_is_newer() {
+        let a = temp("mirror-a");
+        let b = temp("mirror-b");
+        fs::create_dir_all(&a).unwrap();
+        fs::write(a.join("CHOICE.DAT"), b"one").unwrap();
+        assert!(mirror_file(&a.join("CHOICE.DAT"), &b.join("CHOICE.DAT")).unwrap());
+        assert!(!mirror_file(&a.join("CHOICE.DAT"), &b.join("CHOICE.DAT")).unwrap());
+        assert!(!mirror_file(&a.join("missing"), &b.join("CHOICE.DAT")).unwrap());
+        fs::write(a.join("CHOICE.DAT"), b"two!").unwrap();
+        assert!(mirror_file(&a.join("CHOICE.DAT"), &b.join("CHOICE.DAT")).unwrap());
+        assert_eq!(fs::read(b.join("CHOICE.DAT")).unwrap(), b"two!");
+        touch_later(&b.join("CHOICE.DAT"));
+        fs::write(a.join("CHOICE.DAT"), b"old").unwrap();
+        assert!(!mirror_file(&a.join("CHOICE.DAT"), &b.join("CHOICE.DAT")).unwrap());
+        assert_eq!(fs::read(b.join("CHOICE.DAT")).unwrap(), b"two!");
+        for d in [a, b] {
+            fs::remove_dir_all(d).unwrap();
+        }
+    }
+
+    #[test]
+    fn save_sync_never_puts_an_older_save_over_a_newer_one() {
+        let saves = temp("sync-saves");
+        let rt = temp("sync-rt");
+        for d in [&saves, &rt] {
+            fs::create_dir_all(d.join("CONFIG")).unwrap();
+            fs::create_dir_all(d.join("REPLAYS")).unwrap();
+        }
+        // The saves folder has a newer CHOICE.DAT, the runtime a newer replay.
+        fs::write(saves.join("CONFIG/CHOICE.DAT"), b"saved later").unwrap();
+        set_mtime(&saves.join("CONFIG/CHOICE.DAT"), 2_000);
+        fs::write(rt.join("CONFIG/CHOICE.DAT"), b"from the game folder").unwrap();
+        set_mtime(&rt.join("CONFIG/CHOICE.DAT"), 1_000);
+        fs::write(saves.join("REPLAYS/A.RPL"), b"old replay").unwrap();
+        set_mtime(&saves.join("REPLAYS/A.RPL"), 1_000);
+        fs::write(rt.join("REPLAYS/A.RPL"), b"new replay").unwrap();
+        set_mtime(&rt.join("REPLAYS/A.RPL"), 2_000);
+        fs::write(saves.join("GAME.SAV"), b"save").unwrap();
+
+        sync_saves_in(&saves, &rt).unwrap();
+        assert_eq!(
+            fs::read(rt.join("CONFIG/CHOICE.DAT")).unwrap(),
+            b"saved later"
+        );
+        assert_eq!(fs::read(rt.join("REPLAYS/A.RPL")).unwrap(), b"new replay");
+        assert_eq!(fs::read(rt.join("GAME.SAV")).unwrap(), b"save");
+
+        sync_saves_out(&rt, &saves).unwrap();
+        assert_eq!(
+            fs::read(saves.join("REPLAYS/A.RPL")).unwrap(),
+            b"new replay"
+        );
+        assert_eq!(
+            fs::read(saves.join("CONFIG/CHOICE.DAT")).unwrap(),
+            b"saved later"
+        );
+
+        for d in [saves, rt] {
+            fs::remove_dir_all(d).unwrap();
+        }
     }
 
     #[test]

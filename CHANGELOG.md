@@ -4,6 +4,7 @@
 
 - Fix: the runtime folder no longer symlinks files and whole directories into the user's game folder, which let the game write into it. Files are hard-linked (code and drivers only) or copied one at a time into real directories, launcher writes replace whole files, and a manifest of size and modification time brings changed source files in again while keeping the game's saves and replays. Runtime folders from older versions are converted on the next launch.
 - Refuse a runtime or saves folder that lies inside the game folder (or contains it), resolving symlinks, `..` and folders that do not exist yet, before anything is written.
+- Save sync between the runtime folder and the saves folder now copies only when the other side is missing or older, so an older `CHOICE.DAT`, `.SAV` or replay never replaces a newer one.
 
 ## 0.6.0 - 2026-11-01
 
