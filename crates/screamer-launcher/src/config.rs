@@ -1,15 +1,19 @@
 //! Command line and the settings file (`launcher.cfg`).
 //!
-//! Plain `key = value` lines with `#` comments, written once from a commented
-//! template so users can edit it. Unknown keys are reported and kept, so
-//! older launchers can read newer files; values it cannot read are reported
-//! and ignored. Reading, line editing and the flag loop are the SDK's
-//! ([`rea_launcher::cfg`]); one [`Settings::apply`] serves the file and the
-//! command line.
+//! Every option is declared once in [`OPTIONS`] (key, flag, values, label,
+//! description); `--help`, the commented `launcher.cfg` template and the
+//! checks of file values and flags come from that table
+//! ([`rea_launcher::cfg::spec`]), and one [`Settings::apply`] takes the
+//! checked values from both. Unknown keys are reported and kept, so older
+//! launchers can read newer files; values it cannot read are reported and
+//! ignored. Old spellings (`fps_limit`, `renderer = glide`, `which = 2`,
+//! `deadzone = off`) are still read: see [`normalize`].
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
-use rea_launcher::cfg::{self, ArgError, Rejected, Resolution};
+use rea_launcher::cfg::spec::{self, Kind, OptionSpec, Value};
+use rea_launcher::cfg::{self, ArgError, KeyStyle, Rejected, Resolution};
 
 use crate::edition::Game;
 
@@ -24,7 +28,7 @@ pub struct Settings {
     pub resolution: Option<(u32, u32)>,
     pub widescreen: Option<bool>,
     pub extended_draw_distance: Option<bool>,
-    pub fps_limit: Option<u32>,
+    pub frame_generation: Option<bool>,
     pub vsync: Option<bool>,
     pub texture_filter: Option<TextureFilter>,
     pub gamepad_axes: Option<bool>,
@@ -74,7 +78,7 @@ impl RendererChoice {
     }
 
     /// Returns `Some(reason)` when `self` is not supported by `game` (so the UI
-    /// grays out the chip and explains why on hover).
+    /// grays out the chip and explains why).
     pub fn disabled_reason(self, game: Game, has_dos_glide: bool) -> Option<&'static str> {
         match (game, self) {
             (Game::Screamer, RendererChoice::Voodoo | RendererChoice::Svga16Bit) => Some(
@@ -94,6 +98,8 @@ impl RendererChoice {
         self.disabled_reason(game, has_dos_glide).is_none()
     }
 
+    /// The key or one of the older spellings (`voodoo`, `glide`, the
+    /// executable names).
     pub fn parse(v: &str) -> Option<RendererChoice> {
         match v.trim().to_ascii_lowercase().as_str() {
             "auto" => Some(RendererChoice::Auto),
@@ -177,131 +183,244 @@ pub enum TextureFilter {
     Sharp,
 }
 
-fn parse_filter(v: &str) -> Option<TextureFilter> {
-    match v.trim().to_ascii_lowercase().as_str() {
-        "original" => Some(TextureFilter::Original),
-        "fsr" => Some(TextureFilter::Fsr),
-        "smooth" => Some(TextureFilter::Smooth),
-        "sharp" => Some(TextureFilter::Sharp),
-        _ => None,
+impl TextureFilter {
+    pub fn key(self) -> &'static str {
+        match self {
+            TextureFilter::Original => "original",
+            TextureFilter::Fsr => "fsr",
+            TextureFilter::Smooth => "smooth",
+            TextureFilter::Sharp => "sharp",
+        }
+    }
+
+    fn parse(v: &str) -> Option<TextureFilter> {
+        [
+            TextureFilter::Original,
+            TextureFilter::Fsr,
+            TextureFilter::Smooth,
+            TextureFilter::Sharp,
+        ]
+        .into_iter()
+        .find(|f| f.key().eq_ignore_ascii_case(v.trim()))
     }
 }
 
 pub const FILE_NAME: &str = "launcher.cfg";
 
-pub const TEMPLATE: &str = r"# Screamer Trilogy (Screamer / Screamer 2 / Screamer Rally) launcher settings.
-#
-# One setting per line as key = value; lines starting with # are comments.
-# Command-line options (--game, --which, --runtime, --saves, etc.) override this
-# file for one run.
+/// `which`: the games, by their `launcher.cfg` name.
+pub const GAMES: &[(&str, &str)] = &[
+    ("screamer", "Screamer"),
+    ("screamer2", "Screamer 2"),
+    ("screamer-rally", "Screamer Rally"),
+];
+pub const RENDERERS: &[(&str, &str)] = &[
+    ("auto", "Auto"),
+    ("3dfx", "3dfx Voodoo"),
+    ("svga16", "SVGA 16-bit"),
+    ("svga8", "SVGA 8-bit"),
+    ("vga", "VGA 320×200"),
+];
+pub const FILTERS: &[(&str, &str)] = &[
+    ("original", "CRT Monitor"),
+    ("fsr", "FSR (Super Res)"),
+    ("sharp", "Sharp (Pixel)"),
+    ("smooth", "Smooth (Bilinear)"),
+];
+pub const SCALERS: &[(&str, &str)] = &[
+    ("nearest", "Sharp"),
+    ("pixel", "Even pixels"),
+    ("fsr", "FSR"),
+    ("linear", "Smooth"),
+];
 
-# Which game in the trilogy to launch: screamer, screamer2, or screamer-rally.
-which = screamer
+const SIZES: Kind = Kind::Size {
+    min: (320, 200),
+    max: (7680, 4320),
+    aliases: cfg::ORIGINAL_OR_FULLSCREEN,
+};
 
-# The folder with your installed Screamer game(s) — either a parent trilogy
-# folder containing screamer/, screamer2/, screamer-rally/ or a single game folder.
-# The game folder is only read, never modified.
-game =
+/// Every option, once: the window, the command line, `--help` and the
+/// template all come from these rows.
+pub const OPTIONS: &[OptionSpec] = &[
+    OptionSpec::new(
+        "which",
+        Kind::Choice(GAMES),
+        "Game",
+        "Which game of the trilogy Play starts. On the command line also 1, 2 or rally.",
+    )
+    .with_aliases(&["play"])
+    .with_example("screamer"),
+    OptionSpec::new(
+        "game",
+        Kind::Path,
+        "Game folder",
+        "The folder with your Screamer game, or a folder holding two or three of them. It is only read, never changed.",
+    ),
+    OptionSpec::new(
+        "saves",
+        Kind::Path,
+        "Saves folder",
+        "Where your saves, choices and replays are kept between sessions.",
+    ),
+    OptionSpec::new(
+        "runtime",
+        Kind::Path,
+        "Runtime folder",
+        "Where the launcher keeps its private, writable copy of the game.",
+    )
+    .launcher_only(),
+    OptionSpec::new(
+        "dosbox",
+        Kind::Path,
+        "DOSBox",
+        "A different dosbox-staging program to run the game with, instead of the bundled one.",
+    )
+    .launcher_only(),
+    OptionSpec::new(
+        "renderer",
+        Kind::Choice(RENDERERS),
+        "Renderer",
+        "Which of the game's own graphics programs runs. Auto picks the best one the game has.",
+    )
+    .with_example("auto"),
+    OptionSpec::new(
+        "resolution",
+        SIZES,
+        "Display",
+        "Window size (WIDTHxHEIGHT), fullscreen, or original for the 4:3 1280×960 window.",
+    )
+    .with_example("1920x1080"),
+    OptionSpec::new(
+        "widescreen",
+        Kind::Toggle,
+        "Widescreen",
+        "On a 16:9 screen, shows more to the sides instead of stretching the picture.",
+    )
+    .with_example("on"),
+    OptionSpec::new(
+        "extended_draw_distance",
+        Kind::Toggle,
+        "Extended draw distance",
+        "Scenery and cars appear farther ahead, so less pops in.",
+    )
+    .with_example("on"),
+    OptionSpec::new(
+        "frame_generation",
+        Kind::Toggle,
+        "Frame generation (100 FPS)",
+        "Shows 100 frames per second by adding a blended frame between each of the game's 50; the game itself runs as always. Experimental.",
+    )
+    .with_aliases(&["fps_limit"])
+    .with_example("off"),
+    OptionSpec::new(
+        "vsync",
+        Kind::Toggle,
+        "Vsync",
+        "Waits for the screen's refresh, so the picture never tears.",
+    )
+    .with_example("on"),
+    OptionSpec::new(
+        "texture_filter",
+        Kind::Choice(FILTERS),
+        "Shader / Upscaler",
+        "How the game's picture is enlarged: CRT look, FSR, crisp pixels or smooth.",
+    )
+    .with_example("sharp"),
+    OptionSpec::new(
+        "gamepad_axes",
+        Kind::Toggle,
+        "Gamepad",
+        "Analog steering, trigger pedals and rumble from a modern gamepad.",
+    )
+    .with_example("on"),
+    OptionSpec::new(
+        "deadzone",
+        Kind::Range { min: 0, max: 30 },
+        "Deadzone",
+        "How far the stick moves before the car steers, in percent (the game had 8).",
+    )
+    .with_example("0"),
+    OptionSpec::new(
+        "rumble",
+        Kind::Range { min: 0, max: 100 },
+        "Rumble",
+        "How strongly the gamepad rumbles when you brake hard, 0 to 100.",
+    )
+    .with_example("60"),
+    OptionSpec::new(
+        "buttons",
+        Kind::Text,
+        "Buttons",
+        "Gamepad buttons: modern, original, or 8 button numbers (accelerate, back, camera, gear down, brake, gear up, select, start).",
+    )
+    .with_example("modern"),
+    OptionSpec::new(
+        "scaler",
+        Kind::Choice(SCALERS),
+        "Scaler",
+        "Linux: how gamescope enlarges the game to the screen (remembered, read by screamer-play).",
+    )
+    .helper_owned()
+    .with_example("fsr"),
+];
 
-# Where the launcher keeps its private, writable runtime copy of the game.
-#runtime =
+/// The row of `key` (canonical key or alias).
+pub fn option(key: &str) -> &'static OptionSpec {
+    spec::find(OPTIONS, key).unwrap_or_else(|| panic!("no option row {key}"))
+}
 
-# Where your saves (*.SAV, CHOICE.DAT, REPLAYS/*.RPL) are kept.
-#saves =
+pub fn template() -> String {
+    spec::template(
+        "Screamer Trilogy (Screamer / Screamer 2 / Screamer Rally) launcher settings.\n\n\
+         One setting per line as key = value; lines starting with # are comments. \
+         A setting left out uses the launcher's default. Command-line flags \
+         (--game, --which, --resolution, ...) override this file for one run; \
+         --game, --which and --scaler are remembered.",
+        OPTIONS,
+    )
+}
 
-# Optional path to a custom dosbox-staging binary.
-#dosbox =
+/// The first `launcher.cfg`: the template with the recommended look for
+/// `screen` saved explicitly (the Steam Deck look on a Deck, else
+/// Enhanced), so the defaults are the recommended experience.
+pub fn first_run(screen: Option<(u32, u32)>) -> String {
+    let mut form = crate::form::Form::new(&Settings::default(), screen);
+    form.set_look(crate::form::recommended(screen), screen);
+    let mut s = form.settings();
+    // Folders stay unset until the player picks them.
+    s.game = None;
+    s.saves = None;
+    save_keys(&template(), &s, crate::form::WINDOW_KEYS)
+}
 
-# Graphics renderer: auto, 3dfx, svga16, svga8, or vga.
-renderer = auto
-
-# Display resolution, e.g. 1920x1080, fullscreen, or original.
-resolution = 1920x1080
-
-# True 16:9 Hor+ widescreen 3D camera projection (expands horizontal FOV by
-# 4/3 inside SetCamera3D instead of stretching the 4:3 image).
-widescreen = true
-
-# Reduce scenery/object pop-in. Enhanced modes extend Screamer's managed
-# animations by 20% and double Screamer 2/Rally's admission radius.
-extended_draw_distance = true
-
-# Frame-rate target: 30 is the unchanged original timing, 50 is the smooth native
-# enhanced timing, and 100 enables experimental 2x GPU Optical-Flow Frame Generation.
-fps_limit = 50
-
-# Wait for vertical refresh before presenting each frame.
-vsync = true
-
-# Shader / Upscaler: sharp (nearest-neighbour pixel art), smooth (bilinear),
-# fsr (AMD FSR 1.0 EASU+RCAS), or original (CRT).
-texture_filter = sharp
-
-# Modern gamepad analog steering & independent L2/R2 analog triggers.
-gamepad_axes = true
-
-# Gamepad steering deadzone in percent (0 removes the hardcoded 7.8% deadzone).
-deadzone = 0
-
-# Gamepad rumble strength when braking hard in a race (0-100).
-rumble = 60
-
-# Pad buttons: modern, original, or 8 comma-separated button numbers.
-buttons = modern
-
-# Linux (screamer-play) only: gamescope upscaling filter (nearest, pixel, fsr, linear).
-scaler = fsr
-";
-
-pub const USAGE: &str = concat!(
-    "ScreamerLauncher ",
-    env!("CARGO_PKG_VERSION"),
-    "\n\n",
-    "\
-ScreamerLauncher [1|2|rally] [options]
-
-  --which <1|2|rally>      select game: screamer (1), screamer2 (2), or screamer-rally (rally)
-  --game <folder>          the trilogy root folder or a single game folder (remembered)
-  --saves <folder>         where your saves are kept
-  --runtime <folder>       where the launcher keeps its private runtime copy
-  --dosbox <path>          explicit path to dosbox-staging executable
-  --renderer <mode>        auto, 3dfx, svga16, svga8, or vga
-  --resolution <WxH>       output resolution, e.g. 3840x2160, or original
-  --widescreen on|off      Hor+ 16:9 widescreen 3D camera projection
-  --extended-draw-distance on|off  reduce scenery/object pop-in
-  --fps-limit <n>|off      30 original, 50 native, or 100 frame generation
-  --vsync on|off           wait for the screen's refresh
-  --texture-filter <f>     original, fsr, smooth, or sharp
-  --gamepad-axes on|off    proportional analog steering & L2/R2 triggers
-  --deadzone <0-30>        analog steering deadzone percent (0 removes 7.8% deadzone)
-  --rumble <0-100>|off     gamepad rumble strength when braking hard
-  --buttons <layout>       pad buttons: original, modern, or 8 numbers
-
-These override launcher.cfg for one run (--game and --which are remembered).
-Without options the settings window opens first.
-
-  --no-window              play with the saved settings, no window
-  --settings [--linux]     only the settings window (exit 0: play, 3: closed)
-
-ScreamerLauncher --check [--game <folder>] [--which <1|2|rally>]
-  checks all discovered games in the trilogy folder and verifies all binary fixes
-
-ScreamerLauncher --controllers
-  lists the connected gamepads"
-);
+/// The `--help` text.
+pub fn usage() -> String {
+    format!(
+        "ScreamerLauncher {}\n\n\
+ScreamerLauncher [1|2|rally] [options]\n\n\
+Options (the same keys in launcher.cfg; they override it for one run,\n\
+--game, --which and --scaler are remembered):\n\
+{}\n\
+Without options the settings window opens first.\n\n\
+  --no-window              play with the saved settings, no window\n\
+  --settings [--linux]     only the settings window; exit 0: Play pressed,\n\
+                           3: closed without Play, 4: no window possible\n\
+                           (play with the saved settings)\n\
+  --check [--game <folder>] [--which <1|2|rally>]\n\
+                           check every game found in the folder and every\n\
+                           binary fix, without playing\n\
+  --controllers            list the connected gamepads\n\
+  --help                   this text\n\n\
+resolution takes WIDTHxHEIGHT, fullscreen (the screen's size) or original.\n\
+Exit codes: 0 played or checked, 2 an error (see launcher.log next to\n\
+launcher.cfg), otherwise the game's own.",
+        env!("CARGO_PKG_VERSION"),
+        spec::usage(OPTIONS, KeyStyle::Underscore)
+    )
+}
 
 pub const ORIGINAL: (u32, u32) = (0, 0);
 pub const FULLSCREEN: (u32, u32) = (1, 1);
-
-/// `WIDTHxHEIGHT` (320x200 to 7680x4320), `original`/`off` or
-/// `fullscreen`/`full`/`desktop`, as [`ORIGINAL`] and [`FULLSCREEN`].
-fn parse_resolution(v: &str) -> Option<(u32, u32)> {
-    match cfg::parse_resolution(v, (320, 200), (7680, 4320), cfg::ORIGINAL_OR_FULLSCREEN)? {
-        Resolution::Original => Some(ORIGINAL),
-        Resolution::Fullscreen => Some(FULLSCREEN),
-        Resolution::Size(w, h) => Some((w, h)),
-    }
-}
 
 /// The race size to give DOSBox on a screen of `screen` pixels. DOSBox
 /// cannot open a window larger than the screen (it rejects the setting), so
@@ -332,129 +451,84 @@ fn above_1080p((w, h): (u32, u32)) -> bool {
     w > 1920 || h > 1080
 }
 
-fn parse_percent(v: &str) -> Option<u32> {
-    let v = v.trim();
-    if v.eq_ignore_ascii_case("off") {
-        return Some(0);
+/// Older spellings, read as today's: a game number (`which = 2`), a
+/// renderer's executable name, `deadzone`/`rumble` `off`, and the old
+/// `fps_limit` (30, 50 or 100 frames per second; only 60 and above ever
+/// changed anything: frame generation) as `frame_generation`.
+pub fn normalize<'a>(key: &str, value: &'a str) -> Cow<'a, str> {
+    let owned = |s: &str| Cow::Owned(s.to_string());
+    match key {
+        "which" | "play" => Game::parse(value).map_or(Cow::Borrowed(value), |g| owned(g.slug())),
+        "renderer" => RendererChoice::parse(value).map_or(Cow::Borrowed(value), |r| owned(r.key())),
+        "deadzone" | "rumble" if value.trim().eq_ignore_ascii_case("off") => owned("0"),
+        "fps_limit" => {
+            let v = value.trim();
+            let fps = if v.eq_ignore_ascii_case("off") {
+                Some(0)
+            } else {
+                v.parse::<u32>()
+                    .ok()
+                    .filter(|f| *f == 0 || (10..=1000).contains(f))
+            };
+            match fps {
+                Some(f) => owned(cfg::on_off(f >= 60)),
+                None => Cow::Borrowed(value),
+            }
+        }
+        _ => Cow::Borrowed(value),
     }
-    v.parse().ok().filter(|p| *p <= 100)
 }
 
-fn parse_fps(v: &str) -> Option<u32> {
-    let v = v.trim();
-    if v.eq_ignore_ascii_case("off") || v == "0" {
-        return Some(0);
-    }
-    let f: u32 = v.parse().ok()?;
-    (10..=1000).contains(&f).then_some(f)
+/// Why the command line was not taken.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArgsError {
+    /// `--help`, `-h` or `/?`.
+    Help,
+    /// A bad flag or value: the message, without the usage.
+    Bad(String),
 }
-
-/// The keys the command line takes as `--flag value` (`--play` is
-/// `--which`; `scaler` is only read from the file, by `screamer-play`).
-const FLAG_KEYS: &[&str] = &[
-    "which",
-    "play",
-    "game",
-    "runtime",
-    "saves",
-    "dosbox",
-    "renderer",
-    "resolution",
-    "widescreen",
-    "extended_draw_distance",
-    "fps_limit",
-    "vsync",
-    "texture_filter",
-    "gamepad_axes",
-    "deadzone",
-    "rumble",
-    "buttons",
-];
 
 impl Settings {
     pub fn parse_file(text: &str) -> (Settings, Vec<String>) {
         let mut s = Settings::default();
-        let warnings = cfg::parse(text, FILE_NAME, |key, value| match key {
-            "play" => Err(Rejected::Unknown),
-            _ => s.apply(key, value, false),
+        let warnings = cfg::parse(text, FILE_NAME, |key, value| {
+            let value = normalize(key, value);
+            spec::dispatch(OPTIONS, key, &value, &mut |key, value| s.apply(key, value))
         });
         (s, warnings)
     }
 
-    /// Takes one setting from `launcher.cfg` or, with `flag`, from its
-    /// `--flag` (the two word what a value needs differently).
-    fn apply(&mut self, key: &str, value: &str, flag: bool) -> Result<(), Rejected> {
-        let needs = |file: &str, cli: &str| Rejected::needs(if flag { cli } else { file });
-        match key {
-            "which" | "play" => {
-                self.which = Some(Game::parse(value).ok_or_else(|| {
-                    needs(
-                        "screamer, screamer2, or screamer-rally",
-                        "1 (screamer), 2 (screamer2), or rally (screamer-rally)",
-                    )
-                })?);
+    /// Takes one checked value from `launcher.cfg` or a flag.
+    pub fn apply(&mut self, key: &str, value: Value) -> Result<(), Rejected> {
+        let path = |t: &str| Some(PathBuf::from(t));
+        match (key, value) {
+            ("which", Value::Choice(v)) => self.which = Game::parse(v),
+            ("game", Value::Text(t)) => self.game = path(t),
+            ("saves", Value::Text(t)) => self.saves = path(t),
+            ("runtime", Value::Text(t)) => self.runtime = path(t),
+            ("dosbox", Value::Text(t)) => self.dosbox = path(t),
+            ("renderer", Value::Choice(v)) => self.renderer = RendererChoice::parse(v),
+            ("resolution", Value::Size(r)) => {
+                self.resolution = Some(match r {
+                    Resolution::Original => ORIGINAL,
+                    Resolution::Fullscreen => FULLSCREEN,
+                    Resolution::Size(w, h) => (w, h),
+                })
             }
-            "game" => self.game = Some(value.into()),
-            "runtime" => self.runtime = Some(value.into()),
-            "saves" => self.saves = Some(value.into()),
-            "dosbox" => self.dosbox = Some(value.into()),
-            "renderer" => {
-                let what = "auto, 3dfx, svga16, svga8, or vga";
-                self.renderer =
-                    Some(RendererChoice::parse(value).ok_or_else(|| needs(what, what))?);
+            ("widescreen", Value::Toggle(on)) => self.widescreen = Some(on),
+            ("extended_draw_distance", Value::Toggle(on)) => self.extended_draw_distance = Some(on),
+            ("frame_generation", Value::Toggle(on)) => self.frame_generation = Some(on),
+            ("vsync", Value::Toggle(on)) => self.vsync = Some(on),
+            ("texture_filter", Value::Choice(v)) => self.texture_filter = TextureFilter::parse(v),
+            ("gamepad_axes", Value::Toggle(on)) => self.gamepad_axes = Some(on),
+            ("deadzone", Value::Number(n)) => self.deadzone = Some(n),
+            ("rumble", Value::Number(n)) => self.rumble = Some(n),
+            ("buttons", Value::Text(t)) => {
+                self.buttons = Some(parse_buttons(t).ok_or_else(|| {
+                    Rejected::needs("modern, original or 8 button numbers from 0 to 32")
+                })?)
             }
-            "resolution" => {
-                self.resolution = Some(parse_resolution(value).ok_or_else(|| {
-                    needs(
-                        "WIDTHxHEIGHT (320x200 to 7680x4320)",
-                        "WIDTHxHEIGHT or original",
-                    )
-                })?);
-            }
-            "widescreen" | "extended_draw_distance" | "gamepad_axes" | "vsync" => {
-                let on =
-                    cfg::parse_bool(value).ok_or_else(|| needs("true or false", cfg::ON_OFF))?;
-                match key {
-                    "widescreen" => self.widescreen = Some(on),
-                    "extended_draw_distance" => self.extended_draw_distance = Some(on),
-                    "gamepad_axes" => self.gamepad_axes = Some(on),
-                    _ => self.vsync = Some(on),
-                }
-            }
-            "fps_limit" => {
-                self.fps_limit = Some(parse_fps(value).ok_or_else(|| {
-                    needs("a number from 10 to 1000 or off", "10 to 1000 or off")
-                })?);
-            }
-            "texture_filter" => {
-                self.texture_filter = Some(parse_filter(value).ok_or_else(|| {
-                    needs(
-                        "original, smooth, or sharp",
-                        "original, fsr, smooth, or sharp",
-                    )
-                })?);
-            }
-            "deadzone" => {
-                self.deadzone = Some(
-                    parse_percent(value)
-                        .filter(|d| *d <= 30)
-                        .ok_or_else(|| needs("a number from 0 to 30", "0 to 30"))?,
-                );
-            }
-            "rumble" => {
-                self.rumble =
-                    Some(parse_percent(value).ok_or_else(|| {
-                        needs("a number from 0 to 100 or off", "0 to 100 or off")
-                    })?);
-            }
-            "buttons" => {
-                let what = "original, modern, or 8 button numbers";
-                self.buttons = Some(parse_buttons(value).ok_or_else(|| needs(what, what))?);
-            }
-            "scaler" => {
-                let what = "nearest, pixel, fsr, or linear";
-                self.scaler = Some(Scaler::parse(value).ok_or_else(|| needs(what, what))?);
-            }
+            ("scaler", Value::Choice(v)) => self.scaler = Scaler::parse(v),
             _ => return Err(Rejected::Unknown),
         }
         Ok(())
@@ -471,7 +545,7 @@ impl Settings {
             resolution: over.resolution.or(self.resolution),
             widescreen: over.widescreen.or(self.widescreen),
             extended_draw_distance: over.extended_draw_distance.or(self.extended_draw_distance),
-            fps_limit: over.fps_limit.or(self.fps_limit),
+            frame_generation: over.frame_generation.or(self.frame_generation),
             vsync: over.vsync.or(self.vsync),
             texture_filter: over.texture_filter.or(self.texture_filter),
             gamepad_axes: over.gamepad_axes.or(self.gamepad_axes),
@@ -490,12 +564,12 @@ impl Settings {
         self.rumble.unwrap_or(60).min(100)
     }
 
-    pub fn fps_cap(&self) -> Option<u32> {
-        match self.fps_limit {
-            Some(0) => None,
-            Some(f) => Some(f),
-            None => Some(50),
-        }
+    pub fn frame_generation_enabled(&self) -> bool {
+        self.frame_generation.unwrap_or(false)
+    }
+
+    pub fn vsync_enabled(&self) -> bool {
+        self.vsync.unwrap_or(true)
     }
 
     pub fn race_resolution(&self) -> Option<(u32, u32)> {
@@ -522,15 +596,15 @@ impl Settings {
         self.buttons.unwrap_or(DEFAULT_BUTTONS)
     }
 
-    /// Optional binary fixes (`E1`, `E2`, `E5`, `E6`) that these settings turn off.
+    pub fn renderer_choice(&self) -> RendererChoice {
+        self.renderer.unwrap_or(RendererChoice::Auto)
+    }
+
+    /// Optional binary fixes (`E2`, `E5`, `E6`) that these settings turn
+    /// off. (`E1`, the frame pacing, has no bytes: every unlock broke the
+    /// physics; see docs/04.)
     pub fn skipped_fixes(&self) -> Vec<&'static str> {
         let mut skip = Vec::new();
-        // E1 unlocks the 30 FPS PIT timer wait loop (`fdiv 2.0 -> 1.0`).
-        // E1 is required for both native 50 Hz and optional 100 FPS presentation.
-        // An explicit 30 (or legacy `off`/0) selects unchanged original timing.
-        if self.fps_cap().unwrap_or(30) <= 30 {
-            skip.push("E1");
-        }
         // E2 scales horizontal camera basis M00, M01, M02 by 3/4 for 16:9 Hor+.
         if !self.widescreen_enabled() {
             skip.push("E2");
@@ -547,198 +621,87 @@ impl Settings {
 
     /// The command line's settings: `--key value` pairs and a bare game
     /// name (`1`, `2`, `rally`, ...), which selects the game as `--which`.
-    pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Settings, String> {
+    pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Settings, ArgsError> {
         let mut words = Vec::new();
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
-            if cfg::flag_key(&arg).is_some_and(|key| FLAG_KEYS.contains(&key.as_str())) {
+            let row =
+                cfg::flag_key(&arg).and_then(|key| spec::find(OPTIONS, &key).map(|r| (key, r)));
+            if let Some((key, _)) = row {
                 words.push(arg);
-                words.extend(args.next());
-            } else if Game::parse(&arg).is_some() {
-                words.extend(["--which".to_string(), arg]);
+                words.extend(args.next().map(|v| normalize(&key, &v).into_owned()));
+            } else if let Some(game) = Game::parse(&arg) {
+                words.extend(["--which".to_string(), game.slug().to_string()]);
             } else {
                 words.push(arg);
             }
         }
         let mut s = Settings::default();
-        cfg::parse_args(words, FLAG_KEYS, &[], |key, value| {
-            s.apply(key, value, true)
+        spec::parse_args(words, KeyStyle::Underscore, OPTIONS, &[], |key, value| {
+            s.apply(key, value)
         })
         .map_err(|e| match e {
-            ArgError::Help(_) => USAGE.to_string(),
-            e => format!("{e}\n\n{USAGE}"),
+            ArgError::Help(_) => ArgsError::Help,
+            e => ArgsError::Bad(e.to_string()),
         })?;
         Ok(s)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn skipped_fixes_follow_settings() {
-        // Smart defaults enable E1, E2, E5, and E6 out of the box.
-        let def = Settings::default();
-        assert!(def.skipped_fixes().is_empty());
-
-        let enhanced = Settings {
-            fps_limit: Some(100),
-            widescreen: Some(true),
-            gamepad_axes: Some(true),
-            deadzone: Some(0),
-            ..Settings::default()
-        };
-        assert!(enhanced.skipped_fixes().is_empty());
-
-        let orig = Settings {
-            fps_limit: Some(0),
-            widescreen: Some(false),
-            gamepad_axes: Some(false),
-            extended_draw_distance: Some(false),
-            ..Settings::default()
-        };
-        assert_eq!(orig.skipped_fixes(), vec!["E1", "E2", "E5", "E6"]);
-    }
-
-    #[test]
-    fn parses_file_and_args() {
-        let (s, warn) = Settings::parse_file(
-            "game = /games/screamer\nrenderer = 3dfx\nresolution = 1920x1080\nwidescreen = true\nextended_draw_distance = false\nfps_limit = 60\n",
-        );
-        assert!(warn.is_empty());
-        assert_eq!(s.renderer_choice(), RendererChoice::Voodoo);
-        assert_eq!(s.resolution, Some((1920, 1080)));
-        assert_eq!(s.widescreen, Some(true));
-        assert_eq!(s.extended_draw_distance, Some(false));
-        assert_eq!(s.fps_limit, Some(60));
-
-        // Sizes above 1080p are kept as written.
-        let (s_large, warn) = Settings::parse_file("resolution = 3840x2160\n");
-        assert!(warn.is_empty());
-        assert_eq!(s_large.resolution, Some((3840, 2160)));
-        let (s_large, _) = Settings::parse_file("resolution = 2560X1440\n");
-        assert_eq!(s_large.race_resolution(), Some((2560, 1440)));
-
-        let args =
-            Settings::parse_args(["--extended-draw-distance".to_string(), "off".to_string()])
-                .unwrap();
-        assert_eq!(args.extended_draw_distance, Some(false));
-    }
-
-    #[test]
-    fn the_command_line_and_its_messages_are_unchanged() {
-        let args = |a: &[&str]| Settings::parse_args(a.iter().map(|s| s.to_string()));
-        assert_eq!(args(&["rally"]).unwrap().which, Some(Game::ScreamerRally));
-        assert_eq!(args(&["--play", "2"]).unwrap().which, Some(Game::Screamer2));
-        let s = args(&["--game", "rally", "1", "--vsync", "off"]).unwrap();
-        assert_eq!(s.game, Some(PathBuf::from("rally")));
-        assert_eq!((s.which, s.vsync), (Some(Game::Screamer), Some(false)));
-        let err = |a: &[&str]| args(a).unwrap_err();
-        assert_eq!(
-            err(&["--deadzone", "50"]),
-            format!("--deadzone needs 0 to 30, not 50\n\n{USAGE}")
-        );
-        assert_eq!(
-            err(&["--widescreen", "maybe"]),
-            format!("--widescreen needs on or off, not maybe\n\n{USAGE}")
-        );
-        assert_eq!(
-            err(&["--which", "4"]),
-            format!(
-                "--which needs 1 (screamer), 2 (screamer2), or rally (screamer-rally), not 4\n\n{USAGE}"
-            )
-        );
-        assert_eq!(err(&["--game"]), format!("--game needs a value\n\n{USAGE}"));
-        assert_eq!(
-            err(&["--scaler", "fsr"]),
-            format!("unknown argument --scaler\n\n{USAGE}")
-        );
-        assert_eq!(err(&["--help"]), USAGE);
-    }
-
-    #[test]
-    fn file_values_and_their_warnings() {
-        let (s, warn) = Settings::parse_file(
-            "renderer = glide\nresolution = 2560X1440\nrumble = loud\nscaler = pixel\n",
-        );
-        assert_eq!(s.renderer, Some(RendererChoice::Voodoo));
-        assert_eq!(s.resolution, Some((2560, 1440)));
-        assert_eq!(s.scaler, Some(Scaler::Pixel));
-        assert_eq!(
-            warn,
-            ["launcher.cfg line 3: rumble needs a number from 0 to 100 or off, not \"loud\""]
-        );
-        for (word, res) in [
-            ("fullscreen", FULLSCREEN),
-            ("Full", FULLSCREEN),
-            ("desktop", FULLSCREEN),
-            ("original", ORIGINAL),
-            ("off", ORIGINAL),
-        ] {
-            let (s, warn) = Settings::parse_file(&format!("resolution = {word}\n"));
-            assert_eq!((s.resolution, warn.len()), (Some(res), 0), "{word}");
-        }
-        let (s, warn) = Settings::parse_file("resolution = 100x100\nplay = 1\n");
-        assert_eq!((s.resolution, s.which), (None, None));
-        assert_eq!(warn.len(), 2, "{warn:?}");
-        assert!(warn[0].contains("resolution needs WIDTHxHEIGHT (320x200 to 7680x4320)"));
-        assert!(warn[1].contains("unknown setting \"play\""));
-    }
-
-    #[test]
-    fn help_texts_promise_only_what_the_code_does() {
-        // The hooks feed rumble from brake load only (compute_rumble(brake_load, 0, ..)).
-        let rumble = TEMPLATE
-            .lines()
-            .find(|l| l.contains("rumble strength"))
-            .unwrap();
-        assert!(rumble.contains("braking"));
-        for unsupported in ["kerb", "gravel", "skid", "wall"] {
-            assert!(!rumble.contains(unsupported), "{rumble}");
-        }
-        // --controllers lists pads; it does not log events.
-        assert!(USAGE.contains("--controllers\n  lists the connected gamepads"));
-        assert!(!USAGE.contains("axis/button events"));
-    }
-
-    #[test]
-    fn sizes_larger_than_the_screen_become_fullscreen_with_a_warning() {
-        let screen = (2560, 1440);
-        assert_eq!(
-            fit_to_screen(Some((2560, 1440)), screen),
-            (Some((2560, 1440)), None)
-        );
-        assert_eq!(fit_to_screen(None, screen), (None, None));
-        assert_eq!(
-            fit_to_screen(Some(FULLSCREEN), screen),
-            (Some(FULLSCREEN), None)
-        );
-        let (res, warn) = fit_to_screen(Some((3840, 2160)), screen);
-        assert_eq!(res, Some(FULLSCREEN));
-        assert!(warn.unwrap().contains("3840x2160"));
-        assert_eq!(
-            fit_to_screen(Some((1920, 1440)), (1920, 1080)).0,
-            Some(FULLSCREEN)
-        );
-        // Up to 1080p nothing changes, even on a smaller screen.
-        assert_eq!(
-            fit_to_screen(Some((1920, 1080)), (1280, 800)),
-            (Some((1920, 1080)), None)
-        );
-        assert_eq!(
-            fit_to_screen(Some((1600, 900)), (1280, 800)),
-            (Some((1600, 900)), None)
-        );
+/// The value `launcher.cfg` holds for `key` in `s`, as the window and the
+/// first run save it (`None`: the key stays unset).
+pub fn cfg_value(s: &Settings, key: &str) -> Option<String> {
+    let path = |p: &Option<PathBuf>| {
+        p.as_ref()
+            .map(|p| p.display().to_string())
+            .filter(|p| !p.trim().is_empty())
+    };
+    let toggle = |b: Option<bool>| b.map(|b| cfg::on_off(b).to_string());
+    match key {
+        "which" => s.which.map(|g| g.slug().to_string()),
+        "game" => path(&s.game),
+        "saves" => path(&s.saves),
+        "runtime" => path(&s.runtime),
+        "dosbox" => path(&s.dosbox),
+        "renderer" => s.renderer.map(|r| r.key().to_string()),
+        "resolution" => s.resolution.map(|r| match r {
+            ORIGINAL => "original".to_string(),
+            FULLSCREEN => "fullscreen".to_string(),
+            (w, h) => format!("{w}x{h}"),
+        }),
+        "widescreen" => toggle(s.widescreen),
+        "extended_draw_distance" => toggle(s.extended_draw_distance),
+        "frame_generation" => toggle(s.frame_generation),
+        "vsync" => toggle(s.vsync),
+        "texture_filter" => s.texture_filter.map(|f| f.key().to_string()),
+        "gamepad_axes" => toggle(s.gamepad_axes),
+        "deadzone" => s.deadzone.map(|d| d.to_string()),
+        "rumble" => s.rumble.map(|r| r.to_string()),
+        "buttons" => s.buttons.map(|b| buttons_value(&b)),
+        "scaler" => s.scaler.map(|k| k.key().to_string()),
+        _ => None,
     }
 }
 
-impl Settings {
-    pub fn renderer_choice(&self) -> RendererChoice {
-        self.renderer.unwrap_or(RendererChoice::Auto)
+/// `text` with every key of `keys` written from `s` (set, or cleared when
+/// `s` has no value); renamed keys' old lines are commented out.
+pub fn save_keys(text: &str, s: &Settings, keys: &[&str]) -> String {
+    let mut t = text.to_string();
+    for key in keys {
+        let row = option(key);
+        t = match cfg_value(s, key) {
+            Some(v) => spec::set_key(&t, row, &v),
+            None => {
+                let mut cleared = cfg::clear_key(&t, row.key);
+                for alias in row.aliases {
+                    cleared = cfg::clear_key(&cleared, alias);
+                }
+                cleared
+            }
+        };
     }
+    t
 }
-
 /// Hardware capabilities auto-detected from the user's machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MachineCapabilities {
@@ -763,18 +726,6 @@ impl MachineCapabilities {
             refresh_hz,
             is_steam_deck,
         }
-    }
-
-    pub fn summary_line(&self, is_3dfx: bool) -> String {
-        let voodoo_str = if is_3dfx {
-            "2× Voodoo (1280×960) + "
-        } else {
-            ""
-        };
-        format!(
-            "Auto-detected: {} · {}×{} @ {} Hz — {}FSR Super Res + 100 FPS Optical-Flow Frame Gen ready",
-            self.gpu_name, self.display_res.0, self.display_res.1, self.refresh_hz, voodoo_str
-        )
     }
 }
 

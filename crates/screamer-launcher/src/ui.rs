@@ -1,23 +1,35 @@
 //! The unified settings window (`egui` / `eframe`) for the Screamer trilogy:
 //! **Screamer (1995)**, **Screamer 2 (1996)**, and **Screamer Rally (1997)**.
 //!
-//! Styled to match `cmr-launcher`: left-hand full-height box art hero for the
-//! chosen game with smooth gradient fades into the dark tarmac chassis, top-right
-//! slanted livery stripes, condensed italic decal header, underline tabs, look
-//! cards with a gold `Recommended` tab, and per-game option capability checks
-//! that automatically gray out choices unsupported by the selected game.
+//! The chosen game's box art fills the left strip and fades into the navy
+//! chassis; slanted gold livery stripes top right, the game's name as a
+//! condensed italic decal, underline tabs, look cards with a gold
+//! `Recommended` badge. Choices a game does not have are greyed out with
+//! the reason. Every control comes from an option row
+//! ([`screamer_launcher::config::OPTIONS`]): its label names it, its
+//! description is the note under it, and the window records the keys it
+//! drew for the parity test.
+//!
+//! Keyboard: Tab moves between controls, ←/→ change a chip row, Space
+//! toggles, Enter plays. Gamepad: d-pad up/down moves between rows,
+//! left/right changes the row, A toggles, LB/RB switch tabs, Start plays.
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::rc::Rc;
 
+use rea_launcher::cfg::spec::OptionSpec;
 use rea_launcher::pad::{self as bits, Nav, PadNav};
 use rea_launcher_ui::eframe;
-use rea_launcher_ui::egui::{self, Align2, Color32, Key, Rect, TextureHandle, Vec2, pos2, vec2};
+use rea_launcher_ui::egui::{
+    self, Align2, Color32, Key, Rect, Response, TextureHandle, Vec2, pos2, vec2,
+};
+use rea_launcher_ui::spec as spec_ui;
 use rea_launcher_ui::theme::{self, Metrics, Palette, body, decal, semibold};
 use rea_launcher_ui::widgets::{self, Chip, ChipSize, Fade, GameCard, LookCard};
 use rea_launcher_ui::window::WindowFit;
 
-use screamer_launcher::config::{MachineCapabilities, RendererChoice, Settings};
+use screamer_launcher::config::{self, MachineCapabilities, RendererChoice, Scaler, Settings};
 use screamer_launcher::edition::Game;
 use screamer_launcher::form::{self, Form, Layout, Look};
 use screamer_launcher::runtime::{self, DiscoveredTrilogy};
@@ -76,6 +88,9 @@ const METRICS: Metrics = Metrics {
 const SIZE: Vec2 = vec2(form::WINDOW.0, form::WINDOW.1);
 const PHOTO_W: f32 = 284.0;
 
+/// The credit under the box art (owner decision 2026-11-02; THIRD_PARTY.md).
+const ART_CREDIT: &str = "Box art: Virgin Interactive. Scans: MobyGames";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     Play,
@@ -107,7 +122,7 @@ fn finish(
 }
 
 pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, ShowError> {
-    let mut outcome = Outcome::Closed;
+    let outcome = Rc::new(Cell::new(Outcome::Closed));
     let mut opened = false;
     // Native on Linux and Windows (never Wine): created at 1x, fitted to
     // the screen and its scale on the first frame.
@@ -115,24 +130,44 @@ pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, Sh
     let options = fit.native_options("Screamer Trilogy");
     let path = settings_path.to_path_buf();
     let text = text.to_string();
+    let shared = outcome.clone();
     let result = eframe::run_native(
         "Screamer Trilogy",
         options,
         Box::new(|cc| {
             opened = true;
             theme::install_with(&cc.egui_ctx, &PALETTE, &METRICS);
-            Ok(Box::new(Window::new(
-                &cc.egui_ctx,
-                fit,
+            let machine = MachineCapabilities::detect();
+            let mut window = Window::new(
                 path,
                 text,
                 linux,
-                &mut outcome,
-            )))
+                machine.display_res,
+                detect_controllers(),
+                shared,
+            );
+            window.tab = initial_tab();
+            Ok(Box::new(App { fit, window }))
         }),
     )
     .map_err(|e| e.to_string());
-    finish(opened, result, outcome)
+    finish(opened, result, outcome.get())
+}
+
+/// `SCREAMER_TAB` (picture, controls, buttons) opens that tab first (for
+/// screenshots).
+fn initial_tab() -> Tab {
+    match std::env::var("SCREAMER_TAB")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "picture" => Tab::Picture,
+        "controls" => Tab::Controls,
+        "buttons" => Tab::Buttons,
+        _ => Tab::Play,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,39 +178,82 @@ enum Tab {
     Buttons,
 }
 
-struct Window<'a> {
+const TABS: [(Tab, &str); 4] = [
+    (Tab::Play, "Play"),
+    (Tab::Picture, "Picture"),
+    (Tab::Controls, "Controls"),
+    (Tab::Buttons, "Buttons"),
+];
+
+/// A row the gamepad can focus (d-pad up/down), in the order drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Row {
+    Game,
+    Look,
+    Renderer,
+    Display,
+    Shader,
+    Scaler,
+    Widescreen,
+    DrawDistance,
+    Vsync,
+    FrameGeneration,
+    Gamepad,
+    Deadzone,
+    Rumble,
+    Layout,
+    /// One of [`form::ACTIONS`].
+    Action(usize),
+}
+
+/// The eframe app: the window plus its sizing.
+struct App {
+    fit: WindowFit,
+    window: Window,
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.fit.first_frame(ui.ctx());
+        for nav in self.window.pad.poll() {
+            self.window.handle_pad_action(nav, &ui.ctx().clone());
+        }
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(33));
+        self.window.draw(ui);
+    }
+}
+
+struct Window {
     form: Form,
     tab: Tab,
     focus_row: usize,
     pad: PadPoller,
-    fit: WindowFit,
     trilogy: DiscoveredTrilogy,
     checked: String,
-    machine: MachineCapabilities,
     screen: Option<(u32, u32)>,
     resolutions: Vec<(Option<(u32, u32)>, String)>,
     controllers: Vec<String>,
     linux: bool,
-    covers: [Option<TextureHandle>; 3],
+    covers: Option<[Option<TextureHandle>; 3]>,
     path: PathBuf,
     text: String,
     error: Option<String>,
     sized: bool,
-    outcome: &'a mut Outcome,
+    outcome: Rc<Cell<Outcome>>,
 }
 
-impl<'a> Window<'a> {
+impl Window {
     fn new(
-        ctx: &egui::Context,
-        fit: WindowFit,
         path: PathBuf,
         text: String,
         linux: bool,
-        outcome: &'a mut Outcome,
+        display: (u32, u32),
+        controllers: Vec<String>,
+        outcome: Rc<Cell<Outcome>>,
     ) -> Self {
         let (settings, _) = Settings::parse_file(&text);
-        let machine = MachineCapabilities::detect();
-        let screen = Some(machine.display_res);
+        let screen = Some(display);
         let mut form = Form::new(&settings, screen);
         let trilogy = check_trilogy(&form.game);
 
@@ -196,49 +274,19 @@ impl<'a> Window<'a> {
             .is_none_or(|d| d.can_use_dos_glide());
         form.set_which(form.which, has_glide, screen);
 
-        let initial_tab = match std::env::var("SCREAMER_TAB")
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "picture" => Tab::Picture,
-            "controls" => Tab::Controls,
-            "buttons" => Tab::Buttons,
-            _ => Tab::Play,
-        };
-
         let resolutions = form::resolutions(screen, form.picture.resolution);
         Self {
             checked: form.game.clone(),
             trilogy,
             form,
-            tab: initial_tab,
+            tab: Tab::Play,
             focus_row: 0,
             pad: PadPoller::default(),
-            fit,
-            machine,
             screen,
             resolutions,
-            controllers: detect_controllers(),
+            controllers,
             linux,
-            covers: [
-                widgets::load_jpeg(
-                    ctx,
-                    "cover_s1",
-                    include_bytes!("../assets/cover_screamer1.jpg"),
-                ),
-                widgets::load_jpeg(
-                    ctx,
-                    "cover_s2",
-                    include_bytes!("../assets/cover_screamer2.jpg"),
-                ),
-                widgets::load_jpeg(
-                    ctx,
-                    "cover_sr",
-                    include_bytes!("../assets/cover_screamer_rally.jpg"),
-                ),
-            ],
+            covers: None,
             path,
             text,
             error: None,
@@ -280,14 +328,779 @@ impl<'a> Window<'a> {
         if let Some(dir) = self.path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        match std::fs::write(&self.path, saved) {
+        match rea_launcher::fsx::write_atomic(&self.path, saved) {
             Ok(()) => {
-                *self.outcome = Outcome::Play;
+                self.outcome.set(Outcome::Play);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Err(e) => self.error = Some(format!("Can't save settings: {e}")),
         }
     }
+
+    /// The rows of the current tab the gamepad steps through.
+    fn rows(&self) -> Vec<Row> {
+        match self.tab {
+            Tab::Play => vec![Row::Game, Row::Look],
+            Tab::Picture => {
+                let mut rows = vec![Row::Renderer, Row::Display, Row::Shader];
+                if self.linux {
+                    rows.push(Row::Scaler);
+                }
+                rows.extend([
+                    Row::Widescreen,
+                    Row::DrawDistance,
+                    Row::Vsync,
+                    Row::FrameGeneration,
+                ]);
+                rows
+            }
+            Tab::Controls => vec![Row::Gamepad, Row::Deadzone, Row::Rumble],
+            Tab::Buttons => std::iter::once(Row::Layout)
+                .chain((0..form::ACTIONS.len()).map(Row::Action))
+                .collect(),
+        }
+    }
+
+    fn focused(&self, row: Row) -> bool {
+        self.rows().get(self.focus_row) == Some(&row)
+    }
+
+    fn draw(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        if !self.sized {
+            self.measure_screen(&ctx);
+        }
+        if self.covers.is_none() {
+            self.covers = Some(load_covers(&ctx));
+        }
+        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+
+        let full = ui.max_rect();
+        ui.painter().rect_filled(full, 0.0, CHASSIS);
+        self.draw_box_art(ui, full);
+        widgets::stripes(
+            ui.painter(),
+            full,
+            &[(30.0, GOLD), (16.0, GOLD.gamma_multiply(0.65))],
+        );
+
+        let content = Rect::from_min_max(
+            pos2(full.left() + PHOTO_W + 16.0, full.top() + 22.0),
+            pos2(full.right() - 28.0, full.bottom() - 22.0),
+        );
+        let footer_h = 50.0;
+        let body = Rect::from_min_max(
+            content.min,
+            pos2(content.right(), content.bottom() - footer_h - 12.0),
+        );
+
+        ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+            ui.label(
+                egui::RichText::new(self.form.which.short_title())
+                    .font(decal(44.0))
+                    .color(INK),
+            );
+            ui.add_space(-6.0);
+            self.status_line(ui);
+            ui.add_space(4.0);
+            if widgets::tabs_bar(ui, &TABS, &mut self.tab) {
+                self.focus_row = 0;
+            }
+            ui.add_space(12.0);
+            let tab = self.tab;
+            widgets::tab_body(ui, format!("{tab:?}"), |ui| match tab {
+                Tab::Play => self.play_tab(ui),
+                Tab::Picture => self.picture_tab(ui),
+                Tab::Controls => self.controls_tab(ui),
+                Tab::Buttons => self.buttons_tab(ui),
+            });
+        });
+
+        let footer = Rect::from_min_max(
+            pos2(content.left(), content.bottom() - footer_h),
+            content.max,
+        );
+        let hint = format!(
+            "Settings are saved when you press Play ({}).",
+            self.form.which.display_name()
+        );
+        if widgets::footer(ui, footer, &hint, self.ready()).clicked() {
+            self.play(&ctx);
+        }
+
+        if ctx.input(|i| i.key_pressed(Key::Enter)) && !ctx.egui_wants_keyboard_input() {
+            self.play(&ctx);
+        }
+        if self.form.game != self.checked {
+            self.checked = self.form.game.clone();
+            self.trilogy = check_trilogy(&self.form.game);
+            if let Some(direct) = self.trilogy.direct_game {
+                self.form.which = direct;
+            } else if self.trilogy.get(self.form.which).is_none()
+                && let Some(first) = Game::ALL
+                    .into_iter()
+                    .find(|&g| self.trilogy.get(g).is_some())
+            {
+                self.form.which = first;
+            }
+            let has_glide = self.has_dos_glide_for_current();
+            self.form.set_which(self.form.which, has_glide, self.screen);
+        }
+    }
+
+    fn draw_box_art(&self, ui: &egui::Ui, full: Rect) {
+        let rect = Rect::from_min_size(full.min, vec2(PHOTO_W, full.height()));
+        let p = ui.painter().with_clip_rect(rect);
+        if let Some(Some(tex)) = self.covers.as_ref().map(|c| &c[self.form.which.index()]) {
+            let [w, h] = tex.size();
+            let img_aspect = w as f32 / h as f32;
+            let rect_aspect = rect.width() / rect.height();
+            let uv = if img_aspect > rect_aspect {
+                let u_span = (rect_aspect / img_aspect).min(1.0);
+                let u_pad = (1.0 - u_span) * 0.5;
+                Rect::from_min_max(pos2(u_pad, 0.0), pos2(1.0 - u_pad, 1.0))
+            } else {
+                let v_span = (img_aspect / rect_aspect).min(1.0);
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, v_span))
+            };
+            p.image(tex.id(), rect, uv, Color32::WHITE);
+        }
+        // Fades into the chassis: the text below sits on solid navy.
+        widgets::gradient(
+            &p,
+            Rect::from_min_max(
+                pos2(rect.left() + rect.width() * 0.52, rect.top()),
+                rect.max,
+            ),
+            CHASSIS,
+            Fade::Right,
+        );
+        widgets::gradient(
+            &p,
+            Rect::from_min_max(pos2(rect.left(), rect.bottom() - 190.0), rect.max),
+            CHASSIS,
+            Fade::Down,
+        );
+        let x = rect.left() + 20.0;
+        let y = rect.bottom() - 20.0;
+        p.text(
+            pos2(x, y),
+            Align2::LEFT_BOTTOM,
+            ART_CREDIT,
+            body(11.0),
+            MUTED,
+        );
+        p.text(
+            pos2(x, y - 18.0),
+            Align2::LEFT_BOTTOM,
+            self.form.which.studio_credit(),
+            body(13.0),
+            MUTED,
+        );
+        p.text(
+            pos2(x, y - 36.0),
+            Align2::LEFT_BOTTOM,
+            self.form.which.display_name(),
+            semibold(19.0),
+            INK,
+        );
+    }
+
+    fn status_line(&self, ui: &mut egui::Ui) {
+        let (text, color) = if let Some(err) = &self.error {
+            (err.clone(), ERROR)
+        } else if let Some(disc) = self.trilogy.get(self.form.which) {
+            let exe_summary = disc
+                .select_executable(self.form.picture.renderer)
+                .map(|e| format!("{} ({})", e.file_name, e.edition.role_label()))
+                .unwrap_or_else(|_| "Ready".into());
+            (format!("Ready: {exe_summary}. Press Play or Enter."), MUTED)
+        } else if self.form.game.trim().is_empty() {
+            (
+                "First, show the launcher where your Screamer folder is.".to_string(),
+                MUTED,
+            )
+        } else {
+            (
+                format!(
+                    "{} was not found in this folder.",
+                    self.form.which.display_name()
+                ),
+                ERROR,
+            )
+        };
+        ui.label(egui::RichText::new(text).font(body(14.0)).color(color));
+    }
+
+    fn play_tab(&mut self, ui: &mut egui::Ui) {
+        let gap = 10.0;
+        widgets::heading_focused(ui, "Game in the trilogy", self.focused(Row::Game));
+        ui.add_space(2.0);
+        let card_w = (ui.available_width() - 2.0 * gap) / 3.0;
+        let mut chosen_game = None;
+        let r0 = ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for game in Game::ALL {
+                let installed = self.trilogy.get(game).is_some();
+                let subtitle = match self.trilogy.get(game) {
+                    Some(disc) => {
+                        let mode = disc
+                            .select_executable(self.form.picture.renderer)
+                            .map(|e| e.edition.role_label())
+                            .unwrap_or("Ready");
+                        format!("{}, {mode}", game.year())
+                    }
+                    None if self.form.game.trim().is_empty() => {
+                        format!("{}, set the folder below", game.year())
+                    }
+                    None => format!("{}, not in folder", game.year()),
+                };
+                let card = GameCard {
+                    title: game.short_title(),
+                    subtitle: &subtitle,
+                    selected: self.form.which == game,
+                    installed,
+                };
+                if widgets::game_card(ui, vec2(card_w, 64.0), &card).clicked() {
+                    chosen_game = Some(game);
+                }
+            }
+        });
+        spec_ui::mark_rendered(ui.ctx(), "which");
+        widgets::focus_bar(ui, r0.response.rect, self.focused(Row::Game));
+        if let Some(g) = chosen_game {
+            self.choose_game(g);
+        }
+
+        ui.add_space(8.0);
+        let row = config::option("game");
+        widgets::heading(ui, row.label);
+        let hint = "Folder with Screamer, Screamer 2, Screamer Rally, or all three";
+        if widgets::folder_field(ui, &mut self.form.game, hint, || {
+            pick_folder_dialog("Choose your Screamer or trilogy folder")
+        }) {
+            self.error = None;
+        }
+        spec_ui::mark_rendered(ui.ctx(), "game");
+        let (note, color) = if self.form.game.trim().is_empty() {
+            (row.description.to_string(), MUTED)
+        } else if self.trilogy.any_found() {
+            let found_names: Vec<&str> = Game::ALL
+                .into_iter()
+                .filter(|&g| self.trilogy.get(g).is_some())
+                .map(|g| g.display_name())
+                .collect();
+            (format!("Found: {}", found_names.join(", ")), GOLD)
+        } else if let Some(unknown) = self.trilogy.unknown.first() {
+            (unknown.message(), ERROR)
+        } else {
+            (
+                "No Screamer, Screamer 2 or Screamer Rally in this folder.".to_string(),
+                ERROR,
+            )
+        };
+        ui.label(egui::RichText::new(note).font(body(13.0)).color(color));
+        ui.add_space(8.0);
+
+        widgets::heading_focused(ui, "Look", self.focused(Row::Look));
+        ui.add_space(4.0);
+        let best = form::recommended(self.screen);
+        let orig_title = format!("Original {}", self.form.which.year());
+        let cards = [
+            (
+                Look::Original,
+                orig_title.as_str(),
+                "4:3 window, CRT shader, as shipped.",
+            ),
+            (
+                Look::Enhanced,
+                "Enhanced",
+                "1080p widescreen, longer view, crisp pixels.",
+            ),
+            (
+                Look::SteamDeck,
+                "Steam Deck",
+                "1280×800 widescreen, longer view, crisp pixels.",
+            ),
+            (Look::Custom, "Custom", "Pick each setting in Picture."),
+        ];
+        let look_w = (ui.available_width() - 3.0 * gap) / 4.0;
+        let r1 = ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (look, title, desc) in cards {
+                let card = LookCard {
+                    title,
+                    note: desc,
+                    selected: self.form.look == look,
+                    badge: (look == best).then_some("Recommended"),
+                    ..LookCard::default()
+                };
+                if widgets::look_card(ui, vec2(look_w, 96.0), &card).clicked() {
+                    self.choose_look(look);
+                }
+            }
+        });
+        widgets::focus_bar(ui, r1.response.rect, self.focused(Row::Look));
+        ui.add_space(8.0);
+
+        let row = config::option("saves");
+        widgets::heading(ui, row.label);
+        widgets::folder_field(
+            ui,
+            &mut self.form.saves,
+            "Default: the launcher's own saves folder",
+            || pick_folder_dialog("Choose where your saves are kept"),
+        );
+        spec_ui::mark_rendered(ui.ctx(), "saves");
+        widgets::note(ui, row.description);
+    }
+
+    fn picture_tab(&mut self, ui: &mut egui::Ui) {
+        let before = self.form.picture;
+        let which = self.form.which;
+        let has_glide = self.has_dos_glide_for_current();
+
+        let renderers: Vec<Chip<'_, RendererChoice>> = RendererChoice::ALL
+            .into_iter()
+            .map(|r| Chip::new(r, r.label()).disabled(r.disabled_reason(which, has_glide)))
+            .collect();
+        let focus = [
+            self.focused(Row::Renderer),
+            self.focused(Row::Display),
+            self.focused(Row::Shader),
+            self.focused(Row::Scaler),
+            self.focused(Row::Widescreen),
+            self.focused(Row::DrawDistance),
+            self.focused(Row::Vsync),
+            self.focused(Row::FrameGeneration),
+        ];
+        let mut help = None;
+        let p = &mut self.form.picture;
+        help = help.or(chip_row(ui, config::option("renderer"), focus[0], |ui| {
+            widgets::chips_with(ui, &renderers, &mut p.renderer)
+        }));
+        let resolutions = &self.resolutions;
+        help = help.or(chip_row(ui, config::option("resolution"), focus[1], |ui| {
+            widgets::chips(ui, resolutions, &mut p.resolution, None)
+        }));
+        help = help.or(chip_row(
+            ui,
+            config::option("texture_filter"),
+            focus[2],
+            |ui| widgets::chips(ui, &form::FILTERS, &mut p.texture_filter, None),
+        ));
+        if self.linux {
+            let scalers: Vec<(Scaler, &str)> =
+                form::SCALERS.iter().map(|(s, l, _)| (*s, *l)).collect();
+            let scaler = &mut self.form.scaler;
+            help = help.or(chip_row(ui, config::option("scaler"), focus[3], |ui| {
+                widgets::chips(ui, &scalers, scaler, None)
+            }));
+        }
+
+        // Two pairs of switches: the shape of the picture, then its motion.
+        ui.add_space(4.0);
+        let p = &mut self.form.picture;
+        let mut cells = [None; 4];
+        ui.columns(2, |cols| {
+            cells[0] = toggle_cell(&mut cols[0], "widescreen", &mut p.widescreen, focus[4]);
+            cells[1] = toggle_cell(
+                &mut cols[1],
+                "extended_draw_distance",
+                &mut p.extended_draw_distance,
+                focus[5],
+            );
+        });
+        ui.columns(2, |cols| {
+            cells[2] = toggle_cell(&mut cols[0], "vsync", &mut p.vsync, focus[6]);
+            cells[3] = toggle_cell(
+                &mut cols[1],
+                "frame_generation",
+                &mut p.frame_generation,
+                focus[7],
+            );
+        });
+        help = help.or(cells.into_iter().flatten().next());
+        ui.add_space(10.0);
+        help_board(
+            ui,
+            help,
+            "The game draws at 640×480 (3dfx Voodoo: 1280×960); the shader enlarges it to the window. Point at a setting, or move to it, to read what it changes.",
+        );
+
+        if self.form.picture != before {
+            self.form.look = Form::look_of(&self.form.picture, self.screen);
+        }
+    }
+
+    fn controls_tab(&mut self, ui: &mut egui::Ui) {
+        let focused = self.focused(Row::Gamepad);
+        let mut help = toggle_cell(ui, "gamepad_axes", &mut self.form.gamepad_axes, focused);
+        ui.add_space(6.0);
+
+        let pad_off_reason = (!self.form.gamepad_axes)
+            .then_some("Turn on Gamepad above to change the deadzone and rumble.");
+        let deadzones = form::with_saved(&form::DEADZONES, self.form.deadzone);
+        let focused = self.focused(Row::Deadzone);
+        let deadzone = &mut self.form.deadzone;
+        help = help.or(chip_row(ui, config::option("deadzone"), focused, |ui| {
+            widgets::chips(ui, &deadzones, deadzone, pad_off_reason)
+        }));
+        let rumbles = form::with_saved(&form::RUMBLES, self.form.rumble);
+        let focused = self.focused(Row::Rumble);
+        let rumble = &mut self.form.rumble;
+        help = help.or(chip_row(ui, config::option("rumble"), focused, |ui| {
+            widgets::chips(ui, &rumbles, rumble, pad_off_reason)
+        }));
+        if let Some(reason) = pad_off_reason {
+            widgets::note(ui, reason);
+        }
+
+        ui.add_space(8.0);
+        let pad_status = if self.controllers.is_empty() {
+            "No controller connected right now. Turn one on at any time, even mid-race, and it connects by itself.".to_string()
+        } else {
+            format!(
+                "Connected ({}): {}",
+                self.controllers.len(),
+                self.controllers.join(", ")
+            )
+        };
+        ui.label(egui::RichText::new(pad_status).font(body(13.0)).color(
+            if self.controllers.is_empty() {
+                MUTED
+            } else {
+                GOLD
+            },
+        ));
+        ui.add_space(10.0);
+        help_board(
+            ui,
+            help,
+            "Keyboard arrows and the gamepad work together in menus and races.",
+        );
+    }
+
+    fn buttons_tab(&mut self, ui: &mut egui::Ui) {
+        let orig_title = format!("Original {}", self.form.which.year());
+        let cards = [
+            (
+                Layout::Original,
+                orig_title.as_str(),
+                "The 2-button DOS gameport layout.",
+                false,
+            ),
+            (
+                Layout::Modern,
+                "Modern",
+                "Trigger pedals, Xbox and Steam Deck layout.",
+                true,
+            ),
+            (Layout::Custom, "Custom", "Your own button choices.", false),
+        ];
+        let pad_off_reason =
+            (!self.form.gamepad_axes).then_some("Turn on Gamepad in the Controls tab first.");
+        if let Some(reason) = pad_off_reason {
+            ui.label(egui::RichText::new(reason).font(body(13.0)).color(ERROR));
+        }
+        let gap = 12.0;
+        let w = (ui.available_width() - 2.0 * gap) / 3.0;
+        ui.add_space(8.0);
+        let r0 = ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (layout, title, note, recommended) in cards {
+                let card = LookCard {
+                    title,
+                    note,
+                    selected: self.form.layout == layout,
+                    badge: recommended.then_some("Recommended"),
+                    ..LookCard::default()
+                };
+                if widgets::look_card(ui, vec2(w, 68.0), &card).clicked()
+                    && pad_off_reason.is_none()
+                {
+                    self.form.set_layout(layout);
+                }
+            }
+        });
+        spec_ui::mark_rendered(ui.ctx(), "buttons");
+        widgets::focus_bar(ui, r0.response.rect, self.focused(Row::Layout));
+        widgets::note(
+            ui,
+            "RT/LT and A/X both drive the pedals in Modern. The d-pad and left stick move through menus.",
+        );
+        ui.spacing_mut().item_spacing.y = 4.0;
+        let options: Vec<Chip<'_, u8>> = form::PAD_BUTTONS
+            .iter()
+            .map(|&(b, l)| Chip::new(b, l).disabled(pad_off_reason))
+            .collect();
+        for (row_idx, (k, name)) in form::ACTIONS.into_iter().enumerate() {
+            let row_focused = self.focused(Row::Action(row_idx));
+            let r = ui.horizontal_top(|ui| {
+                widgets::field_focused(ui, name, row_focused);
+                let mut button = self.form.pad_button(k);
+                let resp = widgets::chips_sized(ui, &options, &mut button, ChipSize::Compact);
+                name_control(ui, &resp, name, "The gamepad button for this action.");
+                if pad_off_reason.is_none() {
+                    self.form.set_pad_button(k, button);
+                }
+            });
+            widgets::focus_bar(ui, r.response.rect, row_focused);
+        }
+    }
+
+    fn choose_game(&mut self, g: Game) {
+        let has_glide = self.trilogy.get(g).is_none_or(|d| d.can_use_dos_glide());
+        self.form.set_which(g, has_glide, self.screen);
+        self.error = None;
+    }
+
+    fn choose_look(&mut self, look: Look) {
+        self.form.set_look(look, self.screen);
+        let has_glide = self.has_dos_glide_for_current();
+        self.form.set_which(self.form.which, has_glide, self.screen);
+        if look == Look::Custom {
+            self.tab = Tab::Picture;
+            self.focus_row = 0;
+        }
+    }
+
+    fn handle_pad_action(&mut self, nav: Nav, ctx: &egui::Context) {
+        let rows = self.rows().len();
+        match nav {
+            Nav::Play => self.play(ctx),
+            // B has no step of its own in this window.
+            Nav::Back => {}
+            Nav::PreviousTab | Nav::NextTab => {
+                let idx = TABS.iter().position(|(t, _)| *t == self.tab).unwrap_or(0);
+                let by = if nav == Nav::NextTab {
+                    1
+                } else {
+                    TABS.len() - 1
+                };
+                self.tab = TABS[(idx + by) % TABS.len()].0;
+                self.focus_row = 0;
+            }
+            Nav::Up => self.focus_row = (self.focus_row + rows - 1) % rows,
+            Nav::Down => self.focus_row = (self.focus_row + 1) % rows,
+            Nav::Left => self.step_focused_option(-1),
+            Nav::Right => self.step_focused_option(1),
+            Nav::Press => match self.rows().get(self.focus_row) {
+                Some(Row::Game) => self.play(ctx),
+                Some(Row::Look) if self.form.look == Look::Custom => {
+                    self.tab = Tab::Picture;
+                    self.focus_row = 0;
+                }
+                _ => self.step_focused_option(1),
+            },
+        }
+    }
+
+    fn step_focused_option(&mut self, dir: isize) {
+        let Some(&row) = self.rows().get(self.focus_row) else {
+            return;
+        };
+        let pad_on = self.form.gamepad_axes;
+        let screen = self.screen;
+        let p = &mut self.form.picture;
+        let mut picture_changed = true;
+        match row {
+            Row::Game => {
+                let g = step(&Game::ALL, self.form.which, dir);
+                self.choose_game(g);
+                picture_changed = false;
+            }
+            Row::Look => {
+                let looks = [
+                    Look::Original,
+                    Look::Enhanced,
+                    Look::SteamDeck,
+                    Look::Custom,
+                ];
+                let look = step(&looks, self.form.look, dir);
+                self.form.set_look(look, screen);
+                let has_glide = self.has_dos_glide_for_current();
+                self.form.set_which(self.form.which, has_glide, screen);
+                picture_changed = false;
+            }
+            Row::Renderer => {
+                let which = self.form.which;
+                let has_glide = self
+                    .trilogy
+                    .get(which)
+                    .is_none_or(|d| d.can_use_dos_glide());
+                let supported: Vec<RendererChoice> = RendererChoice::ALL
+                    .into_iter()
+                    .filter(|r| r.is_supported_for(which, has_glide))
+                    .collect();
+                if !supported.is_empty() {
+                    p.renderer = step(&supported, p.renderer, dir);
+                }
+            }
+            Row::Display => {
+                let sizes: Vec<_> = self.resolutions.iter().map(|(r, _)| *r).collect();
+                p.resolution = step(&sizes, p.resolution, dir);
+            }
+            Row::Shader => {
+                let filters: Vec<_> = form::FILTERS.iter().map(|(f, _)| *f).collect();
+                p.texture_filter = step(&filters, p.texture_filter, dir);
+            }
+            Row::Scaler => {
+                self.form.scaler = step(&Scaler::ALL, self.form.scaler, dir);
+                picture_changed = false;
+            }
+            Row::Widescreen => p.widescreen = !p.widescreen,
+            Row::DrawDistance => p.extended_draw_distance = !p.extended_draw_distance,
+            Row::Vsync => p.vsync = !p.vsync,
+            Row::FrameGeneration => p.frame_generation = !p.frame_generation,
+            Row::Gamepad => {
+                self.form.gamepad_axes = !self.form.gamepad_axes;
+                picture_changed = false;
+            }
+            Row::Deadzone if pad_on => {
+                let values: Vec<u32> = form::with_saved(&form::DEADZONES, self.form.deadzone)
+                    .into_iter()
+                    .map(|(v, _)| v)
+                    .collect();
+                self.form.deadzone = step(&values, self.form.deadzone, dir);
+                picture_changed = false;
+            }
+            Row::Rumble if pad_on => {
+                let values: Vec<u32> = form::with_saved(&form::RUMBLES, self.form.rumble)
+                    .into_iter()
+                    .map(|(v, _)| v)
+                    .collect();
+                self.form.rumble = step(&values, self.form.rumble, dir);
+                picture_changed = false;
+            }
+            Row::Layout if pad_on => {
+                let layouts = [Layout::Original, Layout::Modern, Layout::Custom];
+                let layout = step(&layouts, self.form.layout, dir);
+                self.form.set_layout(layout);
+                picture_changed = false;
+            }
+            Row::Action(r) if pad_on => {
+                let (k, _) = form::ACTIONS[r];
+                let buttons: Vec<u8> = form::PAD_BUTTONS.iter().map(|(b, _)| *b).collect();
+                let next = step(&buttons, self.form.pad_button(k), dir);
+                self.form.set_pad_button(k, next);
+                picture_changed = false;
+            }
+            _ => picture_changed = false,
+        }
+        if picture_changed {
+            self.form.look = Form::look_of(&self.form.picture, self.screen);
+        }
+    }
+}
+
+/// The value `dir` steps from `current` in `values` (wrapping; the first
+/// when `current` is not there).
+fn step<T: PartialEq + Copy>(values: &[T], current: T, dir: isize) -> T {
+    let idx = values.iter().position(|v| *v == current).unwrap_or(0) as isize;
+    values[(idx + dir).rem_euclid(values.len() as isize) as usize]
+}
+
+/// Names a control for screen readers (the chip row is a radio group).
+fn name_control(ui: &egui::Ui, control: &Response, label: &str, description: &str) {
+    let (label, description) = (label.to_owned(), description.to_owned());
+    ui.ctx().accesskit_node_builder(control.id, |node| {
+        node.set_label(label);
+        node.set_description(description);
+    });
+}
+
+/// A labelled chip row from an option row (recorded for the parity
+/// test); the row when the pointer or the focus is on it, for the
+/// [`help_board`].
+fn chip_row(
+    ui: &mut egui::Ui,
+    row: &'static OptionSpec,
+    focused: bool,
+    chips: impl FnOnce(&mut egui::Ui) -> Response,
+) -> Option<&'static OptionSpec> {
+    spec_ui::mark_rendered(ui.ctx(), row.key);
+    let mut active = focused;
+    let r = ui.horizontal_top(|ui| {
+        widgets::field_focused(ui, row.label, focused);
+        let resp = chips(ui);
+        name_control(ui, &resp, row.label, row.description);
+        active |= resp.has_focus();
+    });
+    active |= ui.rect_contains_pointer(r.response.rect);
+    widgets::focus_bar(ui, r.response.rect, focused);
+    ui.add_space(4.0);
+    active.then_some(row)
+}
+
+/// A switch from an option row (recorded for the parity test); the row
+/// when the pointer or the focus is on it.
+fn toggle_cell(
+    ui: &mut egui::Ui,
+    key: &str,
+    on: &mut bool,
+    focused: bool,
+) -> Option<&'static OptionSpec> {
+    let row = config::option(key);
+    spec_ui::mark_rendered(ui.ctx(), row.key);
+    let resp = widgets::toggle(ui, on, row.label, None);
+    name_control(ui, &resp, row.label, row.description);
+    widgets::focus_bar(ui, resp.rect, focused);
+    (focused || resp.has_focus() || resp.hovered()).then_some(row)
+}
+
+/// The board under a tab's settings: what the setting under the pointer or
+/// the focus changes (its label and description), else `idle`. Fixed
+/// height, so the layout never jumps.
+fn help_board(ui: &mut egui::Ui, row: Option<&OptionSpec>, idle: &str) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 58.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, egui::CornerRadius::same(6), PANEL);
+    painter.rect_filled(
+        Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
+        egui::CornerRadius::same(1),
+        GOLD,
+    );
+    let inner = rect.shrink2(vec2(14.0, 8.0));
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = inner.width();
+    if let Some(row) = row {
+        job.append(
+            &format!("{}: ", row.label),
+            0.0,
+            egui::TextFormat::simple(semibold(theme::size::NOTE), INK),
+        );
+    }
+    job.append(
+        row.map_or(idle, |r| r.description),
+        0.0,
+        egui::TextFormat::simple(body(theme::size::NOTE), INK),
+    );
+    let galley = painter.layout_job(job);
+    painter.galley(inner.min, galley, INK);
+}
+
+fn load_covers(ctx: &egui::Context) -> [Option<TextureHandle>; 3] {
+    [
+        widgets::load_jpeg(
+            ctx,
+            "cover_s1",
+            include_bytes!("../assets/cover_screamer1.jpg"),
+        ),
+        widgets::load_jpeg(
+            ctx,
+            "cover_s2",
+            include_bytes!("../assets/cover_screamer2.jpg"),
+        ),
+        widgets::load_jpeg(
+            ctx,
+            "cover_sr",
+            include_bytes!("../assets/cover_screamer_rally.jpg"),
+        ),
+    ]
 }
 
 fn check_trilogy(folder: &str) -> DiscoveredTrilogy {
@@ -323,790 +1136,43 @@ pub(crate) fn detect_controllers() -> Vec<String> {
     {
         for idx in 0..4u32 {
             if win32_joy_poll(idx).is_some() {
-                out.push(format!("XInput / WinMM Controller #{}", idx + 1));
+                out.push(format!("Controller #{}", idx + 1));
             }
         }
     }
     out
 }
 
+/// The folder picker: the SDK's native dialog on Windows (Unicode paths),
+/// zenity or kdialog on Linux.
 fn pick_folder_dialog(title: &str) -> Option<PathBuf> {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(out) = Command::new("zenity")
-            .args(["--file-selection", "--directory", "--title", title])
-            .output()
-            && out.status.success()
-        {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !s.is_empty() {
-                return Some(PathBuf::from(s));
-            }
-        }
-        if let Ok(out) = Command::new("kdialog")
-            .args(["--getexistingdirectory", ".", "--title", title])
-            .output()
-            && out.status.success()
-        {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !s.is_empty() {
-                return Some(PathBuf::from(s));
-            }
-        }
-    }
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let script = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; \
-             $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
-             $d.Description = '{}'; \
-             if ($d.ShowDialog() -eq 'OK') {{ Write-Output $d.SelectedPath }}",
-            title.replace('\'', "''")
-        );
-        if let Ok(out) = Command::new("powershell")
-            .creation_flags(CREATE_NO_WINDOW)
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .output()
-            && out.status.success()
-        {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !s.is_empty() {
-                return Some(PathBuf::from(s));
-            }
-        }
+        rea_launcher_win32::dialog::pick_folder(title)
     }
-    let _ = title;
-    None
-}
-
-impl eframe::App for Window<'_> {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
-        self.fit.first_frame(&ctx);
-        if !self.sized {
-            self.measure_screen(&ctx);
-        }
-        if ctx.input(|i| i.key_pressed(Key::Escape)) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-        ctx.request_repaint_after(std::time::Duration::from_millis(33));
-        for nav in self.pad.poll() {
-            self.handle_pad_action(nav, &ctx);
-        }
-
-        let full = ui.max_rect();
-        ui.painter().rect_filled(full, 0.0, CHASSIS);
-        self.draw_box_art(ui, full);
-        widgets::stripes(
-            ui.painter(),
-            full,
-            &[(30.0, GOLD), (16.0, GOLD.gamma_multiply(0.65))],
-        );
-
-        let content = Rect::from_min_max(
-            pos2(full.left() + PHOTO_W + 16.0, full.top() + 22.0),
-            pos2(full.right() - 28.0, full.bottom() - 22.0),
-        );
-        let footer_h = 50.0;
-        let body = Rect::from_min_max(
-            content.min,
-            pos2(content.right(), content.bottom() - footer_h - 12.0),
-        );
-
-        ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
-            ui.label(
-                egui::RichText::new(self.form.which.short_title())
-                    .font(decal(44.0))
-                    .color(INK),
-            );
-            ui.add_space(-6.0);
-            self.status_line(ui);
-            ui.add_space(4.0);
-            self.tabs(ui);
-            ui.add_space(12.0);
-            match self.tab {
-                Tab::Play => self.play_tab(ui),
-                Tab::Picture => self.picture_tab(ui),
-                Tab::Controls => self.controls_tab(ui),
-                Tab::Buttons => self.buttons_tab(ui),
-            }
-        });
-
-        let footer = Rect::from_min_max(
-            pos2(content.left(), content.bottom() - footer_h),
-            content.max,
-        );
-        self.footer(ui, footer, &ctx);
-
-        if ctx.input(|i| i.key_pressed(Key::Enter)) && !ctx.egui_wants_keyboard_input() {
-            self.play(&ctx);
-        }
-        if self.form.game != self.checked {
-            self.checked = self.form.game.clone();
-            self.trilogy = check_trilogy(&self.form.game);
-            if let Some(direct) = self.trilogy.direct_game {
-                self.form.which = direct;
-            } else if self.trilogy.get(self.form.which).is_none()
-                && let Some(first) = Game::ALL
-                    .into_iter()
-                    .find(|&g| self.trilogy.get(g).is_some())
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::process::Command;
+        for (program, args) in [
+            (
+                "zenity",
+                vec!["--file-selection", "--directory", "--title", title],
+            ),
+            (
+                "kdialog",
+                vec!["--getexistingdirectory", ".", "--title", title],
+            ),
+        ] {
+            if let Ok(out) = Command::new(program).args(&args).output()
+                && out.status.success()
             {
-                self.form.which = first;
-            }
-            let has_glide = self.has_dos_glide_for_current();
-            self.form.set_which(self.form.which, has_glide, self.screen);
-        }
-    }
-}
-
-impl Window<'_> {
-    fn draw_box_art(&self, ui: &egui::Ui, full: Rect) {
-        let rect = Rect::from_min_size(full.min, vec2(PHOTO_W, full.height()));
-        let p = ui.painter().with_clip_rect(rect);
-        if let Some(tex) = &self.covers[self.form.which.index()] {
-            let [w, h] = tex.size();
-            let img_aspect = w as f32 / h as f32;
-            let rect_aspect = rect.width() / rect.height();
-            let uv = if img_aspect > rect_aspect {
-                let u_span = (rect_aspect / img_aspect).min(1.0);
-                let u_pad = (1.0 - u_span) * 0.5;
-                Rect::from_min_max(pos2(u_pad, 0.0), pos2(1.0 - u_pad, 1.0))
-            } else {
-                let v_span = (img_aspect / rect_aspect).min(1.0);
-                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, v_span))
-            };
-            p.image(tex.id(), rect, uv, Color32::WHITE);
-        }
-        // Smooth horizontal and bottom fades into the chassis background
-        widgets::gradient(
-            &p,
-            Rect::from_min_max(
-                pos2(rect.left() + rect.width() * 0.52, rect.top()),
-                rect.max,
-            ),
-            CHASSIS,
-            Fade::Right,
-        );
-        widgets::gradient(
-            &p,
-            Rect::from_min_max(pos2(rect.left(), rect.bottom() - 150.0), rect.max),
-            CHASSIS,
-            Fade::Down,
-        );
-        let x = rect.left() + 20.0;
-        let y = rect.bottom() - 20.0;
-        p.text(
-            pos2(x, y),
-            Align2::LEFT_BOTTOM,
-            "Cover art: Virgin Interactive / Milestone",
-            body(11.0),
-            MUTED,
-        );
-        p.text(
-            pos2(x, y - 16.0),
-            Align2::LEFT_BOTTOM,
-            self.form.which.studio_credit(),
-            body(13.0),
-            MUTED,
-        );
-        p.text(
-            pos2(x, y - 34.0),
-            Align2::LEFT_BOTTOM,
-            self.form.which.display_name(),
-            semibold(19.0),
-            INK,
-        );
-    }
-
-    fn status_line(&self, ui: &mut egui::Ui) {
-        let (text, color) = if let Some(err) = &self.error {
-            (err.clone(), ERROR)
-        } else if let Some(disc) = self.trilogy.get(self.form.which) {
-            let exe_summary = disc
-                .select_executable(self.form.picture.renderer)
-                .map(|e| format!("{} ({})", e.file_name, e.edition.role_label()))
-                .unwrap_or_else(|_| "Ready".into());
-            (
-                format!("Ready · {exe_summary} · Press Play or Enter."),
-                MUTED,
-            )
-        } else if self.form.game.trim().is_empty() {
-            (
-                "First, show the launcher where your Screamer folder is.".to_string(),
-                MUTED,
-            )
-        } else {
-            (
-                format!(
-                    "{} was not found in this folder.",
-                    self.form.which.display_name()
-                ),
-                ERROR,
-            )
-        };
-        ui.label(egui::RichText::new(text).font(body(14.0)).color(color));
-    }
-
-    fn tabs(&mut self, ui: &mut egui::Ui) {
-        let tabs = [
-            (Tab::Play, "Play"),
-            (Tab::Picture, "Picture"),
-            (Tab::Controls, "Controls"),
-            (Tab::Buttons, "Buttons"),
-        ];
-        if widgets::tabs_bar(ui, &tabs, &mut self.tab) {
-            self.focus_row = 0;
-        }
-    }
-
-    fn play_tab(&mut self, ui: &mut egui::Ui) {
-        let focus = self.focus_row;
-        widgets::heading_focused(ui, "Game in the trilogy", focus == 0);
-        ui.add_space(2.0);
-        let gap = 10.0;
-        let card_w = (ui.available_width() - 2.0 * gap) / 3.0;
-        let mut chosen_game = None;
-        let r0 = ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            for game in Game::ALL {
-                let installed = self.trilogy.get(game).is_some();
-                let subtitle = match self.trilogy.get(game) {
-                    Some(disc) => {
-                        let mode = disc
-                            .select_executable(self.form.picture.renderer)
-                            .map(|e| e.edition.role_label())
-                            .unwrap_or("Ready");
-                        format!("{} · {mode}", game.year())
-                    }
-                    None if self.form.game.trim().is_empty() => {
-                        format!("{} · Set folder below", game.year())
-                    }
-                    None => format!("{} · Not in folder", game.year()),
-                };
-                let card = GameCard {
-                    title: game.short_title(),
-                    subtitle: &subtitle,
-                    selected: self.form.which == game,
-                    installed,
-                };
-                if widgets::game_card(ui, vec2(card_w, 64.0), &card).clicked() {
-                    chosen_game = Some(game);
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !s.is_empty() {
+                    return Some(PathBuf::from(s));
                 }
             }
-        });
-        widgets::focus_bar(ui, r0.response.rect, focus == 0);
-        if let Some(g) = chosen_game {
-            let has_glide = self.trilogy.get(g).is_none_or(|d| d.can_use_dos_glide());
-            self.form.set_which(g, has_glide, self.screen);
-            self.error = None;
         }
-
-        ui.add_space(8.0);
-        widgets::heading(ui, "Game or trilogy folder");
-        let hint = "Folder with Screamer, Screamer 2, Screamer Rally, or all three (e.g. .../screamer/games)";
-        if widgets::folder_field(ui, &mut self.form.game, hint, || {
-            pick_folder_dialog("Choose your Screamer or trilogy folder")
-        }) {
-            self.error = None;
-        }
-
-        let (note, color) = if self.form.game.trim().is_empty() {
-            (
-                "Point at a single game folder or a parent folder containing all three games. Never modified.".to_string(),
-                MUTED,
-            )
-        } else if self.trilogy.any_found() {
-            let found_names: Vec<&str> = Game::ALL
-                .into_iter()
-                .filter(|&g| self.trilogy.get(g).is_some())
-                .map(|g| g.display_name())
-                .collect();
-            (format!("Discovered: {}", found_names.join(" · ")), GOLD)
-        } else {
-            (
-                "No recognized Screamer, Screamer 2, or Screamer Rally executables in this folder."
-                    .to_string(),
-                ERROR,
-            )
-        };
-        ui.label(egui::RichText::new(note).font(body(13.0)).color(color));
-        ui.add_space(8.0);
-
-        widgets::heading_focused(ui, "Look", focus == 1);
-        ui.add_space(4.0);
-        let best = form::recommended(self.screen);
-        let orig_title = format!("Original {}", self.form.which.year());
-        let cards = [
-            (
-                Look::Original,
-                orig_title.as_str(),
-                "4:3 window, CRT shader, as shipped.",
-            ),
-            (
-                Look::Enhanced,
-                "Enhanced",
-                "1080p Hor+, longer view, native 50 FPS.",
-            ),
-            (
-                Look::SteamDeck,
-                "Steam Deck",
-                "1280×800 Hor+, longer view, native 50 FPS.",
-            ),
-            (Look::Custom, "Custom", "Pick each setting in Picture."),
-        ];
-        let look_w = (ui.available_width() - 3.0 * gap) / 4.0;
-        let r1 = ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            for (look, title, desc) in cards {
-                let card = LookCard {
-                    title,
-                    note: desc,
-                    selected: self.form.look == look,
-                    badge: (look == best).then_some("Recommended"),
-                    ..LookCard::default()
-                };
-                if widgets::look_card(ui, vec2(look_w, 96.0), &card).clicked() {
-                    self.form.set_look(look, self.screen);
-                    let has_glide = self.has_dos_glide_for_current();
-                    self.form.set_which(self.form.which, has_glide, self.screen);
-                    if look == Look::Custom {
-                        self.tab = Tab::Picture;
-                    }
-                }
-            }
-        });
-        widgets::focus_bar(ui, r1.response.rect, focus == 1);
-        ui.add_space(8.0);
-
-        widgets::heading(ui, "Saves");
-        widgets::folder_field(
-            ui,
-            &mut self.form.saves,
-            "Default per-game saves folder (~/.local/share/screamer-launcher/saves)",
-            || pick_folder_dialog("Choose where your saves are kept"),
-        );
-    }
-
-    fn picture_tab(&mut self, ui: &mut egui::Ui) {
-        let before = self.form.picture;
-        let which = self.form.which;
-        let has_glide = self.has_dos_glide_for_current();
-        let resolutions = &self.resolutions;
-        let focus = self.focus_row;
-        let p = &mut self.form.picture;
-
-        let row =
-            |ui: &mut egui::Ui, focused: bool, name: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
-                let resp = ui.horizontal_top(|ui| {
-                    widgets::field_focused(ui, name, focused);
-                    ui.vertical(|ui| add(ui));
-                });
-                widgets::focus_bar(ui, resp.response.rect, focused);
-            };
-
-        row(ui, focus == 0, "Renderer", &mut |ui| {
-            let opts: Vec<Chip<'_, RendererChoice>> = RendererChoice::ALL
-                .into_iter()
-                .map(|r| Chip::new(r, r.label()).disabled(r.disabled_reason(which, has_glide)))
-                .collect();
-            widgets::chips_with(ui, &opts, &mut p.renderer);
-        });
-
-        row(ui, focus == 1, "Display", &mut |ui| {
-            widgets::chips(ui, resolutions, &mut p.resolution, None);
-        });
-
-        row(ui, focus == 2, "Shader / Upscaler", &mut |ui| {
-            widgets::chips(ui, &form::FILTERS, &mut p.texture_filter, None);
-        });
-
-        row(ui, focus == 3, "Frame rate", &mut |ui| {
-            widgets::chips(ui, &form::FRAME_RATES, &mut p.fps_limit, None);
-        });
-
-        row(ui, focus == 4, "Vsync", &mut |ui| {
-            widgets::chips(ui, &form::VSYNCS, &mut p.vsync, None);
-        });
-
-        row(ui, focus == 5, "", &mut |ui| {
-            widgets::toggle(
-                ui,
-                &mut p.widescreen,
-                "Widescreen: 16:9 Hor+ 3D camera FOV (shows more to the sides)",
-                None,
-            );
-        });
-
-        row(ui, focus == 6, "", &mut |ui| {
-            widgets::toggle(
-                ui,
-                &mut p.extended_draw_distance,
-                "Extended draw distance: reduce scenery and animated-object pop-in",
-                None,
-            );
-        });
-
-        ui.add_space(8.0);
-        let is_3dfx = which != Game::Screamer
-            && has_glide
-            && matches!(p.renderer, RendererChoice::Auto | RendererChoice::Voodoo);
-        ui.label(
-            egui::RichText::new(self.machine.summary_line(is_3dfx))
-                .font(body(13.0))
-                .color(GOLD),
-        );
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(
-                "Note: 3dfx Voodoo renders internally at 1280×960 (2x supersampled) and SVGA at 640×480. Sharp is the stable pixel-preserving default; FSR, Smooth, and experimental 100 FPS optical-flow Frame Gen remain available.",
-            )
-            .font(body(13.0))
-            .color(MUTED),
-        );
-        let _ = self.linux;
-
-        if self.form.picture != before {
-            self.form.look = Form::look_of(&self.form.picture, self.screen);
-        }
-    }
-
-    fn controls_tab(&mut self, ui: &mut egui::Ui) {
-        let focus = self.focus_row;
-        let r0 = ui.horizontal_top(|ui| {
-            widgets::toggle(
-                ui,
-                &mut self.form.gamepad_axes,
-                "Gamepad: proportional analog steering, L2/R2 trigger pedals, D-pad menus",
-                None,
-            );
-        });
-        widgets::focus_bar(ui, r0.response.rect, focus == 0);
-        ui.add_space(6.0);
-
-        let pad_off_reason = (!self.form.gamepad_axes)
-            .then_some("Turn on Gamepad above to configure steering deadzone and rumble.");
-
-        let r1 = ui.horizontal_top(|ui| {
-            widgets::field_focused(ui, "Deadzone", focus == 1);
-            widgets::chips(
-                ui,
-                &form::DEADZONES,
-                &mut self.form.deadzone,
-                pad_off_reason,
-            );
-        });
-        widgets::focus_bar(ui, r1.response.rect, focus == 1);
-
-        let r2 = ui.horizontal_top(|ui| {
-            widgets::field_focused(ui, "Rumble", focus == 2);
-            widgets::chips(ui, &form::RUMBLES, &mut self.form.rumble, pad_off_reason);
-        });
-        widgets::focus_bar(ui, r2.response.rect, focus == 2);
-
-        ui.add_space(8.0);
-        let pad_status = if self.controllers.is_empty() {
-            "No controller detected right now. You can turn on your controller at any time (even mid-race) and it will connect automatically.".to_string()
-        } else {
-            format!(
-                "Connected ({}): {}",
-                self.controllers.len(),
-                self.controllers.join(", ")
-            )
-        };
-        ui.label(egui::RichText::new(pad_status).font(body(13.0)).color(
-            if self.controllers.is_empty() {
-                MUTED
-            } else {
-                GOLD
-            },
-        ));
-
-        ui.add_space(10.0);
-        ui.label(
-            egui::RichText::new(
-                "Keyboard arrows (Up/Down/Left/Right) and gamepad work simultaneously in menus and races.",
-            )
-            .font(body(13.0))
-            .color(MUTED),
-        );
-    }
-
-    fn buttons_tab(&mut self, ui: &mut egui::Ui) {
-        let focus = self.focus_row;
-        let orig_title = format!("Original {}", self.form.which.year());
-        let cards = [
-            (
-                Layout::Original,
-                orig_title.as_str(),
-                "2-button DOS gameport layout.",
-                false,
-            ),
-            (
-                Layout::Modern,
-                "Modern",
-                "RT/LT pedals + Xbox / Steam Deck layout.",
-                true,
-            ),
-            (Layout::Custom, "Custom", "Your own button choices.", false),
-        ];
-        let gap = 12.0;
-        let w = (ui.available_width() - 2.0 * gap) / 3.0;
-        ui.add_space(4.0);
-        let r0 = ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            for (layout, title, note, recommended) in cards {
-                let card = LookCard {
-                    title,
-                    note,
-                    selected: self.form.layout == layout,
-                    badge: recommended.then_some("Recommended"),
-                    ..LookCard::default()
-                };
-                if widgets::look_card(ui, vec2(w, 68.0), &card).clicked() && self.form.gamepad_axes
-                {
-                    self.form.set_layout(layout);
-                }
-            }
-        });
-        widgets::focus_bar(ui, r0.response.rect, focus == 0);
-        ui.label(
-            egui::RichText::new(
-                "RT/LT (R2/L2) analog triggers & A/X buttons work together in Modern mode. D-pad / Left Stick navigate menus.",
-            )
-            .font(body(13.0))
-            .color(MUTED),
-        );
-        ui.spacing_mut().item_spacing.y = 4.0;
-        let pad_off_reason =
-            (!self.form.gamepad_axes).then_some("Turn on Gamepad in the Controls tab first.");
-        let options: Vec<Chip<'_, u8>> = form::PAD_BUTTONS
-            .iter()
-            .map(|&(b, l)| Chip::new(b, l).disabled(pad_off_reason))
-            .collect();
-        for (row_idx, (k, name)) in form::ACTIONS.into_iter().enumerate() {
-            let row_focused = focus == row_idx + 1;
-            let r = ui.horizontal_top(|ui| {
-                widgets::field_focused(ui, name, row_focused);
-                let mut button = self.form.pad_button(k);
-                widgets::chips_sized(ui, &options, &mut button, ChipSize::Compact);
-                if self.form.gamepad_axes {
-                    self.form.set_pad_button(k, button);
-                }
-            });
-            widgets::focus_bar(ui, r.response.rect, row_focused);
-        }
-    }
-
-    fn footer(&mut self, ui: &mut egui::Ui, rect: Rect, ctx: &egui::Context) {
-        let hint = format!(
-            "Settings are saved when you press Play ({}).",
-            self.form.which.display_name()
-        );
-        if widgets::footer(ui, rect, &hint, self.ready()).clicked() {
-            self.play(ctx);
-        }
-    }
-
-    fn max_focus_row(&self) -> usize {
-        match self.tab {
-            Tab::Play => 1,
-            Tab::Picture => 6,
-            Tab::Controls => 2,
-            Tab::Buttons => form::ACTIONS.len(),
-        }
-    }
-
-    fn handle_pad_action(&mut self, nav: Nav, ctx: &egui::Context) {
-        let tabs = [Tab::Play, Tab::Picture, Tab::Controls, Tab::Buttons];
-        match nav {
-            Nav::Play => self.play(ctx),
-            // B has no step of its own in this window.
-            Nav::Back => {}
-            Nav::PreviousTab => {
-                let idx = tabs.iter().position(|&t| t == self.tab).unwrap_or(0);
-                self.tab = tabs[(idx + tabs.len() - 1) % tabs.len()];
-                self.focus_row = 0;
-            }
-            Nav::NextTab => {
-                let idx = tabs.iter().position(|&t| t == self.tab).unwrap_or(0);
-                self.tab = tabs[(idx + 1) % tabs.len()];
-                self.focus_row = 0;
-            }
-            Nav::Up => {
-                let max = self.max_focus_row();
-                self.focus_row = if self.focus_row == 0 {
-                    max
-                } else {
-                    self.focus_row - 1
-                };
-            }
-            Nav::Down => {
-                let max = self.max_focus_row();
-                self.focus_row = if self.focus_row >= max {
-                    0
-                } else {
-                    self.focus_row + 1
-                };
-            }
-            Nav::Left => self.step_focused_option(-1),
-            Nav::Right => self.step_focused_option(1),
-            Nav::Press => match (self.tab, self.focus_row) {
-                (Tab::Play, 0) => self.play(ctx),
-                (Tab::Play, 1) if self.form.look == Look::Custom => {
-                    self.tab = Tab::Picture;
-                    self.focus_row = 0;
-                }
-                (Tab::Picture, 5) => {
-                    self.form.picture.widescreen = !self.form.picture.widescreen;
-                    self.form.look = Form::look_of(&self.form.picture, self.screen);
-                }
-                (Tab::Picture, 6) => {
-                    self.form.picture.extended_draw_distance =
-                        !self.form.picture.extended_draw_distance;
-                    self.form.look = Form::look_of(&self.form.picture, self.screen);
-                }
-                (Tab::Controls, 0) => {
-                    self.form.gamepad_axes = !self.form.gamepad_axes;
-                }
-                _ => self.step_focused_option(1),
-            },
-        }
-    }
-
-    fn step_focused_option(&mut self, dir: isize) {
-        match (self.tab, self.focus_row) {
-            (Tab::Play, 0) => {
-                let idx = Game::ALL
-                    .iter()
-                    .position(|&g| g == self.form.which)
-                    .unwrap_or(0) as isize;
-                let next = (idx + dir).rem_euclid(Game::ALL.len() as isize) as usize;
-                let g = Game::ALL[next];
-                let has_glide = self.trilogy.get(g).is_none_or(|d| d.can_use_dos_glide());
-                self.form.set_which(g, has_glide, self.screen);
-                self.error = None;
-            }
-            (Tab::Play, 1) => {
-                let looks = [
-                    Look::Original,
-                    Look::Enhanced,
-                    Look::SteamDeck,
-                    Look::Custom,
-                ];
-                let idx = looks.iter().position(|&l| l == self.form.look).unwrap_or(0) as isize;
-                let next = (idx + dir).rem_euclid(looks.len() as isize) as usize;
-                let look = looks[next];
-                self.form.set_look(look, self.screen);
-                let has_glide = self.has_dos_glide_for_current();
-                self.form.set_which(self.form.which, has_glide, self.screen);
-            }
-            (Tab::Picture, 0) => {
-                let which = self.form.which;
-                let has_glide = self.has_dos_glide_for_current();
-                let supported: Vec<RendererChoice> = RendererChoice::ALL
-                    .into_iter()
-                    .filter(|r| r.is_supported_for(which, has_glide))
-                    .collect();
-                if !supported.is_empty() {
-                    let idx = supported
-                        .iter()
-                        .position(|&r| r == self.form.picture.renderer)
-                        .unwrap_or(0) as isize;
-                    let next = (idx + dir).rem_euclid(supported.len() as isize) as usize;
-                    self.form.picture.renderer = supported[next];
-                    self.form.look = Form::look_of(&self.form.picture, self.screen);
-                }
-            }
-            (Tab::Picture, 1) if !self.resolutions.is_empty() => {
-                let idx = self
-                    .resolutions
-                    .iter()
-                    .position(|(r, _)| *r == self.form.picture.resolution)
-                    .unwrap_or(0) as isize;
-                let next = (idx + dir).rem_euclid(self.resolutions.len() as isize) as usize;
-                self.form.picture.resolution = self.resolutions[next].0;
-                self.form.look = Form::look_of(&self.form.picture, self.screen);
-            }
-            (Tab::Picture, 2) => {
-                let idx = form::FILTERS
-                    .iter()
-                    .position(|(f, _)| *f == self.form.picture.texture_filter)
-                    .unwrap_or(0) as isize;
-                let next = (idx + dir).rem_euclid(form::FILTERS.len() as isize) as usize;
-                self.form.picture.texture_filter = form::FILTERS[next].0;
-                self.form.look = Form::look_of(&self.form.picture, self.screen);
-            }
-            (Tab::Picture, 3) => {
-                let idx = form::FRAME_RATES
-                    .iter()
-                    .position(|(f, _)| *f == self.form.picture.fps_limit)
-                    .unwrap_or(0) as isize;
-                let next = (idx + dir).rem_euclid(form::FRAME_RATES.len() as isize) as usize;
-                self.form.picture.fps_limit = form::FRAME_RATES[next].0;
-                self.form.look = Form::look_of(&self.form.picture, self.screen);
-            }
-            (Tab::Picture, 4) => {
-                let idx = form::VSYNCS
-                    .iter()
-                    .position(|(v, _)| *v == self.form.picture.vsync)
-                    .unwrap_or(0) as isize;
-                let next = (idx + dir).rem_euclid(form::VSYNCS.len() as isize) as usize;
-                self.form.picture.vsync = form::VSYNCS[next].0;
-                self.form.look = Form::look_of(&self.form.picture, self.screen);
-            }
-            (Tab::Picture, 5) => {
-                self.form.picture.widescreen = !self.form.picture.widescreen;
-                self.form.look = Form::look_of(&self.form.picture, self.screen);
-            }
-            (Tab::Picture, 6) => {
-                self.form.picture.extended_draw_distance =
-                    !self.form.picture.extended_draw_distance;
-                self.form.look = Form::look_of(&self.form.picture, self.screen);
-            }
-            (Tab::Controls, 0) => {
-                self.form.gamepad_axes = !self.form.gamepad_axes;
-            }
-            (Tab::Controls, 1) if self.form.gamepad_axes => {
-                let idx = form::DEADZONES
-                    .iter()
-                    .position(|(d, _)| *d == self.form.deadzone)
-                    .unwrap_or(0) as isize;
-                let next = (idx + dir).rem_euclid(form::DEADZONES.len() as isize) as usize;
-                self.form.deadzone = form::DEADZONES[next].0;
-            }
-            (Tab::Controls, 2) if self.form.gamepad_axes => {
-                let idx = form::RUMBLES
-                    .iter()
-                    .position(|(r, _)| *r == self.form.rumble)
-                    .unwrap_or(0) as isize;
-                let next = (idx + dir).rem_euclid(form::RUMBLES.len() as isize) as usize;
-                self.form.rumble = form::RUMBLES[next].0;
-            }
-            (Tab::Buttons, 0) if self.form.gamepad_axes => {
-                let layouts = [Layout::Original, Layout::Modern, Layout::Custom];
-                let idx = layouts
-                    .iter()
-                    .position(|&l| l == self.form.layout)
-                    .unwrap_or(0) as isize;
-                let next = (idx + dir).rem_euclid(layouts.len() as isize) as usize;
-                self.form.set_layout(layouts[next]);
-            }
-            (Tab::Buttons, r)
-                if self.form.gamepad_axes && (1..=form::ACTIONS.len()).contains(&r) =>
-            {
-                let (k, _) = form::ACTIONS[r - 1];
-                let cur = self.form.pad_button(k);
-                let idx = form::PAD_BUTTONS
-                    .iter()
-                    .position(|(b, _)| *b == cur)
-                    .unwrap_or(0) as isize;
-                let next = (idx + dir).rem_euclid(form::PAD_BUTTONS.len() as isize) as usize;
-                self.form.set_pad_button(k, form::PAD_BUTTONS[next].0);
-            }
-            _ => {}
-        }
+        None
     }
 }
 
@@ -1280,6 +1346,264 @@ impl RoleLabel for screamer_launcher::edition::Edition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rea_launcher::cfg::spec as core_spec;
+    use rea_launcher_ui::egui::accesskit::Role;
+    use rea_launcher_ui::testing::{self, Harness, Queryable};
+
+    /// A unique scratch folder.
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("screamer-ui-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The window over `text`, headless, on a 2560×1440 screen.
+    fn open(text: &str, linux: bool, name: &str) -> Harness<'static, Window> {
+        let path = scratch(name).join("launcher.cfg");
+        let window = Window::new(
+            path,
+            text.to_string(),
+            linux,
+            (2560, 1440),
+            Vec::new(),
+            Rc::new(Cell::new(Outcome::Closed)),
+        );
+        let mut ui = testing::harness(&PALETTE, &METRICS, window, |ui, w: &mut Window| {
+            w.sized = true; // the harness has no monitor: keep the given screen
+            w.draw(ui)
+        });
+        ui.run();
+        ui
+    }
+
+    fn tab(ui: &mut Harness<'static, Window>, name: &str) {
+        ui.get_by_role_and_label(Role::Tab, name).click();
+        ui.run();
+    }
+
+    #[test]
+    fn the_window_has_a_control_for_every_option_and_the_reverse() {
+        let mut ui = open("", true, "parity");
+        for name in ["Picture", "Controls", "Buttons", "Play"] {
+            tab(&mut ui, name);
+        }
+        core_spec::assert_parity(config::OPTIONS, &spec_ui::rendered_keys(&ui.ctx));
+        // The keys the window saves are the ones it shows.
+        let mut shown = spec_ui::rendered_keys(&ui.ctx);
+        shown.sort_unstable();
+        let mut saved = form::WINDOW_KEYS.to_vec();
+        saved.sort_unstable();
+        assert_eq!(shown, saved);
+    }
+
+    /// Screamer 2 "installed" (fake paths, the real edition table), so the
+    /// window is ready to play.
+    fn install_screamer2(w: &mut Window) {
+        use screamer_launcher::edition::EDITIONS;
+        use screamer_launcher::runtime::{DiscoveredExe, DiscoveredGame};
+        let executables = EDITIONS
+            .iter()
+            .filter(|e| e.game == Game::Screamer2)
+            .map(|e| DiscoveredExe {
+                path: PathBuf::from("/g").join(e.exe_name),
+                file_name: e.exe_name.to_string(),
+                edition: e,
+                sha256: e.sha256,
+            })
+            .collect();
+        w.trilogy.games[1] = Some(DiscoveredGame {
+            root_dir: "/g".into(),
+            exe_dir: "/g".into(),
+            game: Game::Screamer2,
+            executables,
+            cd_image: None,
+            glide2x_ovl_source: None,
+            has_genuine_dos_glide2x: true,
+            has_windows_stub_glide2x: false,
+            unknown: Vec::new(),
+        });
+        w.form.game = "/g".into();
+        w.checked = "/g".into();
+        w.form.which = Game::Screamer2;
+    }
+
+    fn saved(ui: &Harness<'static, Window>) -> Settings {
+        let text = std::fs::read_to_string(&ui.state().path).unwrap();
+        let (s, warnings) = Settings::parse_file(&text);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        s
+    }
+
+    fn play(ui: &mut Harness<'static, Window>) {
+        ui.get_by_role_and_label(Role::Button, "Play").click();
+        ui.run();
+        assert_eq!(ui.state().outcome.get(), Outcome::Play);
+    }
+
+    #[test]
+    fn every_tab_renders_with_named_controls() {
+        let mut ui = open("", true, "tabs");
+        for (name, controls) in [
+            ("Play", &["Enhanced", "Steam Deck", "Custom"][..]),
+            (
+                "Picture",
+                &[
+                    "Renderer",
+                    "Display",
+                    "Shader / Upscaler",
+                    "Scaler",
+                    "Widescreen",
+                    "Extended draw distance",
+                    "Vsync",
+                    "Frame generation (100 FPS)",
+                ],
+            ),
+            ("Controls", &["Gamepad", "Deadzone", "Rumble"]),
+            ("Buttons", &["Modern", "Accelerate", "Brake / Delete"]),
+        ] {
+            tab(&mut ui, name);
+            for control in controls {
+                assert!(
+                    ui.query_all_by_label(control).next().is_some(),
+                    "{name}: no control named {control}"
+                );
+            }
+        }
+        // A row's description is its accessible description.
+        tab(&mut ui, "Picture");
+        let vsync = ui.get_by_role_and_label(Role::Switch, "Vsync");
+        assert_eq!(
+            testing::description(&vsync).as_deref(),
+            Some(config::option("vsync").description)
+        );
+    }
+
+    #[test]
+    fn clicking_controls_changes_what_play_saves() {
+        let mut ui = open("", true, "clicks");
+        install_screamer2(ui.state_mut());
+        ui.run();
+        tab(&mut ui, "Picture");
+        ui.get_by_role_and_label(Role::Switch, "Frame generation (100 FPS)")
+            .click();
+        ui.run();
+        ui.get_by_role_and_label(Role::Switch, "Vsync").click();
+        ui.run();
+        ui.get_by_label("SVGA 16-bit").click();
+        ui.run();
+        ui.get_by_label("Even pixels").click();
+        ui.run();
+        tab(&mut ui, "Controls");
+        ui.get_by_label("Strong").click();
+        ui.run();
+        play(&mut ui);
+        let s = saved(&ui);
+        assert_eq!(s.frame_generation, Some(true));
+        assert_eq!(s.vsync, Some(false));
+        assert_eq!(s.renderer, Some(RendererChoice::Svga16Bit));
+        assert_eq!(s.scaler, Some(Scaler::Pixel));
+        assert_eq!(s.rumble, Some(100));
+        assert_eq!(s.which, Some(Game::Screamer2));
+        // Picking each setting makes the look Custom.
+        assert_eq!(ui.state().form.look, Look::Custom);
+    }
+
+    #[test]
+    fn looks_set_their_values() {
+        let mut ui = open("", false, "looks");
+        install_screamer2(ui.state_mut());
+        ui.run();
+        ui.get_by_label("Original 1996").click();
+        ui.run();
+        play(&mut ui);
+        let s = saved(&ui);
+        assert_eq!(s.resolution, Some(config::ORIGINAL));
+        assert_eq!(
+            (s.widescreen, s.frame_generation),
+            (Some(false), Some(false))
+        );
+    }
+
+    #[test]
+    fn disabled_controls_say_why() {
+        let mut ui = open("which = screamer\n", false, "disabled");
+        tab(&mut ui, "Picture");
+        let voodoo = ui.get_by_label("3dfx Voodoo");
+        assert!(testing::disabled(&voodoo));
+        assert!(
+            testing::description(&voodoo)
+                .unwrap()
+                .contains("only shipped with 8-bit SVGA")
+        );
+        tab(&mut ui, "Controls");
+        ui.get_by_role_and_label(Role::Switch, "Gamepad").click();
+        ui.run();
+        let strong = ui.get_by_label("Strong");
+        assert!(testing::disabled(&strong));
+        assert!(
+            ui.query_by_label_contains("Turn on Gamepad above")
+                .is_some()
+        );
+        tab(&mut ui, "Buttons");
+        assert!(
+            ui.query_by_label_contains("Turn on Gamepad in the Controls tab")
+                .is_some()
+        );
+        // Play waits for a game folder.
+        assert!(testing::disabled(
+            &ui.get_by_role_and_label(Role::Button, "Play")
+        ));
+    }
+
+    #[test]
+    fn a_saved_value_outside_the_chips_is_shown_and_kept() {
+        let mut ui = open("deadzone = 12\nresolution = 2560x1440\n", false, "custom");
+        install_screamer2(ui.state_mut());
+        ui.run();
+        tab(&mut ui, "Controls");
+        assert!(testing::checked(&ui.get_by_label("12%")));
+        tab(&mut ui, "Picture");
+        assert!(testing::checked(&ui.get_by_label("2560×1440")));
+        play(&mut ui);
+        let s = saved(&ui);
+        assert_eq!((s.deadzone, s.resolution), (Some(12), Some((2560, 1440))));
+    }
+
+    #[test]
+    fn the_pad_steps_through_the_picture_rows() {
+        let mut ui = open("", false, "pad");
+        let ctx = ui.ctx.clone();
+        let w = ui.state_mut();
+        w.handle_pad_action(Nav::NextTab, &ctx);
+        assert_eq!(w.tab, Tab::Picture);
+        // Renderer, Display, Shader, then the four switches.
+        for _ in 0..6 {
+            w.handle_pad_action(Nav::Down, &ctx);
+        }
+        assert!(w.focused(Row::FrameGeneration));
+        w.handle_pad_action(Nav::Press, &ctx);
+        assert!(w.form.picture.frame_generation);
+        w.handle_pad_action(Nav::Down, &ctx);
+        assert!(w.focused(Row::Renderer), "wraps to the top");
+    }
+
+    #[test]
+    fn the_scaler_row_is_linux_only() {
+        let mut ui = open("", false, "no-scaler");
+        tab(&mut ui, "Picture");
+        assert!(
+            ui.query_by_role_and_label(Role::RadioGroup, "Scaler")
+                .is_none()
+        );
+        let mut ui = open("", true, "scaler");
+        tab(&mut ui, "Picture");
+        assert!(
+            ui.query_by_role_and_label(Role::RadioGroup, "Scaler")
+                .is_some()
+        );
+    }
 
     #[test]
     fn the_palette_keeps_its_contrast() {

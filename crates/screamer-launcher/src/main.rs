@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
 use rea_launcher::cfg;
+use rea_launcher::fsx;
 use rea_launcher::log::Log;
 
-use screamer_launcher::config::{self, MachineCapabilities, Settings};
+use screamer_launcher::config::{self, ArgsError, MachineCapabilities, Settings};
 use screamer_launcher::edition::Game;
 use screamer_launcher::runtime;
 
@@ -77,35 +78,56 @@ fn run() -> Result<ExitCode, String> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
     let (mode, filtered_args) = extract_mode(&raw_args)?;
     INTERACTIVE.store(is_interactive(&mode), std::sync::atomic::Ordering::Relaxed);
-    let cli_settings = Settings::parse_args(filtered_args)?;
+    let cli_settings = match Settings::parse_args(filtered_args) {
+        Ok(s) => s,
+        Err(ArgsError::Help) => {
+            println!("{}", config::usage());
+            return Ok(ExitCode::SUCCESS);
+        }
+        Err(ArgsError::Bad(message)) => {
+            return Err(format!("{message}\n\n{}", config::usage()));
+        }
+    };
 
     let cfg_path = locate_config_file();
     // Only a missing file is a first run; one that cannot be read is never
-    // replaced.
+    // replaced. The first run saves the recommended look for this screen.
     let mut cfg_text = match cfg::read_file(&cfg_path) {
         Ok(Some(text)) => text,
         Ok(None) => {
+            let screen = MachineCapabilities::detect().display_res;
+            let text = config::first_run(Some(screen));
             if let Some(parent) = cfg_path.parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            let _ = fs::write(&cfg_path, config::TEMPLATE);
-            config::TEMPLATE.to_string()
+            let _ = fsx::write_atomic(&cfg_path, &text);
+            log().line(&format!(
+                "first run: wrote {} with the recommended look",
+                cfg_path.display()
+            ));
+            text
         }
-        Err(_) => config::TEMPLATE.to_string(),
+        Err(e) => {
+            warn(&format!("{}: {e}; using the defaults", cfg_path.display()));
+            config::template()
+        }
     };
 
-    // Remember --game and --which passed on the CLI in launcher.cfg.
-    let mut cfg_dirty = false;
-    if let Some(g) = &cli_settings.game {
-        cfg_text = cfg::set_key(&cfg_text, "game", &g.display().to_string());
-        cfg_dirty = true;
-    }
-    if let Some(w) = cli_settings.which {
-        cfg_text = cfg::set_key(&cfg_text, "which", w.slug());
-        cfg_dirty = true;
-    }
-    if cfg_dirty {
-        let _ = fs::write(&cfg_path, &cfg_text);
+    // Remember --game, --which and --scaler passed on the command line in
+    // launcher.cfg (not for --check, which only looks).
+    if mode != Mode::Check {
+        let remembered = config::save_keys(
+            &cfg_text,
+            &cli_settings,
+            &["game", "which", "scaler"]
+                .into_iter()
+                .filter(|k| config::cfg_value(&cli_settings, k).is_some())
+                .collect::<Vec<_>>(),
+        );
+        if remembered != cfg_text {
+            cfg_text = remembered;
+            let _ = fsx::write_atomic(&cfg_path, &cfg_text);
+        }
     }
 
     let (file_settings, warnings) = Settings::parse_file(&cfg_text);
@@ -293,34 +315,41 @@ fn default_saves_dir(game_slug: &str) -> PathBuf {
 }
 
 fn run_check(settings: &Settings, filter_game: Option<Game>) -> Result<ExitCode, String> {
+    let log = log();
     let machine = MachineCapabilities::detect();
-    println!(
+    let say = |line: String| {
+        println!("{line}");
+        log.line(&line);
+    };
+    say(format!(
         "Hardware:   {} · Display {}×{} @ {} Hz",
         machine.gpu_name, machine.display_res.0, machine.display_res.1, machine.refresh_hz
-    );
-    println!(
-        "Defaults:   Renderer={}, Widescreen={}, Upscaler={:?}, FrameGen={}",
+    ));
+    say(format!(
+        "Settings:   renderer={}, widescreen={}, filter={}, frame generation={}, vsync={}",
         settings.renderer_choice().key(),
-        settings.widescreen_enabled(),
-        settings.effective_filter(),
-        if settings.fps_cap().is_some_and(|f| f >= 60) {
-            "100 FPS (2x Optical Flow)"
-        } else {
-            "50 FPS (Native)"
-        }
-    );
-    println!();
+        cfg::on_off(settings.widescreen_enabled()),
+        settings.effective_filter().key(),
+        cfg::on_off(settings.frame_generation_enabled()),
+        cfg::on_off(settings.vsync_enabled()),
+    ));
 
     let game_dir = settings
         .game
         .as_deref()
         .ok_or_else(|| "No game folder set. Pass --game <folder>.".to_string())?;
     let trilogy = runtime::discover_trilogy(game_dir);
+    for stranger in &trilogy.unknown {
+        warn(&stranger.message());
+    }
     if !trilogy.any_found() {
-        return Err(format!(
-            "No supported Screamer, Screamer 2, or Screamer Rally executables found in {}",
-            game_dir.display()
-        ));
+        return Err(match trilogy.unknown.first() {
+            Some(stranger) => stranger.message(),
+            None => format!(
+                "No supported Screamer, Screamer 2, or Screamer Rally executables found in {}",
+                game_dir.display()
+            ),
+        });
     }
 
     let mut checked_any = false;
@@ -331,37 +360,38 @@ fn run_check(settings: &Settings, filter_game: Option<Game>) -> Result<ExitCode,
         let Some(disc) = trilogy.get(g) else {
             continue;
         };
-        if checked_any {
-            println!();
-        }
+        println!();
         checked_any = true;
-        println!("Game:       {}", disc.game.title());
-        println!("Source dir: {}", disc.exe_dir.display());
-        if let Some(cd) = &disc.cd_image {
-            println!("CD image:   {}", cd.display());
-        } else {
-            println!("CD image:   none (directory mount fallback)");
+        say(format!("Game:       {}", disc.game.title()));
+        say(format!("Source dir: {}", disc.exe_dir.display()));
+        match &disc.cd_image {
+            Some(cd) => say(format!("CD image:   {}", cd.display())),
+            None => say("CD image:   none (directory mount fallback)".into()),
         }
         if disc.has_genuine_dos_glide2x {
-            println!("Glide OVL:  Genuine DOS 3dfx GLIDE2X.OVL detected");
+            say("Glide OVL:  Genuine DOS 3dfx GLIDE2X.OVL detected".into());
         } else if disc.has_windows_stub_glide2x {
-            println!(
+            say(
                 "Glide OVL:  Windows port-0x600 stub detected (auto-selecting 16-bit SVGA START65H.EXE unless DOS GLIDE2X.OVL is supplied)"
+                    .into(),
             );
+        }
+        for stranger in &disc.unknown {
+            warn(&stranger.message());
         }
 
         let verified = runtime::verify_discovered_game(disc, &settings.skipped_fixes())?;
         for (name, ed, write_count) in &verified {
-            println!(
+            say(format!(
                 "Verified:   {name:<12} -> {:<56} ({write_count} patch writes verified)",
                 ed.name
-            );
+            ));
         }
         let selected = disc.select_executable(settings.renderer_choice())?;
-        println!(
+        say(format!(
             "Selected:   {} ({})",
             selected.file_name, selected.edition.name
-        );
+        ));
     }
 
     if !checked_any && let Some(fg) = filter_game {
@@ -388,11 +418,15 @@ fn run_controllers(_seconds: u32) -> Result<ExitCode, String> {
 }
 
 fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
+    let log = log();
     let game_dir = settings
         .game
         .as_deref()
         .ok_or_else(|| "No game folder set. Pass --game <folder>.".to_string())?;
     let disc = runtime::resolve_game_dir(game_dir, settings.which_game())?;
+    for stranger in &disc.unknown {
+        warn(&stranger.message());
+    }
     let slug = disc.game.slug();
     let runtime_dir = settings
         .runtime
@@ -416,8 +450,13 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
     }
     let settings = &settings;
 
-    let prepared =
-        runtime::prepare_runtime(&disc, settings, &runtime_dir, Some(saves_dir.as_path()))?;
+    let prepared = runtime::prepare_runtime(
+        &disc,
+        settings,
+        &runtime_dir,
+        Some(saves_dir.as_path()),
+        runtime::Gpu::of(&machine),
+    )?;
     for warning in &prepared.warnings {
         warn(warning);
     }
@@ -429,59 +468,57 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
             },
         )?;
 
+    let plan = &prepared.plan;
+    log.line(&format!(
+        "launch: {} from {}",
+        disc.game.display_name(),
+        disc.exe_dir.display()
+    ));
+    for (name, count) in &prepared.patched_exes {
+        let exe = disc.executables.iter().find(|e| &e.file_name == name);
+        log.line(&format!(
+            "edition: {name} = {} (SHA-256 {}), {count} patch writes",
+            exe.map_or("?", |e| e.edition.name),
+            exe.map(|e| rea_launcher::identify::hex(&e.sha256))
+                .unwrap_or_default()
+        ));
+    }
+    log.line(&format!(
+        "fixes left out: {}",
+        if plan.skipped_fixes.is_empty() {
+            "none".to_string()
+        } else {
+            plan.skipped_fixes.join(", ")
+        }
+    ));
+    log.line(&format!(
+        "exe {}; runtime {}; saves {}; dosbox {}",
+        prepared.selected_exe,
+        prepared.runtime_dir.display(),
+        saves_dir.display(),
+        dosbox.display()
+    ));
+    log.line(&format!("dosbox args: {}", plan.dosbox_args.join(" ")));
+    log.line(&format!(
+        "env: {}",
+        plan.env
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    ));
+
     let mut cmd = Command::new(&dosbox);
     cmd.current_dir(&prepared.runtime_dir)
-        .arg("-noprimaryconf")
-        .arg("-nolocalconf")
-        .arg("-conf")
-        .arg(&prepared.conf_path);
-
-    let is_3dfx = prepared.selected_exe.eq_ignore_ascii_case("S2_3DFX.EXE")
-        || prepared.selected_exe.eq_ignore_ascii_case("STRT3FX.EXE");
-    let voodoo_scale = if is_3dfx && settings.race_resolution().is_some() {
-        "2"
-    } else {
-        "1"
-    };
-    let frame_gen = if settings.fps_cap().is_some_and(|fps| fps >= 60) {
-        "1"
-    } else {
-        "0"
-    };
-
-    if machine.has_nvidia_dgpu {
-        cmd.env("__NV_PRIME_RENDER_OFFLOAD", "1")
-            .env("__GLX_VENDOR_LIBRARY_NAME", "nvidia");
-    } else if machine.has_amd_dgpu {
-        cmd.env("DRI_PRIME", "1");
+        .args(&plan.dosbox_args);
+    for (key, value) in &plan.env {
+        cmd.env(key, value);
     }
-
-    // Pass settings to the statically linked screamer-hooks and Voodoo renderer inside dosbox via environment variables.
-    cmd.env("SCREAMER_GAME", disc.game.slug())
-        .env("SCREAMER_EXE", &prepared.selected_exe)
-        .env("SCREAMER_VOODOO_SCALE", voodoo_scale)
-        .env("SCREAMER_FRAME_GEN", frame_gen)
-        .env(
-            "SCREAMER_GAMEPAD_AXES",
-            if settings.gamepad_axes != Some(false) {
-                "1"
-            } else {
-                "0"
-            },
-        )
-        .env(
-            "SCREAMER_DEADZONE",
-            settings.deadzone.unwrap_or(0).to_string(),
-        )
-        .env("SCREAMER_RUMBLE", settings.rumble_strength().to_string())
-        .env(
-            "SCREAMER_BUTTONS",
-            config::buttons_value(&settings.button_map()),
-        );
 
     let status = cmd
         .status()
         .map_err(|e| format!("Failed to start {}: {e}", dosbox.display()))?;
+    log.line(&format!("dosbox ended: {status}"));
 
     runtime::sync_saves_out(&prepared.runtime_dir, &saves_dir)?;
 

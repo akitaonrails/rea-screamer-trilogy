@@ -3,7 +3,6 @@
 
 use std::path::PathBuf;
 
-use rea_launcher::cfg;
 pub use rea_launcher::display::STEAM_DECK_SCREEN;
 use rea_launcher::display::landscape;
 
@@ -17,8 +16,8 @@ pub struct Picture {
     pub widescreen: bool,
     pub extended_draw_distance: bool,
     pub texture_filter: TextureFilter,
-    pub fps_limit: Option<u32>,
-    pub vsync: Option<bool>,
+    pub frame_generation: bool,
+    pub vsync: bool,
 }
 
 impl Picture {
@@ -28,8 +27,8 @@ impl Picture {
         widescreen: false,
         extended_draw_distance: false,
         texture_filter: TextureFilter::Original,
-        fps_limit: Some(30),
-        vsync: None,
+        frame_generation: false,
+        vsync: true,
     };
 
     pub fn enhanced(_screen: Option<(u32, u32)>) -> Picture {
@@ -42,8 +41,8 @@ impl Picture {
             // Nearest-neighbour output keeps that artwork crisp and avoids putting the
             // comparatively expensive FSR shader on the default presentation path.
             texture_filter: TextureFilter::Sharp,
-            fps_limit: None,
-            vsync: Some(true),
+            frame_generation: false,
+            vsync: true,
         }
     }
 
@@ -53,8 +52,8 @@ impl Picture {
         widescreen: true,
         extended_draw_distance: true,
         texture_filter: TextureFilter::Sharp,
-        fps_limit: None,
-        vsync: Some(true),
+        frame_generation: false,
+        vsync: true,
     };
 }
 
@@ -118,18 +117,6 @@ pub struct Form {
     pub buttons: [u8; 8],
     pub layout: Layout,
 }
-
-pub const FRAME_RATES: [(Option<u32>, &str); 3] = [
-    (Some(30), "30 FPS (Original)"),
-    (None, "50 FPS (Native)"),
-    (Some(100), "100 FPS (Frame Gen)"),
-];
-
-pub const VSYNCS: [(Option<bool>, &str); 3] = [
-    (None, "As the game"),
-    (Some(true), "On"),
-    (Some(false), "Off"),
-];
 
 pub const FILTERS: [(TextureFilter, &str); 4] = [
     (TextureFilter::Original, "CRT Monitor"),
@@ -229,23 +216,14 @@ impl Form {
             } else {
                 s.race_resolution()
             };
-        let vsync = if s.resolution == Some(config::ORIGINAL) && s.vsync.is_none() {
-            None
-        } else {
-            Some(s.vsync.unwrap_or(true))
-        };
         let picture = Picture {
             renderer,
             resolution,
             widescreen: s.widescreen_enabled(),
             extended_draw_distance: s.extended_draw_distance_enabled(),
             texture_filter: s.effective_filter(),
-            fps_limit: match s.fps_cap() {
-                Some(fps) if fps <= 30 => Some(30),
-                Some(fps) if fps >= 60 => Some(100),
-                _ => None,
-            },
-            vsync,
+            frame_generation: s.frame_generation_enabled(),
+            vsync: s.vsync_enabled(),
         };
         let buttons = s.buttons.unwrap_or(config::DEFAULT_BUTTONS);
         Form {
@@ -327,64 +305,70 @@ impl Form {
         }
     }
 
-    pub fn save(&self, text: &str) -> String {
+    /// The settings the window shows, as `launcher.cfg` values.
+    pub fn settings(&self) -> Settings {
         let p = &self.picture;
-        let mut t = text.to_string();
-        let mut put = |key: &str, value: Option<String>| {
-            t = match &value {
-                Some(v) => cfg::set_key(&t, key, v),
-                None => cfg::clear_key(&t, key),
-            };
-        };
-        let path = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
-        put("which", Some(self.which.slug().into()));
-        put("game", path(&self.game));
-        put("saves", path(&self.saves));
-        put("renderer", Some(p.renderer.key().into()));
-        put(
-            "resolution",
-            Some(match p.resolution {
-                None => "original".to_string(),
-                Some((w, h)) if (w, h) == config::FULLSCREEN => "fullscreen".to_string(),
-                Some((w, h)) => format!("{w}x{h}"),
-            }),
-        );
-        put("widescreen", Some(p.widescreen.to_string()));
-        put(
-            "extended_draw_distance",
-            Some(p.extended_draw_distance.to_string()),
-        );
-        put(
-            "fps_limit",
-            Some(
-                p.fps_limit
-                    .map(|f| f.to_string())
-                    .unwrap_or_else(|| "50".to_string()),
-            ),
-        );
-        put("vsync", p.vsync.map(|v| v.to_string()));
-        put(
-            "texture_filter",
-            Some(
-                match p.texture_filter {
-                    TextureFilter::Original => "original",
-                    TextureFilter::Fsr => "fsr",
-                    TextureFilter::Smooth => "smooth",
-                    TextureFilter::Sharp => "sharp",
-                }
-                .into(),
-            ),
-        );
-        put("rumble", Some(self.rumble.to_string()));
-        put("deadzone", Some(self.deadzone.to_string()));
-        put("gamepad_axes", Some(self.gamepad_axes.to_string()));
-        put("scaler", Some(self.scaler.key().into()));
-        put(
-            "buttons",
-            (self.buttons != config::DEFAULT_BUTTONS).then(|| config::buttons_value(&self.buttons)),
-        );
-        t
+        let path = |s: &str| Some(PathBuf::from(s.trim())).filter(|p| !p.as_os_str().is_empty());
+        Settings {
+            which: Some(self.which),
+            game: path(&self.game),
+            saves: path(&self.saves),
+            runtime: None,
+            dosbox: None,
+            renderer: Some(p.renderer),
+            resolution: Some(p.resolution.unwrap_or(config::ORIGINAL)),
+            widescreen: Some(p.widescreen),
+            extended_draw_distance: Some(p.extended_draw_distance),
+            frame_generation: Some(p.frame_generation),
+            vsync: Some(p.vsync),
+            texture_filter: Some(p.texture_filter),
+            gamepad_axes: Some(self.gamepad_axes),
+            deadzone: Some(self.deadzone),
+            rumble: Some(self.rumble),
+            buttons: (self.buttons != config::DEFAULT_BUTTONS).then_some(self.buttons),
+            scaler: Some(self.scaler),
+        }
     }
+
+    /// `text` with every key the window shows written in place (comments
+    /// and other keys kept).
+    pub fn save(&self, text: &str) -> String {
+        config::save_keys(text, &self.settings(), WINDOW_KEYS)
+    }
+}
+
+/// The keys the settings window has a control for (all but the
+/// launcher-only rows).
+pub const WINDOW_KEYS: &[&str] = &[
+    "which",
+    "game",
+    "saves",
+    "renderer",
+    "resolution",
+    "widescreen",
+    "extended_draw_distance",
+    "frame_generation",
+    "vsync",
+    "texture_filter",
+    "gamepad_axes",
+    "deadzone",
+    "rumble",
+    "buttons",
+    "scaler",
+];
+
+/// The chips for a number option: the curated `table`, plus the saved
+/// value when it is not one of them (so it shows and is kept).
+pub fn with_saved(table: &[(u32, &'static str)], saved: u32) -> Vec<(u32, String)> {
+    let mut out: Vec<(u32, String)> = table.iter().map(|(v, l)| (*v, l.to_string())).collect();
+    if !table.iter().any(|(v, _)| *v == saved) {
+        let at = out
+            .iter()
+            .position(|(v, _)| *v > saved)
+            .unwrap_or(out.len());
+        out.insert(at, (saved, format!("{saved}%")));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -399,7 +383,7 @@ mod tests {
 
     #[test]
     fn default_template_starts_as_smart_enhanced_look() {
-        let f = form(config::TEMPLATE);
+        let f = form(&config::template());
         assert_eq!(f.which, Game::Screamer);
         assert_eq!(f.look, Look::Enhanced);
         assert_eq!(f.picture, Picture::enhanced(SCREEN));
@@ -414,10 +398,10 @@ mod tests {
 
     #[test]
     fn enhanced_and_original_looks_roundtrip_through_save() {
-        let mut f = form(config::TEMPLATE);
+        let mut f = form(&config::template());
         f.set_which(Game::ScreamerRally, true, SCREEN);
         f.set_look(Look::Original, SCREEN);
-        let saved_orig = f.save(config::TEMPLATE);
+        let saved_orig = f.save(&config::template());
         let f_orig = form(&saved_orig);
         assert_eq!(f_orig.look, Look::Original);
         assert_eq!(f_orig.picture, Picture::ORIGINAL);
@@ -432,12 +416,12 @@ mod tests {
         assert!(f2.picture.widescreen);
         assert!(f2.picture.extended_draw_distance);
         assert_eq!(f2.picture.texture_filter, TextureFilter::Sharp);
-        assert_eq!(f2.picture.fps_limit, None);
+        assert!(!f2.picture.frame_generation);
     }
 
     #[test]
     fn switching_game_resets_unsupported_renderer() {
-        let mut f = form(config::TEMPLATE);
+        let mut f = form(&config::template());
         f.set_which(Game::ScreamerRally, true, SCREEN);
         f.picture.renderer = RendererChoice::Voodoo;
         assert_eq!(f.picture.renderer, RendererChoice::Voodoo);
@@ -449,7 +433,7 @@ mod tests {
 
     #[test]
     fn the_template_starts_with_the_modern_pad_layout() {
-        let f = form(config::TEMPLATE);
+        let f = form(&config::template());
         assert_eq!(f.layout, Layout::Modern);
         assert_eq!(f.buttons[0], 10); // Accelerate = RT
         assert_eq!(f.buttons[4], 9); // Brake = LT

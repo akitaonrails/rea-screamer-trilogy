@@ -1,0 +1,38 @@
+name: Unknown game build
+description: The launcher says your Screamer, Screamer 2 or Screamer Rally executable is a build it does not know.
+title: "Unknown build: <game> <file name>"
+labels: [edition]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! The launcher only patches builds it knows by their SHA-256, so it needs yours on file.
+        Never attach game files: the hash is enough.
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game
+      options: [Screamer (1995), Screamer 2 (1996), Screamer Rally (1997)]
+    validations:
+      required: true
+  - type: input
+    id: edition
+    attributes:
+      label: Where is your copy from?
+      placeholder: GOG, original CD (which country), a budget re-release, ...
+    validations:
+      required: true
+  - type: textarea
+    id: hash
+    attributes:
+      label: The message with the file name and SHA-256
+      description: Copy it from the window or from `ScreamerLauncher --check --game <folder>`.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: launcher.log
+      description: Next to launcher.cfg (Windows `%APPDATA%\ScreamerLauncher\`, Linux `~/.config/screamer-launcher/`). Paste it or attach it.
+      render: text

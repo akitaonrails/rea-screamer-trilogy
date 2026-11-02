@@ -18,4 +18,6 @@ rea-launcher-ui.workspace = true
 rea-launcher-win32.workspace = true
 
 [dev-dependencies]
+# Headless GUI tests (egui_kittest through AccessKit; no window, no GPU).
+rea-launcher-ui = { workspace = true, features = ["testing"] }
 png = "0.18"

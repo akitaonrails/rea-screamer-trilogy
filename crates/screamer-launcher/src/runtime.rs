@@ -28,6 +28,32 @@ pub struct DiscoveredExe {
     pub sha256: [u8; 32],
 }
 
+/// Where players report a build the launcher does not know (the issue
+/// template asks for `launcher.log` and the hash).
+pub const ISSUE_URL: &str =
+    "https://github.com/akitaonrails/rea-screamer-trilogy/issues/new?template=unknown-edition.yml";
+
+/// A game executable (by its name) whose SHA-256 is in no edition table:
+/// never patched or run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownExe {
+    pub path: PathBuf,
+    pub file_name: String,
+    pub sha256: [u8; 32],
+}
+
+impl UnknownExe {
+    /// What the player reads: the file, its SHA-256 and where to report it.
+    pub fn message(&self) -> String {
+        format!(
+            "{} ({}) is a build this launcher does not know, SHA-256 {}. It is not used. Please report it with launcher.log: {ISSUE_URL}",
+            self.file_name,
+            self.path.display(),
+            rea_launcher::identify::hex(&self.sha256)
+        )
+    }
+}
+
 /// Result of scanning a user's game folder.
 #[derive(Debug, Clone)]
 pub struct DiscoveredGame {
@@ -39,6 +65,8 @@ pub struct DiscoveredGame {
     pub glide2x_ovl_source: Option<PathBuf>,
     pub has_genuine_dos_glide2x: bool,
     pub has_windows_stub_glide2x: bool,
+    /// Executables with a known name but an unknown build, left out.
+    pub unknown: Vec<UnknownExe>,
 }
 
 /// Result of preparing a writable runtime folder for launch.
@@ -51,6 +79,7 @@ pub struct PreparedRuntime {
     pub patched_exes: Vec<(String, usize)>,
     /// Problems worth logging that did not stop the launch.
     pub warnings: Vec<String>,
+    pub plan: LaunchPlan,
 }
 
 const KNOWN_EXE_NAMES: &[&str] = &[
@@ -79,24 +108,28 @@ pub fn scan_game_dir(dir: &Path) -> Result<DiscoveredGame, String> {
 
     let mut exe_dir = None;
     let mut executables = Vec::new();
+    let mut unknown = Vec::new();
 
     for cand in &candidate_dirs {
         if !cand.is_dir() {
             continue;
         }
-        let found = scan_exes_in_dir(cand)?;
+        let (found, strangers) = scan_exes_in_dir(cand)?;
         if !found.is_empty() {
             exe_dir = Some(cand.clone());
             executables = found;
+            unknown = strangers;
             break;
         }
+        unknown.extend(strangers);
     }
 
-    let exe_dir = exe_dir.ok_or_else(|| {
-        format!(
+    let exe_dir = exe_dir.ok_or_else(|| match unknown.first() {
+        Some(stranger) => stranger.message(),
+        None => format!(
             "No supported Screamer, Screamer 2, or Screamer Rally executables found in {}",
             dir.display()
-        )
+        ),
     })?;
 
     // Determine primary game from main racing executables first, falling back to setup.
@@ -120,12 +153,16 @@ pub fn scan_game_dir(dir: &Path) -> Result<DiscoveredGame, String> {
         glide2x_ovl_source,
         has_genuine_dos_glide2x,
         has_windows_stub_glide2x,
+        unknown,
     })
 }
 
-fn scan_exes_in_dir(dir: &Path) -> Result<Vec<DiscoveredExe>, String> {
+/// The known builds in `dir`, and the files with a game executable's name
+/// but an unknown SHA-256.
+fn scan_exes_in_dir(dir: &Path) -> Result<(Vec<DiscoveredExe>, Vec<UnknownExe>), String> {
     let entries = fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut out = Vec::new();
+    let mut unknown = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file() {
@@ -140,17 +177,23 @@ fn scan_exes_in_dir(dir: &Path) -> Result<Vec<DiscoveredExe>, String> {
         }
         let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let digest = edition::sha256(&bytes);
-        if let Some(ed) = edition::identify_sha256(&digest) {
-            out.push(DiscoveredExe {
+        match edition::identify_sha256(&digest) {
+            Some(ed) => out.push(DiscoveredExe {
                 path,
                 file_name: upper,
                 edition: ed,
                 sha256: digest,
-            });
+            }),
+            None => unknown.push(UnknownExe {
+                path,
+                file_name: upper,
+                sha256: digest,
+            }),
         }
     }
     out.sort_by(|a, b| a.file_name.cmp(&b.file_name));
-    Ok(out)
+    unknown.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+    Ok((out, unknown))
 }
 
 fn check_glide2x_ovl(root_dir: &Path, exe_dir: &Path) -> (bool, bool, Option<PathBuf>) {
@@ -269,6 +312,8 @@ pub struct DiscoveredTrilogy {
     pub games: [Option<DiscoveredGame>; 3],
     /// If the user's path pointed directly at one specific game folder, which game it was.
     pub direct_game: Option<Game>,
+    /// Unknown builds met in folders where no known game was found.
+    pub unknown: Vec<UnknownExe>,
 }
 
 impl DiscoveredTrilogy {
@@ -294,10 +339,13 @@ pub fn discover_trilogy(dir: &Path) -> DiscoveredTrilogy {
         return out;
     }
 
-    if let Ok(direct) = scan_game_dir(dir) {
-        let idx = direct.game.index();
-        out.direct_game = Some(direct.game);
-        out.games[idx] = Some(direct);
+    match scan_game_dir(dir) {
+        Ok(direct) => {
+            let idx = direct.game.index();
+            out.direct_game = Some(direct.game);
+            out.games[idx] = Some(direct);
+        }
+        Err(_) => out.unknown.extend(unknown_in(dir)),
     }
 
     let mut containers = vec![dir.to_path_buf(), dir.join("games")];
@@ -328,12 +376,22 @@ pub fn discover_trilogy(dir: &Path) -> DiscoveredTrilogy {
             "ScreamerRally",
         ] {
             let cand = container.join(sub_name);
-            if cand.is_dir()
-                && let Ok(disc) = scan_game_dir(&cand)
-            {
-                let idx = disc.game.index();
-                if out.games[idx].is_none() {
-                    out.games[idx] = Some(disc);
+            if !cand.is_dir() {
+                continue;
+            }
+            match scan_game_dir(&cand) {
+                Ok(disc) => {
+                    let idx = disc.game.index();
+                    if out.games[idx].is_none() {
+                        out.games[idx] = Some(disc);
+                    }
+                }
+                Err(_) => {
+                    for stranger in unknown_in(&cand) {
+                        if !out.unknown.contains(&stranger) {
+                            out.unknown.push(stranger);
+                        }
+                    }
                 }
             }
         }
@@ -362,6 +420,21 @@ pub fn discover_trilogy(dir: &Path) -> DiscoveredTrilogy {
     out
 }
 
+/// The unknown builds in `dir` and its usual game subfolders.
+fn unknown_in(dir: &Path) -> Vec<UnknownExe> {
+    [
+        dir.to_path_buf(),
+        dir.join("app"),
+        dir.join("hdd").join("SR"),
+        dir.join("SR"),
+    ]
+    .iter()
+    .filter(|d| d.is_dir())
+    .filter_map(|d| scan_exes_in_dir(d).ok())
+    .flat_map(|(_, unknown)| unknown)
+    .collect()
+}
+
 /// Resolves `dir` (which may be a parent trilogy directory or a single game
 /// directory) to the [`DiscoveredGame`] for `preferred` (or falls back to the
 /// directly pointed-at game if `dir` is a single game folder).
@@ -377,6 +450,9 @@ pub fn resolve_game_dir(dir: &Path, preferred: Game) -> Result<DiscoveredGame, S
         && let Some(disc) = trilogy.get(direct)
     {
         return Ok(disc.clone());
+    }
+    if let Some(stranger) = trilogy.unknown.first() {
+        return Err(stranger.message());
     }
     if let Some(first) = trilogy.games.into_iter().flatten().next() {
         return Ok(first);
@@ -462,6 +538,7 @@ pub fn prepare_runtime(
     settings: &Settings,
     runtime_dir: &Path,
     saves_dir: Option<&Path>,
+    gpu: Gpu,
 ) -> Result<PreparedRuntime, String> {
     fs::create_dir_all(runtime_dir).map_err(|e| format!("{}: {e}", runtime_dir.display()))?;
     let config_dir = runtime_dir.join("CONFIG");
@@ -498,71 +575,184 @@ pub fn prepare_runtime(
         patched_exes.push((exe.file_name.clone(), count));
     }
 
-    // Write SCREAMER.CFG, CONFIG/SETUP.CFG, and CONFIG/CONTROLS.CFG.
-    let screamer_cfg_path = runtime_dir.join("SCREAMER.CFG");
-    fsx::install(&screamer_cfg_path, build_screamer_cfg(discovered.game))
-        .map_err(|e| e.to_string())?;
+    let selected = discovered.select_executable(settings.renderer_choice())?;
+    let plan = plan(
+        settings,
+        discovered.game,
+        &selected.file_name,
+        selected.edition.role,
+        runtime_dir,
+        discovered.cd_image.as_deref(),
+        gpu,
+    );
 
-    let setup_cfg_path = config_dir.join("SETUP.CFG");
-    fsx::install(&setup_cfg_path, build_setup_cfg(discovered.game, 7))
-        .map_err(|e| e.to_string())?;
-
-    let controls_cfg_path = config_dir.join("CONTROLS.CFG");
-    let keys = KeyBindings::default_for(discovered.game);
-    fsx::install(
-        &controls_cfg_path,
-        build_controls_cfg(discovered.game, keys),
-    )
-    .map_err(|e| e.to_string())?;
+    // SCREAMER.CFG, CONFIG/SETUP.CFG, CONFIG/CONTROLS.CFG and the DOSBox
+    // configuration: generated afresh each launch (the game reads them; it
+    // writes only CHOICE.DAT, saves and replays).
+    for (rel, bytes) in plan.files() {
+        fsx::install(&native(runtime_dir, rel), bytes).map_err(|e| e.to_string())?;
+    }
 
     // Sync user saves in if a saves directory is configured.
     if let Some(saves) = saves_dir {
         sync_saves_in(saves, runtime_dir)?;
     }
 
-    let selected = discovered.select_executable(settings.renderer_choice())?;
+    Ok(PreparedRuntime {
+        runtime_dir: runtime_dir.to_path_buf(),
+        conf_path: runtime_dir.join(CONF_NAME),
+        selected_exe: selected.file_name.clone(),
+        selected_edition: selected.edition,
+        patched_exes,
+        warnings: staged.warnings,
+        plan,
+    })
+}
+
+/// The DOSBox configuration file the launcher writes into the runtime.
+pub const CONF_NAME: &str = "dosbox-screamer.conf";
+
+/// The GPU DOSBox should run on (hybrid laptops).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gpu {
+    Nvidia,
+    Amd,
+    Default,
+}
+
+impl Gpu {
+    pub fn of(machine: &crate::config::MachineCapabilities) -> Gpu {
+        if machine.has_nvidia_dgpu {
+            Gpu::Nvidia
+        } else if machine.has_amd_dgpu {
+            Gpu::Amd
+        } else {
+            Gpu::Default
+        }
+    }
+}
+
+/// Everything a launch writes and passes on, from the settings alone:
+/// the files generated into the runtime folder, DOSBox's arguments and
+/// environment, and the optional fixes left out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchPlan {
+    pub game: Game,
+    pub exe: String,
+    pub skipped_fixes: Vec<&'static str>,
+    pub screamer_cfg: Vec<u8>,
+    pub setup_cfg: Vec<u8>,
+    pub controls_cfg: Vec<u8>,
+    pub dosbox_conf: String,
+    pub dosbox_args: Vec<String>,
+    pub env: Vec<(&'static str, String)>,
+}
+
+impl LaunchPlan {
+    /// The generated files, by their path in the runtime folder.
+    pub fn files(&self) -> [(&'static str, &[u8]); 4] {
+        [
+            ("SCREAMER.CFG", &self.screamer_cfg),
+            ("CONFIG/SETUP.CFG", &self.setup_cfg),
+            ("CONFIG/CONTROLS.CFG", &self.controls_cfg),
+            (CONF_NAME, self.dosbox_conf.as_bytes()),
+        ]
+    }
+}
+
+/// The plan for running `exe` (of `role`) of `game` from `runtime_dir` with
+/// `settings`. Pure: nothing is read or written.
+pub fn plan(
+    settings: &Settings,
+    game: Game,
+    exe: &str,
+    role: Renderer,
+    runtime_dir: &Path,
+    cd_image: Option<&Path>,
+    gpu: Gpu,
+) -> LaunchPlan {
     let race_res = settings.race_resolution();
     let fullscreen = race_res == Some(crate::config::FULLSCREEN);
     let res = match race_res {
         None | Some(crate::config::FULLSCREEN) => (1280, 960),
         Some(wh) => wh,
     };
-    let widescreen = settings.widescreen_enabled();
-    let vsync = settings.vsync.unwrap_or(true);
-    let voodoo_enabled = selected.edition.role == Renderer::Glide3dfx;
     let filter = settings.effective_filter();
-    let texture_filtering = matches!(filter, TextureFilter::Smooth | TextureFilter::Fsr);
-    let glshader = match filter {
-        TextureFilter::Original => "crt-auto",
-        TextureFilter::Fsr => "interpolation/fsr",
-        TextureFilter::Sharp => "sharp",
-        TextureFilter::Smooth => "bilinear",
-    };
-
-    let conf_text = build_dosbox_conf(&DosboxConfOptions {
+    let voodoo_enabled = role == Renderer::Glide3dfx;
+    let dosbox_conf = build_dosbox_conf(&DosboxConfOptions {
         fullscreen,
         resolution: res,
-        widescreen,
-        vsync,
+        widescreen: settings.widescreen_enabled(),
+        vsync: settings.vsync_enabled(),
         voodoo_enabled,
-        texture_filtering,
-        glshader,
+        texture_filtering: matches!(filter, TextureFilter::Smooth | TextureFilter::Fsr),
+        glshader: match filter {
+            TextureFilter::Original => "crt-auto",
+            TextureFilter::Fsr => "interpolation/fsr",
+            TextureFilter::Sharp => "sharp",
+            TextureFilter::Smooth => "bilinear",
+        },
         c_drive_dir: runtime_dir,
-        cd_image_path: discovered.cd_image.as_deref(),
-        exe_name: &selected.file_name,
+        cd_image_path: cd_image,
+        exe_name: exe,
         exit_after_run: true,
     });
-    let conf_path = runtime_dir.join("dosbox-screamer.conf");
-    fsx::install(&conf_path, conf_text).map_err(|e| e.to_string())?;
-
-    Ok(PreparedRuntime {
-        runtime_dir: runtime_dir.to_path_buf(),
-        conf_path,
-        selected_exe: selected.file_name.clone(),
-        selected_edition: selected.edition,
-        patched_exes,
-        warnings: staged.warnings,
-    })
+    let on = |b: bool| if b { "1" } else { "0" }.to_string();
+    let mut env: Vec<(&'static str, String)> = match gpu {
+        Gpu::Nvidia => vec![
+            ("__NV_PRIME_RENDER_OFFLOAD", "1".into()),
+            ("__GLX_VENDOR_LIBRARY_NAME", "nvidia".into()),
+        ],
+        Gpu::Amd => vec![("DRI_PRIME", "1".into())],
+        Gpu::Default => Vec::new(),
+    };
+    // Read by the screamer-hooks and the Voodoo renderer linked into DOSBox.
+    env.extend([
+        ("SCREAMER_GAME", game.slug().to_string()),
+        ("SCREAMER_EXE", exe.to_string()),
+        (
+            "SCREAMER_VOODOO_SCALE",
+            if voodoo_enabled && race_res.is_some() {
+                "2"
+            } else {
+                "1"
+            }
+            .to_string(),
+        ),
+        (
+            "SCREAMER_FRAME_GEN",
+            on(settings.frame_generation_enabled()),
+        ),
+        (
+            "SCREAMER_GAMEPAD_AXES",
+            on(settings.gamepad_axes != Some(false)),
+        ),
+        (
+            "SCREAMER_DEADZONE",
+            settings.deadzone.unwrap_or(0).to_string(),
+        ),
+        ("SCREAMER_RUMBLE", settings.rumble_strength().to_string()),
+        (
+            "SCREAMER_BUTTONS",
+            crate::config::buttons_value(&settings.button_map()),
+        ),
+    ]);
+    LaunchPlan {
+        game,
+        exe: exe.to_string(),
+        skipped_fixes: settings.skipped_fixes(),
+        screamer_cfg: build_screamer_cfg(game),
+        setup_cfg: build_setup_cfg(game, 7),
+        controls_cfg: build_controls_cfg(game, KeyBindings::default_for(game)),
+        dosbox_conf,
+        dosbox_args: vec![
+            "-noprimaryconf".into(),
+            "-nolocalconf".into(),
+            "-conf".into(),
+            native(runtime_dir, CONF_NAME).display().to_string(),
+        ],
+        env,
+    }
 }
 
 /// Name of the staging manifest inside the runtime folder.
@@ -946,6 +1136,31 @@ mod tests {
                 .copy
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn an_unknown_build_is_refused_with_its_hash_and_the_issue_link() {
+        let game = temp("unknown-build");
+        fs::create_dir_all(&game).unwrap();
+        fs::write(game.join("starth.exe"), b"a build nobody listed").unwrap();
+        let hash = rea_launcher::identify::hex(&edition::sha256(b"a build nobody listed"));
+        let err = scan_game_dir(&game).unwrap_err();
+        assert!(err.contains(&hash) && err.contains(ISSUE_URL), "{err}");
+        assert!(err.contains("STARTH.EXE"), "{err}");
+        let trilogy = discover_trilogy(&game);
+        assert!(!trilogy.any_found());
+        assert_eq!(trilogy.unknown.len(), 1);
+        assert_eq!(
+            trilogy.unknown[0].sha256,
+            edition::sha256(b"a build nobody listed")
+        );
+        let err = resolve_game_dir(&game, Game::Screamer).unwrap_err();
+        assert!(err.contains(&hash), "{err}");
+        // Other names are not game executables.
+        fs::remove_file(game.join("starth.exe")).unwrap();
+        fs::write(game.join("README.EXE"), b"x").unwrap();
+        assert!(discover_trilogy(&game).unknown.is_empty());
+        fs::remove_dir_all(game).unwrap();
     }
 
     #[test]
