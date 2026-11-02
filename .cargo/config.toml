@@ -1,0 +1,7 @@
+# GNU ld 2.47 (mingw-w64) mis-merges the raw-dylib kernel32 import groups
+# Rust's std uses: 53 import slots end up outside every import descriptor,
+# are never filled by the loader, and ScreamerLauncher.exe jumps into .idata
+# before main (first call: GetCurrentThreadId). LLD links them correctly.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]

@@ -22,6 +22,7 @@ jobs:
     name: Linux x86_64
     uses: akitaonrails/rea-launcher-sdk/.github/workflows/launcher-ci.yml@v0.2.0
     with:
+      concurrency-key: linux
       # The older glibc keeps the native binaries running on older distros.
       runs-on: ubuntu-22.04
       rust-toolchain: 1.95.0
@@ -67,6 +68,25 @@ jobs:
         dist/*.zip
         dist/*.AppImage
 
+  # The Windows build's tests, run headless under Wine (ScreamerLauncher.exe
+  # and its tests crashed before main when linked with GNU ld 2.47; see
+  # .cargo/config.toml).
+  windows-tests:
+    name: Windows x86_64 tests (Wine)
+    uses: akitaonrails/rea-launcher-sdk/.github/workflows/launcher-ci.yml@v0.2.0
+    with:
+      concurrency-key: windows-tests
+      rust-toolchain: 1.95.0
+      rust-target: x86_64-pc-windows-gnu
+      apt-packages: >-
+        gcc-mingw-w64-x86-64 lld pkg-config libwayland-dev libxkbcommon-dev
+      wine-tests: true
+      wine-test-args: --locked --workspace
+      # The Linux job runs these.
+      audit: false
+      sdk-check: false
+      shell-tests: ""
+
   windows-packages:
     name: Windows x86_64
     runs-on: windows-2025
@@ -85,6 +105,7 @@ jobs:
             git
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-lld
             mingw-w64-x86_64-meson
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-ntldd
