@@ -1490,6 +1490,22 @@ mod tests {
     }
 
     #[test]
+    fn the_folder_fields_are_named_by_their_headings() {
+        let mut ui = open("", false, "folders");
+        tab(&mut ui, "Play");
+        for (label, hint) in [
+            (
+                "Game folder",
+                "Folder with Screamer, Screamer 2, Screamer Rally, or all three",
+            ),
+            ("Saves folder", "Default: the launcher's own saves folder"),
+        ] {
+            let field = ui.get_by_role_and_label(Role::TextInput, label);
+            assert_eq!(testing::description(&field).as_deref(), Some(hint));
+        }
+    }
+
+    #[test]
     fn clicking_controls_changes_what_play_saves() {
         let mut ui = open("", true, "clicks");
         install_screamer2(ui.state_mut());
