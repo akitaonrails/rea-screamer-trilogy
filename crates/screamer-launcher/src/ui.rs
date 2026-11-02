@@ -825,11 +825,10 @@ impl Window {
                     note,
                     selected: self.form.layout == layout,
                     badge: recommended.then_some("Recommended"),
+                    disabled: pad_off_reason,
                     ..LookCard::default()
                 };
-                if widgets::look_card(ui, vec2(w, 68.0), &card).clicked()
-                    && pad_off_reason.is_none()
-                {
+                if widgets::look_card(ui, vec2(w, 68.0), &card).clicked() {
                     self.form.set_layout(layout);
                 }
             }
@@ -1575,6 +1574,21 @@ mod tests {
         assert!(
             ui.query_by_label_contains("Turn on Gamepad in the Controls tab")
                 .is_some()
+        );
+        let modern = ui.get_by_label("Modern");
+        assert!(testing::disabled(&modern));
+        assert!(
+            testing::description(&modern)
+                .unwrap()
+                .ends_with("Turn on Gamepad in the Controls tab first.")
+        );
+        let before = ui.state().form.layout;
+        ui.get_by_label("Custom").click();
+        ui.run();
+        assert_eq!(
+            ui.state().form.layout,
+            before,
+            "a disabled card ignores clicks"
         );
         // Play waits for a game folder.
         assert!(testing::disabled(
