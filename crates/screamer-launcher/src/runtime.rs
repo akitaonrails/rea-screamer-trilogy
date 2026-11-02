@@ -47,6 +47,8 @@ pub struct PreparedRuntime {
     pub selected_exe: String,
     pub selected_edition: &'static Edition,
     pub patched_exes: Vec<(String, usize)>,
+    /// Problems worth logging that did not stop the launch.
+    pub warnings: Vec<String>,
 }
 
 const KNOWN_EXE_NAMES: &[&str] = &[
@@ -466,7 +468,7 @@ pub fn prepare_runtime(
     fs::create_dir_all(&replays_dir).map_err(|e| format!("{}: {e}", replays_dir.display()))?;
 
     // Stage top-level entries from exe_dir into runtime_dir without modifying exe_dir.
-    stage_source_tree(
+    let staged = stage_source_tree(
         &discovered.exe_dir,
         runtime_dir,
         discovered.cd_image.as_deref(),
@@ -562,6 +564,7 @@ pub fn prepare_runtime(
         selected_exe: selected.file_name.clone(),
         selected_edition: selected.edition,
         patched_exes,
+        warnings: staged.warnings,
     })
 }
 
@@ -678,33 +681,82 @@ fn stamp_of(meta: &fs::Metadata) -> Stamp {
     }
 }
 
-/// Lists every regular file below `root` (symlinks are followed, as the
-/// user's folder may use them).
-pub fn list(root: &Path) -> io::Result<Listing> {
-    fn walk(root: &Path, dir: &Path, out: &mut Listing) -> io::Result<()> {
-        for entry in fs::read_dir(dir)? {
-            let path = entry?.path();
-            let Ok(meta) = fs::metadata(&path) else {
-                continue;
-            };
-            if meta.is_dir() {
-                walk(root, &path, out)?;
-            } else if meta.is_file() {
-                let rel = path
-                    .strip_prefix(root)
-                    .expect("walk stays below root")
-                    .components()
-                    .map(|c| c.as_os_str().to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join("/");
-                out.insert(rel, stamp_of(&meta));
-            }
-        }
-        Ok(())
+/// Deepest folder level staged below the game folder (a guard against
+/// symbolic-link loops where folder identities are not available).
+const MAX_DEPTH: usize = 32;
+
+/// Lists every regular file below `root` (symbolic links are followed, as
+/// the user's folder may use them). A subfolder that cannot be read is
+/// skipped with a warning, and a folder already visited (a symbolic-link
+/// loop) is not entered again. Only an unreadable `root` is an error.
+pub fn list(root: &Path) -> io::Result<(Listing, Vec<String>)> {
+    struct Walk<'a> {
+        root: &'a Path,
+        out: Listing,
+        warnings: Vec<String>,
+        #[cfg(unix)]
+        seen: std::collections::BTreeSet<(u64, u64)>,
     }
-    let mut out = Listing::new();
-    walk(root, root, &mut out)?;
-    Ok(out)
+    impl Walk<'_> {
+        /// False when `dir` was visited before.
+        fn first_visit(&mut self, _meta: &fs::Metadata) -> bool {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                self.seen.insert((_meta.dev(), _meta.ino()))
+            }
+            #[cfg(not(unix))]
+            true
+        }
+
+        fn dir(&mut self, dir: &Path, depth: usize) -> io::Result<()> {
+            let entries = match fs::read_dir(dir) {
+                Ok(entries) => entries,
+                Err(e) if depth > 0 => {
+                    self.warnings
+                        .push(format!("skipped unreadable folder {}: {e}", dir.display()));
+                    return Ok(());
+                }
+                Err(e) => return Err(e),
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Ok(meta) = fs::metadata(&path) else {
+                    continue;
+                };
+                if meta.is_dir() {
+                    if depth + 1 > MAX_DEPTH || !self.first_visit(&meta) {
+                        self.warnings
+                            .push(format!("skipped looping folder {}", path.display()));
+                        continue;
+                    }
+                    self.dir(&path, depth + 1)?;
+                } else if meta.is_file() {
+                    let rel = path
+                        .strip_prefix(self.root)
+                        .expect("walk stays below root")
+                        .components()
+                        .map(|c| c.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    self.out.insert(rel, stamp_of(&meta));
+                }
+            }
+            Ok(())
+        }
+    }
+    let mut walk = Walk {
+        root,
+        out: Listing::new(),
+        warnings: Vec::new(),
+        #[cfg(unix)]
+        seen: Default::default(),
+    };
+    if let Ok(meta) = fs::metadata(root) {
+        walk.first_visit(&meta);
+    }
+    walk.dir(root, 0)?;
+    Ok((walk.out, walk.warnings))
 }
 
 fn native(root: &Path, rel: &str) -> PathBuf {
@@ -810,13 +862,27 @@ fn remove_legacy_links(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// The CD image and the files its cue sheet names. They are mounted
-/// read-only straight from the user's folder, so they are never staged.
+/// Extensions of CD images and their cue sheets and side files.
+const CD_IMAGE_EXTENSIONS: &[&str] = &[
+    "iso", "gog", "bin", "img", "cue", "ins", "ccd", "sub", "mds", "mdf",
+];
+
+fn has_cd_image_extension(path: &str) -> bool {
+    path.rsplit_once('.').is_some_and(|(_, ext)| {
+        CD_IMAGE_EXTENSIONS
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(ext))
+    })
+}
+
+/// The CD image and the files its cue sheet names (DOS-style `\` and
+/// `..\` accepted). They are mounted read-only straight from the user's
+/// folder, so they are never staged.
 fn cd_image_files(cd_image: Option<&Path>) -> Vec<PathBuf> {
     let Some(image) = cd_image else {
         return Vec::new();
     };
-    let mut out = vec![image.to_path_buf()];
+    let mut out = vec![normalize(image)];
     let small = fs::metadata(image).is_ok_and(|m| m.len() <= 16_384);
     if small && let Ok(text) = fs::read_to_string(image) {
         let dir = image.parent().unwrap_or(Path::new(""));
@@ -832,7 +898,8 @@ fn cd_image_files(cd_image: Option<&Path>) -> Vec<PathBuf> {
                 rest.split_whitespace().next().unwrap_or_default()
             };
             if !name.is_empty() {
-                out.push(dir.join(name));
+                let relative: PathBuf = name.split(['\\', '/']).collect();
+                out.push(normalize(&dir.join(relative)));
             }
         }
     }
@@ -844,27 +911,36 @@ fn same_path_ignoring_case(a: &Path, b: &Path) -> bool {
         .eq_ignore_ascii_case(&b.to_string_lossy())
 }
 
+/// What [`stage_source_tree`] did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Staged {
+    pub brought: usize,
+    pub linked: usize,
+    pub warnings: Vec<String>,
+}
+
 /// Brings `dst_dir` up to date with `src_dir` without ever writing into
 /// `src_dir`: real directories in the runtime folder, one file at a time
-/// (hard-linked or copied), skipping files the launcher generates and the
-/// CD image files mounted from the source. Returns `(brought, linked)`.
+/// (hard-linked or copied), skipping files the launcher generates and CD
+/// images. When the launcher mounts a CD image from the source, every file
+/// with a CD-image extension and every file its cue sheet names stays there.
 pub fn stage_source_tree(
     src_dir: &Path,
     dst_dir: &Path,
     cd_image: Option<&Path>,
-) -> Result<(usize, usize), String> {
+) -> Result<Staged, String> {
     let err = |e: io::Error| format!("{}: {e}", dst_dir.display());
     fs::create_dir_all(dst_dir).map_err(err)?;
     remove_legacy_links(dst_dir).map_err(err)?;
     let skip = cd_image_files(cd_image);
-    let source: Listing = list(src_dir)
-        .map_err(|e| format!("{}: {e}", src_dir.display()))?
+    let (listing, warnings) = list(src_dir).map_err(|e| format!("{}: {e}", src_dir.display()))?;
+    let source: Listing = listing
         .into_iter()
         .filter(|(rel, stamp)| {
+            let path = normalize(&native(src_dir, rel));
             !is_generated(rel, *stamp)
-                && !skip
-                    .iter()
-                    .any(|s| same_path_ignoring_case(s, &native(src_dir, rel)))
+                && !(cd_image.is_some() && has_cd_image_extension(rel))
+                && !skip.iter().any(|s| same_path_ignoring_case(s, &path))
         })
         .collect();
     let manifest_path = dst_dir.join(MANIFEST);
@@ -886,7 +962,11 @@ pub fn stage_source_tree(
     }
     fs::write(&manifest_path, format_manifest(&plan.manifest))
         .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
-    Ok((plan.copy.len(), linked))
+    Ok(Staged {
+        brought: plan.copy.len(),
+        linked,
+        warnings,
+    })
 }
 
 fn is_save_file(name: &str) -> bool {
@@ -1270,6 +1350,7 @@ mod tests {
     fn snapshot(root: &Path) -> BTreeMap<String, (Vec<u8>, Stamp)> {
         list(root)
             .unwrap()
+            .0
             .into_iter()
             .map(|(rel, s)| (rel.clone(), (fs::read(native(root, &rel)).unwrap(), s)))
             .collect()
@@ -1363,7 +1444,9 @@ mod tests {
         let before = snapshot(&game);
 
         let cd = game.join("SCREAM.DAT");
-        let (brought, linked) = stage_source_tree(&game, &rt, Some(&cd)).unwrap();
+        let Staged {
+            brought, linked, ..
+        } = stage_source_tree(&game, &rt, Some(&cd)).unwrap();
         assert_eq!(brought, 5);
         assert!(linked <= 1, "only the extender may be hard-linked");
         // Real directories, no links, and nothing generated or mounted.
@@ -1385,7 +1468,10 @@ mod tests {
         ] {
             assert!(!native(&rt, absent).exists(), "{absent} must not be staged");
         }
-        assert_eq!(stage_source_tree(&game, &rt, Some(&cd)).unwrap(), (0, 0));
+        assert_eq!(
+            stage_source_tree(&game, &rt, Some(&cd)).unwrap(),
+            Staged::default()
+        );
 
         // The game writes data files in place; the launcher swaps whole files.
         fs::write(rt.join("DATA/TRACK.DAT"), b"game wrote").unwrap();
@@ -1417,7 +1503,7 @@ mod tests {
         fs::write(game.join("CONFIG/CHOICE.DAT"), b"other choices").unwrap();
         touch_later(&game.join("CONFIG/CHOICE.DAT"));
 
-        assert_eq!(stage_source_tree(&game, &rt, None).unwrap().0, 1);
+        assert_eq!(stage_source_tree(&game, &rt, None).unwrap().brought, 1);
         assert_eq!(
             fs::read(rt.join("DATA/TRACK.DAT")).unwrap(),
             b"patched track"
@@ -1625,7 +1711,7 @@ mod tests {
         assert_eq!(fs::read(rt.join("DATA/ABS.DAT")).unwrap(), b"track");
         assert_eq!(fs::read(rt.join("GLIDE2X.OVL")).unwrap().len(), 200_000);
         // Unchanged on the next launch.
-        assert_eq!(stage_source_tree(&game, &rt, None).unwrap().0, 0);
+        assert_eq!(stage_source_tree(&game, &rt, None).unwrap().brought, 0);
 
         // The fallback GLIDE2X.OVL (e.g. SCREAMER_GLIDE2X_OVL) may be a link too.
         let ovl_link = outside.join("link.ovl");
@@ -1660,7 +1746,7 @@ mod tests {
         )
         .unwrap();
 
-        let (_, linked) = stage_source_tree(&game, &rt, None).unwrap();
+        let linked = stage_source_tree(&game, &rt, None).unwrap().linked;
         assert_eq!(linked, 0, "the read-only extender is copied, not linked");
         assert_eq!(mode(&rt.join("DATA/TRACK.DAT")), 0o640);
         assert_eq!(mode(&rt.join("DOS4GW.EXE")), 0o644);
@@ -1790,7 +1876,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("GAME.INS"),
-            "FILE \"GAME.GOG\" BINARY\nFILE track2.ogg WAVE\n",
+            "FILE \"GAME.GOG\" BINARY\nFILE track2.ogg WAVE\nFILE \"..\\IMG\\Data.Bin\" BINARY\n",
         )
         .unwrap();
         assert_eq!(
@@ -1798,10 +1884,81 @@ mod tests {
             [
                 dir.join("GAME.INS"),
                 dir.join("GAME.GOG"),
-                dir.join("track2.ogg")
+                dir.join("track2.ogg"),
+                dir.parent().unwrap().join("IMG/Data.Bin"),
             ]
         );
         assert!(cd_image_files(None).is_empty());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_mounted_image_set_is_never_staged() {
+        let game = temp("imageset-game");
+        let rt = temp("imageset-rt");
+        make_game(&game);
+        fs::create_dir_all(game.join("CD")).unwrap();
+        fs::write(
+            game.join("CD/game.cue"),
+            "FILE \"..\\cd\\Track01.raw\" BINARY\n",
+        )
+        .unwrap();
+        fs::write(game.join("CD/TRACK01.RAW"), b"raw track").unwrap();
+        fs::write(game.join("CD/spare.iso"), b"iso").unwrap();
+        fs::write(game.join("CD/extra.MDF"), b"mdf").unwrap();
+
+        stage_source_tree(&game, &rt, Some(&game.join("CD/game.cue"))).unwrap();
+        for absent in [
+            "CD/GAME.CUE",
+            "CD/TRACK01.RAW",
+            "CD/SPARE.ISO",
+            "CD/EXTRA.MDF",
+            "SCREAM.GOG",
+        ] {
+            assert!(
+                !native(&rt, absent).exists(),
+                "{absent} must stay in the source"
+            );
+        }
+        assert!(rt.join("DATA/TRACK.DAT").is_file());
+        // Without a mounted image (directory mount), image-like files are staged.
+        let rt2 = temp("imageset-rt2");
+        stage_source_tree(&game, &rt2, None).unwrap();
+        assert!(rt2.join("CD/SPARE.ISO").is_file());
+        for d in [game, rt, rt2] {
+            fs::remove_dir_all(d).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_and_looping_folders_are_skipped_with_a_warning() {
+        use std::os::unix::fs::PermissionsExt;
+        let game = temp("walk-game");
+        let rt = temp("walk-rt");
+        make_game(&game);
+        fs::create_dir_all(game.join("LOCKED")).unwrap();
+        fs::write(game.join("LOCKED/x.dat"), b"x").unwrap();
+        fs::set_permissions(game.join("LOCKED"), fs::Permissions::from_mode(0o000)).unwrap();
+        std::os::unix::fs::symlink("..", game.join("DATA/loop")).unwrap();
+
+        let staged = stage_source_tree(&game, &rt, None).unwrap();
+        assert!(rt.join("DATA/TRACK.DAT").is_file());
+        assert!(!rt.join("DATA/LOOP").exists());
+        assert!(
+            staged.warnings.iter().any(|w| w.contains("loop")),
+            "{staged:?}"
+        );
+        if fs::read_dir(game.join("LOCKED")).is_err() {
+            assert!(
+                staged.warnings.iter().any(|w| w.contains("LOCKED")),
+                "{staged:?}"
+            );
+        }
+
+        fs::set_permissions(game.join("LOCKED"), fs::Permissions::from_mode(0o755)).unwrap();
+        for d in [game, rt] {
+            fs::remove_dir_all(d).unwrap();
+        }
     }
 }

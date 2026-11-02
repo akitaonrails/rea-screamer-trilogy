@@ -425,6 +425,9 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
 
     let prepared =
         runtime::prepare_runtime(&disc, settings, &runtime_dir, Some(saves_dir.as_path()))?;
+    for warning in &prepared.warnings {
+        warn(warning);
+    }
     let dosbox =
         runtime::find_dosbox_with_hint(settings.dosbox.as_deref(), Some(game_dir)).ok_or_else(
             || {
