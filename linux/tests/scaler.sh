@@ -47,4 +47,8 @@ size_case fullscreen bogus "-w 1920 -h 1080"
 size_case original 2560x1600 "-w 1920 -h 1080"
 size_case 1920x "" "-w 1920 -h 1080"
 size_case abc "" "-w 1920 -h 1080"
+size_case 0x0 "" "-w 1920 -h 1080"
+size_case 0x1080 "" "-w 1920 -h 1080"
+size_case 01280x0800 "" "-w 1280 -h 800"
+size_case fullscreen 0x0 "-w 1920 -h 1080"
 [ "$fails" = 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

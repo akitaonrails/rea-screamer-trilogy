@@ -64,7 +64,18 @@ session_valid() {
   [ "$stats" = "$LOCK_PID $LOCK_START" ]
 }
 
-running() { session_valid; }
+# A lock from an older screamer-play holds only a pid; while that process
+# lives, the game it started is treated as running (and stop ends it, as the
+# older script did).
+legacy_lock_live() {
+  [ -r "$LOCK" ] || return 1
+  IFS=' ' read -r old_pid old_rest < "$LOCK" || return 1
+  [ -z "$old_rest" ] || return 1
+  case "$old_pid" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$old_pid" 2>/dev/null && LOCK_PID=$old_pid
+}
+
+running() { session_valid || legacy_lock_live; }
 
 has_nv_lib() {
   if [ -n "${SCREAMER_NV_LIB_CHECK:-}" ]; then
@@ -120,6 +131,9 @@ launch_interrupted() {
   if session_valid; then
     kill -TERM "-$LOCK_PID" 2>/dev/null || true
   fi
+  # Let the session end (the launcher copies the saves back) before the
+  # lock goes.
+  wait "$pid" 2>/dev/null
   rm -f "$LOCK"
   exit 143
 }
@@ -153,6 +167,8 @@ stop_session() {
   # targets, and the whole session (gamescope, launcher, DOSBox) ends.
   if session_valid; then
     kill -TERM "-$LOCK_PID" 2>/dev/null || true
+  elif legacy_lock_live; then
+    kill -TERM "$LOCK_PID" 2>/dev/null || true
   fi
   rm -f "$LOCK"
 }
@@ -171,7 +187,11 @@ start() {
   esac
   case $res in
     *[!0-9x]*|x*|*x|*x*x*|"") ;;
-    *x*) W=${res%x*}; H=${res#*x} ;;
+    *x*)
+      w=${res%x*} h=${res#*x}
+      # Leading zeros would read as octal; 0 is no size at all.
+      w=${w#"${w%%[!0]*}"} h=${h#"${h%%[!0]*}"}
+      if [ -n "$w" ] && [ -n "$h" ]; then W=$w H=$h; fi ;;
   esac
   F=$(get_key scaler); F=${F:-fsr}  # the template and the settings window default
   if [ -n "${GAMESCOPE_WAYLAND_DISPLAY:-}" ] || ! has_gamescope; then

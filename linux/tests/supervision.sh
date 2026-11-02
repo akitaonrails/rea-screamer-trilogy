@@ -38,9 +38,17 @@ stop_session > /dev/null
 if kill -0 "$STALE_PID" 2>/dev/null; then ok "stop did not signal stale/reused pid"; else fail "stale helper was signalled"; fi
 stop_helper "$STALE_PID" "$STALE_START"; STALE_PID= STALE_START=
 
-# An old-style lock (pid only) is not trusted either.
-echo "$$" > "$LOCK"
-if running; then fail "pid-only lock reported running"; else ok "pid-only lock refused"; fi
+# A lock from an older screamer-play (pid only): running while that pid
+# lives, and stop ends it; a dead one is ignored.
+sleep 30 & OLD_PID=$!
+echo "$OLD_PID" > "$LOCK"
+if running; then ok "live pid-only lock is running"; else fail "live pid-only lock not running"; fi
+stop_session > /dev/null
+wait "$OLD_PID" 2>/dev/null
+if kill -0 "$OLD_PID" 2>/dev/null; then fail "stop left the old game running"; else ok "stop ends an old-style lock's game"; fi
+echo "$OLD_PID" > "$LOCK"
+if running; then fail "dead pid-only lock reported running"; else ok "dead pid-only lock ignored"; fi
+rm -f "$LOCK"
 
 # An unrelated process with the launcher's name does not own this launch.
 ln -s "$(command -v sleep)" "$T/ScreamerLauncher-other"
@@ -73,6 +81,24 @@ wait "$PLAY_PID" 2>/dev/null; PLAY_PID=
 sleep 0.2
 if kill -0 "$(cat "$T/child.pid")" 2>/dev/null; then fail "stop left the game running"; else ok "stop ends the launcher and the game"; fi
 if [ -f "$LOCK" ]; then fail "stop left the lock"; else ok "stop removes the lock"; fi
+
+# Interrupting screamer-play ends the session and waits for it before the
+# lock goes.
+rm -f "$T/child.pid"
+cat > "$T/ScreamerLauncher" <<'FAKE'
+#!/bin/sh
+trap 'sleep 0.3; echo done > "$T/saved"; exit 0' TERM
+sleep 30 & echo $! > "$T/child.pid"
+wait
+FAKE
+rm -f "$T/saved"
+( start > /dev/null ) & PLAY_PID=$!
+i=0
+while [ $i -lt 50 ] && ! { running && [ -s "$T/child.pid" ]; }; do sleep 0.1; i=$((i + 1)); done
+kill -TERM "$PLAY_PID"
+wait "$PLAY_PID" 2>/dev/null; PLAY_PID=
+if [ -f "$T/saved" ]; then ok "interrupt waits for the game to finish"; else fail "interrupt did not wait for the game"; fi
+if [ -f "$LOCK" ]; then fail "interrupt left the lock"; else ok "interrupt removes the lock"; fi
 
 # The settings window: Play (0) and no window (4) continue to the game;
 # closing it (3) or any other failure does not.
