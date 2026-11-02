@@ -20,7 +20,7 @@ env:
 jobs:
   linux-packages:
     name: Linux x86_64
-    uses: akitaonrails/rea-launcher-sdk/.github/workflows/launcher-ci.yml@v0.3.1
+    uses: akitaonrails/rea-launcher-sdk/.github/workflows/launcher-ci.yml@v0.3.2
     with:
       concurrency-key: linux
       # The older glibc keeps the native binaries running on older distros.
@@ -73,7 +73,7 @@ jobs:
   # .cargo/config.toml).
   windows-tests:
     name: Windows x86_64 tests (Wine)
-    uses: akitaonrails/rea-launcher-sdk/.github/workflows/launcher-ci.yml@v0.3.1
+    uses: akitaonrails/rea-launcher-sdk/.github/workflows/launcher-ci.yml@v0.3.2
     with:
       concurrency-key: windows-tests
       rust-toolchain: 1.95.0
@@ -197,7 +197,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
-    uses: akitaonrails/rea-launcher-sdk/.github/workflows/launcher-release.yml@v0.3.1
+    uses: akitaonrails/rea-launcher-sdk/.github/workflows/launcher-release.yml@v0.3.2
     with:
       package: screamer-launcher
       artifact-pattern: ScreamerLauncher-*

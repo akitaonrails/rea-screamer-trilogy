@@ -1885,16 +1885,16 @@ checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 
 [[package]]
 name = "rea-launcher"
-version = "0.3.1"
-source = "git+https://github.com/akitaonrails/rea-launcher-sdk?tag=v0.3.1#ee80c4110584cf06206a8e915bea23f17024e475"
+version = "0.3.2"
+source = "git+https://github.com/akitaonrails/rea-launcher-sdk?tag=v0.3.2#2421abd8555751eb013398cc9d916c2b6e7974e0"
 dependencies = [
  "sha2",
 ]
 
 [[package]]
 name = "rea-launcher-ui"
-version = "0.3.1"
-source = "git+https://github.com/akitaonrails/rea-launcher-sdk?tag=v0.3.1#ee80c4110584cf06206a8e915bea23f17024e475"
+version = "0.3.2"
+source = "git+https://github.com/akitaonrails/rea-launcher-sdk?tag=v0.3.2#2421abd8555751eb013398cc9d916c2b6e7974e0"
 dependencies = [
  "eframe",
  "egui_kittest",
@@ -1904,8 +1904,8 @@ dependencies = [
 
 [[package]]
 name = "rea-launcher-win32"
-version = "0.3.1"
-source = "git+https://github.com/akitaonrails/rea-launcher-sdk?tag=v0.3.1#ee80c4110584cf06206a8e915bea23f17024e475"
+version = "0.3.2"
+source = "git+https://github.com/akitaonrails/rea-launcher-sdk?tag=v0.3.2#2421abd8555751eb013398cc9d916c2b6e7974e0"
 dependencies = [
  "rea-launcher",
  "windows-sys 0.61.2",
