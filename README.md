@@ -12,6 +12,14 @@ Point `ScreamerLauncher` at a parent folder containing one, two, or all three ga
 
 ---
 
+## Gameplay Showcase
+
+[![Watch Screamer (1995) gameplay at 1080p](https://new-uploads-akitaonrails.s3.us-east-2.amazonaws.com/2026/11/02/rea-screamer-trilogy/showcase-poster.jpg)](https://new-uploads-akitaonrails.s3.us-east-2.amazonaws.com/2026/11/02/rea-screamer-trilogy/showcase-h264.mp4)
+
+Screamer (1995) running through the launcher with the Enhanced preset. [Watch the 1080p gameplay video](https://new-uploads-akitaonrails.s3.us-east-2.amazonaws.com/2026/11/02/rea-screamer-trilogy/showcase-h264.mp4).
+
+---
+
 ## Screenshots
 
 | Screamer 2 (1996) | Screamer Rally (1997) |
