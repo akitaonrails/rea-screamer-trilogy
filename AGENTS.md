@@ -58,3 +58,29 @@ on modern Linux and Windows. It is not a distribution of the games.
   `CONTROLS.CFG` / `CHOICE.DAT` binary synthesizers, runtime folder sync,
   `launcher.cfg` parser, UI form state) before each milestone commit.
 - Use Conventional Commit subjects. Commit at working milestones.
+
+## Shared SDK
+
+- Generic launcher code lives in [rea-launcher-sdk](https://github.com/akitaonrails/rea-launcher-sdk),
+  pinned to a tag: the Rust crates `rea-launcher` (runtime folder sync,
+  saves mirror, paths, whole-file installs, `launcher.cfg` helpers, identify,
+  display, pad bits, `launcher.log`), `rea-launcher-ui` (theme, Barlow fonts,
+  footer, gradients, window sizing) and `rea-launcher-win32` (the error box),
+  as git dependencies in `Cargo.toml`; and `sdk/` (the `rea-play.sh` library
+  under `linux/screamer-play`, packaging scripts), vendored by `sdk-sync`.
+  CI reuses its `launcher-ci.yml` and `launcher-release.yml`.
+- Game knowledge stays here: editions, LE parser and FixSet patches, config
+  generators, the staging `Policy`, save names, the settings form and
+  Screamer's own widgets, the joystick readers, the DOSBox build and the
+  Windows and source-archive jobs.
+- Never fork or edit SDK code locally (`sdk/` is checked for drift in CI). If
+  the SDK lacks something or has a bug, keep the local code and propose the
+  change upstream.
+- To bump: change the `tag` of the three `rea-launcher*` entries in the root
+  `Cargo.toml` (and the `@vX.Y.Z` of the reusable workflows), run
+  `<sdk-checkout>/scripts/sdk-sync .` from this repository at that tag, and
+  commit `sdk/` with `Cargo.lock`.
+- Tests and probes run headless by default: Windows-target tests under Wine
+  with the SDK's `scripts/wine-test` (no display, no crash dialog), real-game
+  runs in `gamescope --backend headless`. Open a visible window only
+  deliberately.
