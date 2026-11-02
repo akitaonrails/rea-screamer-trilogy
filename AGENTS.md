@@ -1,49 +1,98 @@
-# Project rules
+# Screamer trilogy launcher — instructions for coding agents
 
-This repository builds a self-contained compatibility package that runs the
-player's own copy of the **Screamer** trilogy (**Screamer** [1995],
-**Screamer 2** [1996] and **Screamer Rally** [1997], by Graffiti / Milestone,
-published by Virgin Interactive) on modern Linux and Windows. It is not a
-distribution of the games.
+This repository makes the player's own copy of the **Screamer** trilogy
+(**Screamer** [1995], **Screamer 2** [1996] and **Screamer Rally** [1997],
+by Graffiti / Milestone, published by Virgin Interactive) run on modern
+Windows and Linux with a settings window, sensible defaults and no manual
+steps. It is not a distribution of the games. It is built on
+[rea-launcher-sdk](https://github.com/akitaonrails/rea-launcher-sdk) (the tag
+in `sdk/VERSION`).
 
-## Read first
+**Read `sdk/docs/STANDARDS.md` before any work; the playbooks are in
+`sdk/docs/playbooks/`** (vendored from the SDK at the tag in `sdk/VERSION`).
 
-The SDK's rules are binding here: [rea-launcher-sdk](https://github.com/akitaonrails/rea-launcher-sdk)
-`docs/STANDARDS.md`, and its playbooks in `docs/playbooks/`:
+## Always
 
-- `new-launcher.md` (order of work), `sdk-change.md` (SDK bumps; never
-  patch `sdk/` or copy SDK code here, report gaps to the SDK),
-- `community-components.md` (research community fixes first, record them
-  in `docs/RESEARCH.md`; pin, bundle or download on request),
-- `binary-patching.md` (exact builds by SHA-256, original → new bytes,
-  golden tests, real-game checks; `fixes.rs` is this game's table),
-- `contribute-back.md` (drafts in `docs/CONTRIBUTIONS.md`; the owner posts),
+- The game's files are read-only: never committed, copied into the repo or published.
+- Everything outside this repository is the user's and read-only (game installs, other repos, Wine prefixes, saves, home configs, containers, the SDK checkout) unless the user asked for or approved that specific change: back up first, never delete by a broad glob, ask when unsure.
+- Headless by default; open a visible window only when a check needs a person, and say so first.
+- Never print, log or commit credentials.
+- Push, tag, release or post only with the user's go-ahead.
+- Research community fixes first (`docs/RESEARCH.md`); patch only what nobody solved.
+- Never edit `sdk/`; SDK gaps and bugs go to the SDK repository as issues or PRs.
+- Clean up after a release or a long session: `sdk/scripts/clean`, then `--yes` (log scratch in `.work/.task-created`).
 
-and STANDARDS' sections on the settings window and CLI (design skill
-`frontend-design` then a `web-design-guidelines` review for any window
-change; accessibility first: contrast test, keyboard and gamepad, focus
-ring, disabled reasons; GUI/CLI parity through `config::OPTIONS` with the
-parity test; every option tested end to end), robustness and support, and
-testing (headless by default: Windows-target tests under Wine with
-`sdk/scripts/wine-test --target x86_64-pc-windows-gnu`, real-game runs in
-`gamescope --backend headless`). Credentials (e.g.
-`~/.config/rea/pcgamingwiki.txt`) are never printed, logged, committed,
-passed as arguments or handed to other agents.
+Running the real game in a test: `sdk/docs/STANDARDS.md`, "Running the real
+game in a test" (under "Testing"). Here the real-game tests are `#[ignore]`d
+and take `SCREAMER_GAME_DIR` (or `SCREAMER1_DIR`, `SCREAMER2_DIR`,
+`SCREAMER_RALLY_DIR`): `SCREAMER_GAME_DIR=… cargo test -- --ignored`.
 
-## Non-negotiable boundaries
+## Layout
 
-- Never commit, vendor, embed, or publish original executables, `.OVL`
-  drivers, media, `.DAT` archives, `.GOG`/`.ISO` CD images, fonts, palettes,
-  tracks, car data, or other game assets, or anything copied out of them.
-- The player's game folder is strictly read-only. The launcher builds a
-  private runtime folder from it and mounts CD images read-only from it.
-- Never commit a developer's absolute game path. Commands and code take
-  `--game <path>` or `SCREAMER_GAME_DIR`; real-game tests are env-gated.
-- Local experiments, probes and traces go under `.work/`.
-- Running the player's original game for testing is allowed from a folder
-  outside the repository, headless, with notes in `docs/RUNTIME_NOTES.md`.
+| Path | What |
+|---|---|
+| `crates/screamer-launcher/src/edition.rs` | Known builds (SHA-256), the unknown-edition refusal |
+| `crates/screamer-launcher/src/fixes.rs`, `le.rs` | The binary fixes per edition, the LE executable parser |
+| `crates/screamer-launcher/src/config.rs` | The option table (`config::OPTIONS`): `launcher.cfg`, flags, `--help`, template |
+| `crates/screamer-launcher/src/form.rs`, `ui.rs` | The settings window, looks, and its headless tests |
+| `crates/screamer-launcher/src/game_cfg.rs`, `runtime.rs` | The game's config files, the runtime copy, the launch plan |
+| `crates/screamer-launcher/src/main.rs`, `win32.rs` | Modes, `launcher.log`, DOSBox's process; WinMM joystick |
+| `crates/screamer-hooks/` | The static library linked into DOSBox (gamepad, telemetry) |
+| `patches/`, `vendor/dosbox-staging`, `scripts/build-dosbox.sh` | The pinned dosbox-staging and its hook patch |
+| `linux/screamer-play`, `linux/tests/` | The Linux helper (sources `sdk/rea-play.sh`) and its tests |
+| `packaging/` | Allowlist, AppImage desktop entry and icon |
+| `sdk/` | Vendored by the SDK's `scripts/sdk-sync`; never edit by hand |
+| `docs/RESEARCH.md`, `docs/RUNTIME_NOTES.md`, `docs/CONTRIBUTIONS.md` | Findings, verification, drafts to share |
 
-## Owner decisions
+## Checks (all must pass before a commit)
+
+```sh
+cargo fmt --all --check
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy --target x86_64-pc-windows-gnu --workspace --all-targets --locked -- -D warnings
+cargo deny check
+for t in linux/tests/*.sh; do sh "$t"; done
+../rea-launcher-sdk/scripts/sdk-sync --check .
+cargo build --release --locked --target x86_64-pc-windows-gnu
+sh sdk/packaging/check-imports.sh target/x86_64-pc-windows-gnu/release/*.exe
+sdk/scripts/wine-test --locked --workspace --target x86_64-pc-windows-gnu
+```
+
+MinGW, lld and Wine may live in the `gaming` distrobox: run the Windows
+lines as `distrobox enter gaming -- sh -c 'cd /absolute/path && …'`.
+
+## Screamer: what is specific to this game
+
+- **Game files.** Besides executables and media: `.OVL` drivers, `.DAT`
+  archives, `.GOG`/`.ISO` CD images, fonts, palettes, tracks and car data.
+  None of it, or anything copied out of it, is committed, vendored,
+  embedded or published.
+- **Runtime folder.** The launcher builds a private runtime copy from the
+  game folder and mounts CD images read-only from the game folder itself.
+- **Self-contained.** No manual `SETUP.EXE` runs, mapper files, CD-image
+  conversion or `dosbox.conf` editing: the launcher generates what the game
+  needs (`SCREAMER.CFG`, `CONFIG/SETUP.CFG`, `CONFIG/CONTROLS.CFG`, the
+  DOSBox configuration).
+- **Native builds.** Linux (`x86_64-unknown-linux-gnu`) and Windows
+  (`x86_64-pc-windows-gnu`, linked with LLD) builds of `ScreamerLauncher`,
+  and a `dosbox-staging` built from the pinned submodule with
+  `patches/dosbox-staging-screamer-hooks.patch`, into which the
+  `screamer-hooks` static library (`libscreamer_hooks.a`) is linked. DOSBox
+  uses SDL2. No Wine at runtime: the SDK's Wine-only rules do not apply.
+- **Exact binary verification.** Patches (`fixes.rs`) and hooks are keyed
+  to executables by SHA-256 (`edition.rs`) and checked against the
+  original bytes and the LE relocation records before the private runtime
+  copy is patched.
+- **Looks.** Original (as shipped), Enhanced (1080p Hor+ widescreen, longer
+  view, crisp pixels; recommended off the Deck) and Steam Deck. The game
+  always runs at its fixed 50 Hz: every frame-rate unlock broke the physics
+  (`docs/04-…`, `docs/RESEARCH.md`); Frame generation shows 100 FPS without
+  touching the game.
+- **Where a class of cases goes through.** Hor+ widescreen is fixed in the
+  camera matrix; analog input in `PollControls`.
+
+### Owner decisions
 
 - **2026-11-02 — box art.** The three games' box art
   (`crates/screamer-launcher/assets/cover_*.jpg`, © Virgin Interactive,
@@ -53,43 +102,3 @@ passed as arguments or handed to other agents.
   same run: `E1` has no bytes) became one Frame generation switch, and
   Vsync "As the game" (the same as On) became a plain switch. Old
   `launcher.cfg` values are still read.
-
-## Product rules
-
-- **Self-contained.** No manual `SETUP.EXE` runs, mapper files, CD-image
-  conversion or `dosbox.conf` editing: the launcher generates what the game
-  needs (`SCREAMER.CFG`, `CONFIG/SETUP.CFG`, `CONFIG/CONTROLS.CFG`, the DOSBox
-  configuration).
-- **Native builds.** Linux (`x86_64-unknown-linux-gnu`) and Windows
-  (`x86_64-pc-windows-gnu`, linked with LLD) builds of `ScreamerLauncher`,
-  and a `dosbox-staging` built from the pinned submodule with
-  `patches/dosbox-staging-screamer-hooks.patch`, into which the
-  `screamer-hooks` static library (`libscreamer_hooks.a`) is linked. DOSBox
-  uses SDL2. No Wine at runtime: the SDK's Wine-only rules do not apply.
-- **Exact binary verification.** Patches (`fixes.rs`) and hooks are keyed
-  to executables by SHA-256 (`edition.rs`) and checked against original
-  bytes and LE relocation records before the private runtime copy is
-  patched. An unknown build is refused with its SHA-256 and the issue link.
-- **Looks.** Original (as shipped), Enhanced (1080p Hor+ widescreen, longer
-  view, crisp pixels; recommended off the Deck) and Steam Deck. The game
-  always runs at its fixed 50 Hz: every frame-rate unlock broke the physics
-  (`docs/04-…`, `docs/RESEARCH.md`); Frame generation shows 100 FPS without
-  touching the game.
-
-## Code and commits
-
-- General solutions first: find the one place a class of cases goes through
-  (the camera matrix for Hor+, `PollControls` for analog input) and fix it
-  there.
-- Rust for our own code; `unsafe`/FFI only in the hooks crate (the DOSBox
-  boundary) and `src/win32.rs` (WinMM joystick).
-- Unit-test host-testable logic (LE parser, editions, fix tables, config
-  generators, runtime sync, `launcher.cfg`, the launch plan, the window
-  through `egui_kittest`) before each milestone commit.
-- Conventional Commit subjects; commit at working milestones after the full
-  check (fmt, tests, clippy for both targets, shell tests, `cargo deny`,
-  `sdk-sync --check`, `wine-test`).
-- To bump the SDK: change the three `rea-launcher*` tags in `Cargo.toml` and
-  the workflows' `@vX.Y.Z`, `cargo update -p rea-launcher -p
-  rea-launcher-win32 -p rea-launcher-ui`, run `<sdk>/scripts/sdk-sync .` from
-  a clean checkout at the tag, and commit `sdk/` with `Cargo.lock`.
