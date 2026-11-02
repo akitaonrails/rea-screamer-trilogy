@@ -65,6 +65,7 @@ jobs:
              README.md CHANGELOG.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "$package/"
           cp -r target/release/resources "$package/resources"
           cp -r linux "$package/linux"
+          cp sdk/rea-play.sh "$package/linux/rea-play.sh"
           for binary in "$package/ScreamerLauncher" "$package/dosbox"; do
             while read -r libpath; do
               case "$(basename "$libpath")" in

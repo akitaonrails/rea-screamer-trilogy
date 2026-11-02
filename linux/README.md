@@ -13,8 +13,9 @@ chmod +x ScreamerLauncher-…-x86_64.AppImage
 ./ScreamerLauncher-…-x86_64.AppImage
 ```
 
-It contains the launcher, the bundled DOSBox, `screamer-play` and the
-libraries they need. The settings window opens: pick your game folder,
+It contains the launcher, the bundled DOSBox, `screamer-play` (with
+`rea-play.sh`, the shared play library it uses) and the libraries they
+need. The settings window opens: pick your game folder,
 choose a game and a look, and press **Play**. If
 [gamescope](https://github.com/ValveSoftware/gamescope) is installed, the
 game runs in it at the chosen size, scaled to the screen; otherwise in a
@@ -65,7 +66,7 @@ These keys in `launcher.cfg` are read by `screamer-play`:
   to override it) or `original` (a 1920×1080 gamescope screen for the
   1280×960 window).
 - `scaler` — gamescope's filter: `fsr` (default), `nearest`, `pixel` or
-  `linear`.
+  `linear` (anything else is `fsr`).
 
 Other environment variables: `SCREAMER_LAUNCHER` (the launcher to run),
 `SCREAMER_DOSBOX` (the DOSBox to run) and `SCREAMER_GAME_DIR` (the game
@@ -77,7 +78,7 @@ folder when none is saved).
 | --- | --- |
 | Settings (`launcher.cfg`) | `~/.config/screamer-launcher/` (or next to `ScreamerLauncher`, if a `launcher.cfg` is there) |
 | Log (`launcher.log`) | the same folder |
-| Game output (`play.log`) and the running-game lock (`running.pid`) | `~/.config/screamer-launcher/` |
+| Game output (`play.log`), settings-window output (`settings.log`) and the running-game lock (`running.pid`) | `~/.config/screamer-launcher/` |
 | The launcher's copy of the game | `~/.local/share/screamer-launcher/runtime/<game>` (code files hard-linked when possible, the rest copied; CD images stay in your folder) |
 | Your saves (`CHOICE.DAT`, `*.SAV`, replays) | `~/.local/share/screamer-launcher/saves/<game>` |
 

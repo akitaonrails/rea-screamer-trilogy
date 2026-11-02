@@ -5,7 +5,8 @@ set -u
 unset GAMESCOPE_WAYLAND_DISPLAY DRI_PRIME __NV_PRIME_RENDER_OFFLOAD
 HERE=$(dirname "$(readlink -f "$0")")
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-export HOME=$T SCREAMER_WAIT=1 SCREAMER_SYSFS=$T/nosys
+unset XDG_CONFIG_HOME
+export HOME=$T SCREAMER_WAIT=1
 CFGDIR=$HOME/.config/screamer-launcher
 mkdir -p "$CFGDIR"
 printf '#!/bin/sh\nexit 0\n' > "$T/ScreamerLauncher"
@@ -13,28 +14,35 @@ chmod +x "$T/ScreamerLauncher"
 
 fake_gs() { return 0; }
 fake_launch() { echo "$*" > "$T/ran"; }
-export SCREAMER_GAMESCOPE_CHECK=fake_gs
-export SCREAMER_LAUNCH_CMD=fake_launch
-SCREAMER_PLAY_FUNCTIONS_ONLY=1 . "$HERE/../screamer-play"
-LAUNCHER=$T/ScreamerLauncher GPU=
+SCREAMER_SCREEN=2560x1600 SCREAMER_LAUNCHER=$T/ScreamerLauncher \
+  SCREAMER_PLAY_DIR=$HERE/.. SCREAMER_PLAY_FUNCTIONS_ONLY=1 . "$HERE/../screamer-play"
+REA_TEST=1 REA_GAMESCOPE_CHECK=fake_gs REA_LAUNCH_CMD=fake_launch REA_SYSFS=$T/nosys
+REA_GPU=
 fails=0
+# SCREAMER_LAUNCHER and SCREAMER_SCREEN reach the library; the settings live
+# in the state folder.
+[ "$REA_EXE" = "$T/ScreamerLauncher" ] && [ "$REA_SCREEN" = 2560x1600 ] \
+  && [ "$REA_CFG" = "$CFGDIR/launcher.cfg" ] && echo "ok   environment and paths" \
+  || { echo "FAIL environment: $REA_EXE $REA_SCREEN $REA_CFG"; fails=$((fails + 1)); }
 for scaler in nearest pixel fsr linear; do
   printf 'resolution = 1920x1080\nscaler = %s\n' "$scaler" > "$CFGDIR/launcher.cfg"
-  CFG=$CFGDIR/launcher.cfg
-  start > /dev/null
+  rea_start > /dev/null
   case "$(cat "$T/ran")" in
-    *"gamescope -w 1920 -h 1080 -f -S fit -F $scaler --"*) echo "ok   $scaler" ;;
+    *"gamescope -w 1920 -h 1080 -f -S fit -F $scaler -- sh $REA_INNER $T/ScreamerLauncher --no-window"*) echo "ok   $scaler" ;;
     *) echo "FAIL $scaler: $(cat "$T/ran")"; fails=$((fails + 1)) ;;
   esac
 done
 printf 'resolution = 1920x1080\n' > "$CFGDIR/launcher.cfg"
-start > /dev/null
+rea_start > /dev/null
 case "$(cat "$T/ran")" in *"-F fsr --"*) echo "ok   default is fsr" ;; *) echo "FAIL default"; fails=$((fails + 1)) ;; esac
+printf 'resolution = 1920x1080\nscaler = sharpest\n' > "$CFGDIR/launcher.cfg"
+rea_start > /dev/null
+case "$(cat "$T/ran")" in *"-F fsr --"*) echo "ok   an unknown scaler is fsr" ;; *) echo "FAIL unknown scaler"; fails=$((fails + 1)) ;; esac
 # The race size: WIDTHxHEIGHT as written (any case/spacing); fullscreen is
 # the screen's size; original and anything else keep 1920x1080.
 size_case() {  # resolution, screen, expected "-w W -h H"
   printf 'resolution = %s\nscaler = fsr\n' "$1" > "$CFGDIR/launcher.cfg"
-  SCREAMER_SCREEN=$2 start > /dev/null
+  REA_SCREEN=$2 rea_start > /dev/null
   case "$(cat "$T/ran")" in
     *"gamescope $3 -f "*) echo "ok   size '$1' (screen '$2')" ;;
     *) echo "FAIL size '$1' (screen '$2'): $(cat "$T/ran")"; fails=$((fails + 1)) ;;

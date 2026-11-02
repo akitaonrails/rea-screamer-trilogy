@@ -6,10 +6,13 @@
 #   screamer-play --play [1|2|rally]   start the game with saved settings (no window)
 #   screamer-play stop                 end the game this script started
 #   screamer-play status               running or idle
+#   screamer-play <anything else>      passed to ScreamerLauncher (--check, --help, ...)
 #
 # Every launch waits for the game to end; the game runs in its own session,
 # recorded in running.pid with its start time, so "stop" ends exactly that
 # session (gamescope, the launcher, DOSBox) and never a stale or reused pid.
+# The session, GPU choice and gamescope come from the shared rea-play.sh
+# library (rea-launcher-sdk); this script holds Screamer's choices.
 #
 # Optional environment:
 #   SCREAMER_LAUNCHER   path to ScreamerLauncher binary
@@ -18,221 +21,50 @@
 #   SCREAMER_SCREEN     WIDTHxHEIGHT for "resolution = fullscreen" (default:
 #                       the current mode from xrandr, else 1920x1080)
 set -u
-HERE=$(dirname "$(readlink -f "$0")")
-LAUNCHER=${SCREAMER_LAUNCHER:-}
-if [ -z "$LAUNCHER" ]; then
-  for p in \
-    "$HERE/ScreamerLauncher" \
-    "$HERE/../ScreamerLauncher" \
-    "$HERE/../target/release/ScreamerLauncher" \
-    "$HERE/../target/debug/ScreamerLauncher"; do
-    [ -x "$p" ] && LAUNCHER=$(readlink -f "$p") && break
-  done
+# SCREAMER_PLAY_DIR: this script's folder, for tests that source it.
+_here=${SCREAMER_PLAY_DIR:-$(dirname "$(readlink -f "$0")")}
+if [ -f "$_here/rea-play.sh" ]; then
+  . "$_here/rea-play.sh"
+elif [ -f "$_here/../sdk/rea-play.sh" ]; then
+  . "$_here/../sdk/rea-play.sh"
+else
+  echo "rea-play.sh not found next to $0 or in ../sdk (run scripts/sdk-sync)" >&2
+  exit 1
 fi
 
-STATE=${XDG_CONFIG_HOME:-$HOME/.config}/screamer-launcher
-mkdir -p "$STATE"
-CFG=$STATE/launcher.cfg
-LOCK=$STATE/running.pid
+REA_MODE=native
+REA_APP=screamer-launcher
+REA_EXE_NAME=ScreamerLauncher
+REA_EXE_HINT=SCREAMER_LAUNCHER
+REA_EXE=${SCREAMER_LAUNCHER:-}
+REA_EXE_SEARCH="../target/release/ScreamerLauncher ../target/debug/ScreamerLauncher"
+REA_STATE_BASE=${XDG_CONFIG_HOME:-$HOME/.config}
+REA_WAIT=${SCREAMER_WAIT:-}
+# gamescope: -w/-h only; the race size from "resolution" ("fullscreen" is the
+# screen's size, "original" and anything malformed 1920x1080); fsr is the
+# template's and the settings window's default scaler.
+REA_GAMESCOPE_OUTPUT=0
+REA_DEFAULT_SCALER=fsr
+REA_FULLSCREEN_SIZE=screen
+REA_SCREEN=${SCREAMER_SCREEN:-}
+# DOSBox finds the pads itself; no SDL variables are added.
+REA_SDL_ENV=
 
-get_key() { [ -f "$CFG" ] && sed -n "s|^$1 *= *||p" "$CFG" | tail -1; }
-
-# Print session id and process start time from /proc. Text after the final
-# ") " avoids comm fields that contain spaces or parentheses.
-proc_stat() {
-  [ -r "/proc/$1/stat" ] || return 1
-  stat=$(cat "/proc/$1/stat") || return 1
-  rest=${stat##*) }
-  # shellcheck disable=SC2086
-  set -- $rest
-  [ "$#" -ge 20 ] || return 1
-  printf '%s %s\n' "$4" "${20}"
-}
-
-read_lock() {
-  [ -r "$LOCK" ] || return 1
-  IFS=' ' read -r LOCK_PID LOCK_START < "$LOCK" || return 1
-  case "$LOCK_PID" in ''|*[!0-9]*) return 1 ;; esac
-  case "$LOCK_START" in ''|*[!0-9]*) return 1 ;; esac
-}
-
-# A lock alone proves nothing: the pid must still be the same setsid session
-# leader with the same start time recorded when we spawned it.
-session_valid() {
-  read_lock || return 1
-  stats=$(proc_stat "$LOCK_PID") || return 1
-  [ "$stats" = "$LOCK_PID $LOCK_START" ]
-}
-
-# A lock from an older screamer-play holds only a pid; while that process
-# lives, the game it started is treated as running (and stop ends it, as the
-# older script did).
-legacy_lock_live() {
-  [ -r "$LOCK" ] || return 1
-  IFS=' ' read -r old_pid old_rest < "$LOCK" || return 1
-  [ -z "$old_rest" ] || return 1
-  case "$old_pid" in ''|*[!0-9]*) return 1 ;; esac
-  kill -0 "$old_pid" 2>/dev/null && LOCK_PID=$old_pid
-}
-
-running() { session_valid || legacy_lock_live; }
-
-has_nv_lib() {
-  if [ -n "${SCREAMER_NV_LIB_CHECK:-}" ]; then
-    "$SCREAMER_NV_LIB_CHECK"
-  else
-    ldconfig -p 2>/dev/null | grep -q libGLX_nvidia.so.0
-  fi
-}
-
-gpu_env() {
-  [ -n "${DRI_PRIME:-}${__NV_PRIME_RENDER_OFFLOAD:-}" ] && return
-  sys=${SCREAMER_SYSFS:-/sys}
-  n=0 nvidia= boot= boot_vram=0 other_vram=0
-  for d in "$sys"/class/drm/card*; do
-    case "${d##*/}" in *-*) continue ;; esac
-    [ -r "$d/device/vendor" ] || continue
-    n=$((n + 1))
-    vram=$(cat "$d/device/mem_info_vram_total" 2>/dev/null || echo 0)
-    [ "$(basename "$(readlink "$d/device/driver" 2>/dev/null)" 2>/dev/null)" = nvidia ] && nvidia=1
-    if [ "$(cat "$d/device/boot_vga" 2>/dev/null)" = 1 ]; then
-      boot=$(cat "$d/device/vendor"); boot_vram=$vram
-    elif [ "$vram" -gt "$other_vram" ]; then
-      other_vram=$vram
-    fi
-  done
-  if [ -n "$nvidia" ] && has_nv_lib; then
-    echo "__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia __VK_LAYER_NV_optimus=NVIDIA_only"
-  elif [ "$n" -ge 2 ] && { [ "$boot" = 0x8086 ] || [ "$other_vram" -gt "$boot_vram" ]; }; then
-    echo "DRI_PRIME=1"
-  fi
-}
-
-has_gamescope() {
-  if [ -n "${SCREAMER_GAMESCOPE_CHECK:-}" ]; then
-    "$SCREAMER_GAMESCOPE_CHECK"
-  else
-    command -v gamescope >/dev/null 2>&1
-  fi
-}
-
-# The screen's size as WIDTHxHEIGHT (the current mode xrandr reports;
-# SCREAMER_SCREEN overrides it), or nothing when it cannot be told.
-screen_size() {
-  if [ -n "${SCREAMER_SCREEN:-}" ]; then
-    echo "$SCREAMER_SCREEN"
-  else
-    xrandr --current 2>/dev/null | awk '/\*/ { print $1; exit }'
-  fi
-}
-
-launch_interrupted() {
-  trap - EXIT HUP INT TERM
-  if session_valid; then
-    kill -TERM "-$LOCK_PID" 2>/dev/null || true
-  fi
-  # Let the session end (the launcher copies the saves back) before the
-  # lock goes.
-  wait "$pid" 2>/dev/null
-  rm -f "$LOCK"
-  exit 143
-}
-
-# The game gets its own session so stop can address only this launch. Every
-# launch waits and removes the lock on a natural exit or an interruption.
-# SCREAMER_LAUNCH_CMD replaces the whole launch (tests).
-launch() {
-  if [ -n "${SCREAMER_LAUNCH_CMD:-}" ]; then
-    "$SCREAMER_LAUNCH_CMD" "$@"
-    return
-  fi
-  setsid env $GPU "$@" > "$STATE/play.log" 2>&1 < /dev/null &
-  pid=$!
-  stats=$(proc_stat "$pid") || {
-    wait "$pid"
-    return "$?"
-  }
-  printf '%s %s\n' "$pid" "${stats#* }" > "$LOCK"
-  trap 'rm -f "$LOCK"' EXIT
-  trap 'launch_interrupted' HUP INT TERM
-  wait "$pid"
-  rc=$?
-  rm -f "$LOCK"
-  trap - EXIT HUP INT TERM
-  return "$rc"
-}
-
-stop_session() {
-  # Revalidate right before signalling: stale or reused pids are never
-  # targets, and the whole session (gamescope, launcher, DOSBox) ends.
-  if session_valid; then
-    kill -TERM "-$LOCK_PID" 2>/dev/null || true
-  elif legacy_lock_live; then
-    kill -TERM "$LOCK_PID" 2>/dev/null || true
-  fi
-  rm -f "$LOCK"
-}
-
-start() {
-  if [ -z "$LAUNCHER" ] || [ ! -x "$LAUNCHER" ]; then
-    echo "ScreamerLauncher not found next to screamer-play (or set SCREAMER_LAUNCHER)"; exit 1
-  fi
-  # The game's size inside gamescope. Same spellings the launcher accepts
-  # (1920X1080, spaces, CRLF). "fullscreen" is the screen's own size;
-  # "original" (a 1280x960 window) and anything that is not WIDTHxHEIGHT
-  # keep 1920x1080, which gamescope scales to the screen.
-  res=$(get_key resolution | tr -d '\r \t' | tr 'A-Z' 'a-z'); W=1920; H=1080
-  case $res in
-    fullscreen|full|desktop) res=$(screen_size) ;;
-  esac
-  case $res in
-    *[!0-9x]*|x*|*x|*x*x*|"") ;;
-    *x*)
-      w=${res%x*} h=${res#*x}
-      # Leading zeros would read as octal; 0 is no size at all.
-      w=${w#"${w%%[!0]*}"} h=${h#"${h%%[!0]*}"}
-      if [ -n "$w" ] && [ -n "$h" ]; then W=$w H=$h; fi ;;
-  esac
-  F=$(get_key scaler); F=${F:-fsr}  # the template and the settings window default
-  if [ -n "${GAMESCOPE_WAYLAND_DISPLAY:-}" ] || ! has_gamescope; then
-    launch "$LAUNCHER" --no-window "$@"
-  else
-    launch gamescope -w "$W" -h "$H" -f -S fit -F "$F" -- "$LAUNCHER" --no-window "$@"
-  fi
-}
-
-settings() {
-  env $GPU "$LAUNCHER" --settings --linux "$@" 2>/dev/null
-  rc=$?
-  case $rc in
-    0|4) return 0 ;;
-    *) return 1 ;;
+rea_hook_command() {
+  case "${1:-}" in
+    --play|start|status|stop) return 127 ;;   # the helper's own commands
+    1|2|3|s1|s2|sr|screamer|screamer1|screamer2|rally|screamer-rally)
+      # The window (with that game selected), then the game; never back to
+      # the library's own commands, whatever the game's exit status.
+      rea_cmd_default "$@"
+      exit ;;
+    *)
+      # Anything else goes to the launcher itself (--check, --controllers, ...).
+      rea_require_exe || exit 1
+      exec "$REA_EXE" "$@" ;;
   esac
 }
 
+rea_init || exit 1
 [ -n "${SCREAMER_PLAY_FUNCTIONS_ONLY:-}" ] && return 0
-GPU=$(gpu_env)
-
-case "${1:-}" in
-  ""|1|2|3|s1|s2|sr|screamer|screamer1|screamer2|rally|screamer-rally)
-    if running; then echo "already running"; exit 0; fi
-    if [ -z "$LAUNCHER" ] || [ ! -x "$LAUNCHER" ]; then
-      echo "ScreamerLauncher not found next to screamer-play (or set SCREAMER_LAUNCHER)"; exit 1
-    fi
-    settings "$@" || exit 0
-    start ;;
-  --play|start)
-    shift
-    if running; then echo "already running"; else start "$@"; fi ;;
-  status)
-    if running; then echo running; else echo idle; fi ;;
-  stop)
-    stop_session
-    echo stopped ;;
-  *)
-    # Anything else goes to the launcher itself (--check, --controllers, ...).
-    if [ -z "$LAUNCHER" ] || [ ! -x "$LAUNCHER" ]; then
-      echo "ScreamerLauncher not found next to screamer-play (or set SCREAMER_LAUNCHER)" >&2; exit 1
-    fi
-    exec "$LAUNCHER" "$@" ;;
-esac
+rea_main "$@"

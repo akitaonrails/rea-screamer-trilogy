@@ -27,7 +27,7 @@ APPDIR=$(mktemp -d)/ScreamerLauncher.AppDir
 trap 'rm -rf "$(dirname "$APPDIR")"' EXIT
 mkdir -p "$APPDIR/usr/lib/screamer/lib"
 
-cp "$PKG/ScreamerLauncher" "$PKG/dosbox" "$PKG/linux/screamer-play" "$APPDIR/usr/lib/screamer/"
+cp "$PKG/ScreamerLauncher" "$PKG/dosbox" "$PKG/linux/screamer-play" "$PKG/linux/rea-play.sh" "$APPDIR/usr/lib/screamer/"
 if [ -d "$PKG/resources" ]; then
   cp -r "$PKG/resources" "$APPDIR/usr/lib/screamer/resources"
 fi
