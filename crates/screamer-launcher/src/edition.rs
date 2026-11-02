@@ -1,6 +1,6 @@
 //! Identifies Screamer, Screamer 2, and Screamer Rally executables by SHA-256.
 
-use sha2::{Digest, Sha256};
+use rea_launcher::identify::hex32;
 
 use crate::fixes::{
     FixSet, S1_SETUP_FIXES, S1_STARTH_FIXES, S1_STARTL_FIXES, S2_3DFX_FIXES, S2_SETUP_FIXES,
@@ -123,26 +123,6 @@ pub struct Edition {
     pub fixes: &'static FixSet,
 }
 
-const fn hex32(s: &str) -> [u8; 32] {
-    let b = s.as_bytes();
-    assert!(b.len() == 64);
-    let mut out = [0u8; 32];
-    let mut i = 0;
-    while i < 32 {
-        out[i] = (nibble(b[2 * i]) << 4) | nibble(b[2 * i + 1]);
-        i += 1;
-    }
-    out
-}
-
-const fn nibble(c: u8) -> u8 {
-    match c {
-        b'0'..=b'9' => c - b'0',
-        b'a'..=b'f' => c - b'a' + 10,
-        _ => panic!("lowercase hex expected"),
-    }
-}
-
 pub static EDITIONS: &[Edition] = &[
     // Screamer (1995)
     Edition {
@@ -237,13 +217,7 @@ pub static EDITIONS: &[Edition] = &[
     },
 ];
 
-pub fn sha256(bytes: &[u8]) -> [u8; 32] {
-    Sha256::digest(bytes).into()
-}
-
-pub fn to_hex(digest: &[u8; 32]) -> String {
-    digest.iter().map(|b| format!("{b:02x}")).collect()
-}
+pub use rea_launcher::identify::sha256;
 
 pub fn identify_sha256(digest: &[u8; 32]) -> Option<&'static Edition> {
     EDITIONS.iter().find(|e| &e.sha256 == digest)
@@ -257,12 +231,6 @@ pub fn identify(exe: &[u8]) -> Result<&'static Edition, [u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn hex_round_trips() {
-        let h = "1246afc95463f96598d5fee764fc99c847b6d3e0bf8ca2268bd362c664bb28a3";
-        assert_eq!(to_hex(&hex32(h)), h);
-    }
 
     #[test]
     fn editions_have_distinct_hashes() {

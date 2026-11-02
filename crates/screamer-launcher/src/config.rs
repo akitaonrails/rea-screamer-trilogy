@@ -1,10 +1,15 @@
 //! Command line and the settings file (`launcher.cfg`).
 //!
 //! Plain `key = value` lines with `#` comments, written once from a commented
-//! template so users can edit it. Unknown keys are ignored so older launchers
-//! can read newer files; values it cannot read are reported and ignored.
+//! template so users can edit it. Unknown keys are reported and kept, so
+//! older launchers can read newer files; values it cannot read are reported
+//! and ignored. Reading, line editing and the flag loop are the SDK's
+//! ([`rea_launcher::cfg`]); one [`Settings::apply`] serves the file and the
+//! command line.
 
 use std::path::PathBuf;
+
+use rea_launcher::cfg::{self, ArgError, Rejected, Resolution};
 
 use crate::edition::Game;
 
@@ -285,32 +290,17 @@ ScreamerLauncher --controllers
   lists the connected gamepads"
 );
 
-fn parse_bool(v: &str) -> Option<bool> {
-    match v.trim().to_ascii_lowercase().as_str() {
-        "true" | "yes" | "on" | "1" => Some(true),
-        "false" | "no" | "off" | "0" => Some(false),
-        _ => None,
-    }
-}
-
 pub const ORIGINAL: (u32, u32) = (0, 0);
 pub const FULLSCREEN: (u32, u32) = (1, 1);
 
+/// `WIDTHxHEIGHT` (320x200 to 7680x4320), `original`/`off` or
+/// `fullscreen`/`full`/`desktop`, as [`ORIGINAL`] and [`FULLSCREEN`].
 fn parse_resolution(v: &str) -> Option<(u32, u32)> {
-    let lower = v.trim().to_ascii_lowercase();
-    if lower == "original" || lower == "off" {
-        return Some(ORIGINAL);
+    match cfg::parse_resolution(v, (320, 200), (7680, 4320), cfg::ORIGINAL_OR_FULLSCREEN)? {
+        Resolution::Original => Some(ORIGINAL),
+        Resolution::Fullscreen => Some(FULLSCREEN),
+        Resolution::Size(w, h) => Some((w, h)),
     }
-    if lower == "fullscreen" || lower == "full" || lower == "desktop" {
-        return Some(FULLSCREEN);
-    }
-    let (w, h) = lower.split_once('x')?;
-    let w: u32 = w.trim().parse().ok()?;
-    let h: u32 = h.trim().parse().ok()?;
-    if !(320..=7680).contains(&w) || !(200..=4320).contains(&h) {
-        return None;
-    }
-    Some((w, h))
 }
 
 /// The race size to give DOSBox on a screen of `screen` pixels. DOSBox
@@ -359,88 +349,115 @@ fn parse_fps(v: &str) -> Option<u32> {
     (10..=1000).contains(&f).then_some(f)
 }
 
-fn entry(line: &str) -> Option<(&str, &str)> {
-    let line = line.trim();
-    if line.starts_with('#') {
-        return None;
-    }
-    let (key, value) = line.split_once('=')?;
-    let value = value.trim();
-    (!value.is_empty()).then_some((key.trim(), value))
-}
+/// The keys the command line takes as `--flag value` (`--play` is
+/// `--which`; `scaler` is only read from the file, by `screamer-play`).
+const FLAG_KEYS: &[&str] = &[
+    "which",
+    "play",
+    "game",
+    "runtime",
+    "saves",
+    "dosbox",
+    "renderer",
+    "resolution",
+    "widescreen",
+    "extended_draw_distance",
+    "fps_limit",
+    "vsync",
+    "texture_filter",
+    "gamepad_axes",
+    "deadzone",
+    "rumble",
+    "buttons",
+];
 
 impl Settings {
     pub fn parse_file(text: &str) -> (Settings, Vec<String>) {
         let mut s = Settings::default();
-        let mut warnings = Vec::new();
-        for (n, line) in text.lines().enumerate() {
-            let Some((key, value)) = entry(line) else {
-                continue;
-            };
-            let mut bad = |what: &str| {
-                warnings.push(format!("{FILE_NAME} line {}: {what} {value:?}", n + 1));
-            };
-            match key {
-                "which" => match Game::parse(value) {
-                    Some(g) => s.which = Some(g),
-                    None => bad("which needs screamer, screamer2, or screamer-rally, not"),
-                },
-                "game" => s.game = Some(value.into()),
-                "runtime" => s.runtime = Some(value.into()),
-                "saves" => s.saves = Some(value.into()),
-                "dosbox" => s.dosbox = Some(value.into()),
-                "renderer" => match RendererChoice::parse(value) {
-                    Some(r) => s.renderer = Some(r),
-                    None => bad("renderer needs auto, 3dfx, svga16, svga8, or vga, not"),
-                },
-                "resolution" => match parse_resolution(value) {
-                    Some(r) => s.resolution = Some(r),
-                    None => bad("resolution needs WIDTHxHEIGHT (320x200 to 7680x4320), not"),
-                },
-                "widescreen" => match parse_bool(value) {
-                    Some(b) => s.widescreen = Some(b),
-                    None => bad("widescreen needs true or false, not"),
-                },
-                "extended_draw_distance" => match parse_bool(value) {
-                    Some(b) => s.extended_draw_distance = Some(b),
-                    None => bad("extended_draw_distance needs true or false, not"),
-                },
-                "fps_limit" => match parse_fps(value) {
-                    Some(f) => s.fps_limit = Some(f),
-                    None => bad("fps_limit needs a number from 10 to 1000 or off, not"),
-                },
-                "vsync" => match parse_bool(value) {
-                    Some(b) => s.vsync = Some(b),
-                    None => bad("vsync needs true or false, not"),
-                },
-                "texture_filter" => match parse_filter(value) {
-                    Some(f) => s.texture_filter = Some(f),
-                    None => bad("texture_filter needs original, smooth, or sharp, not"),
-                },
-                "gamepad_axes" => match parse_bool(value) {
-                    Some(b) => s.gamepad_axes = Some(b),
-                    None => bad("gamepad_axes needs true or false, not"),
-                },
-                "deadzone" => match parse_percent(value) {
-                    Some(d) if d <= 30 => s.deadzone = Some(d),
-                    _ => bad("deadzone needs a number from 0 to 30, not"),
-                },
-                "rumble" => match parse_percent(value) {
-                    Some(r) => s.rumble = Some(r),
-                    None => bad("rumble needs a number from 0 to 100 or off, not"),
-                },
-                "buttons" => match parse_buttons(value) {
-                    Some(b) => s.buttons = Some(b),
-                    None => bad("buttons needs original, modern, or 8 button numbers, not"),
-                },
-                "scaler" => match Scaler::parse(value) {
-                    Some(f) => s.scaler = Some(f),
-                    None => bad("scaler needs nearest, pixel, fsr, or linear, not"),
-                },
-                _ => {}
-            }
-        }
+        let warnings = cfg::parse(text, FILE_NAME, |key, value| match key {
+            "play" => Err(Rejected::Unknown),
+            _ => s.apply(key, value, false),
+        });
         (s, warnings)
+    }
+
+    /// Takes one setting from `launcher.cfg` or, with `flag`, from its
+    /// `--flag` (the two word what a value needs differently).
+    fn apply(&mut self, key: &str, value: &str, flag: bool) -> Result<(), Rejected> {
+        let needs = |file: &str, cli: &str| Rejected::needs(if flag { cli } else { file });
+        match key {
+            "which" | "play" => {
+                self.which = Some(Game::parse(value).ok_or_else(|| {
+                    needs(
+                        "screamer, screamer2, or screamer-rally",
+                        "1 (screamer), 2 (screamer2), or rally (screamer-rally)",
+                    )
+                })?);
+            }
+            "game" => self.game = Some(value.into()),
+            "runtime" => self.runtime = Some(value.into()),
+            "saves" => self.saves = Some(value.into()),
+            "dosbox" => self.dosbox = Some(value.into()),
+            "renderer" => {
+                let what = "auto, 3dfx, svga16, svga8, or vga";
+                self.renderer =
+                    Some(RendererChoice::parse(value).ok_or_else(|| needs(what, what))?);
+            }
+            "resolution" => {
+                self.resolution = Some(parse_resolution(value).ok_or_else(|| {
+                    needs(
+                        "WIDTHxHEIGHT (320x200 to 7680x4320)",
+                        "WIDTHxHEIGHT or original",
+                    )
+                })?);
+            }
+            "widescreen" | "extended_draw_distance" | "gamepad_axes" | "vsync" => {
+                let on =
+                    cfg::parse_bool(value).ok_or_else(|| needs("true or false", cfg::ON_OFF))?;
+                match key {
+                    "widescreen" => self.widescreen = Some(on),
+                    "extended_draw_distance" => self.extended_draw_distance = Some(on),
+                    "gamepad_axes" => self.gamepad_axes = Some(on),
+                    _ => self.vsync = Some(on),
+                }
+            }
+            "fps_limit" => {
+                self.fps_limit = Some(parse_fps(value).ok_or_else(|| {
+                    needs("a number from 10 to 1000 or off", "10 to 1000 or off")
+                })?);
+            }
+            "texture_filter" => {
+                self.texture_filter = Some(parse_filter(value).ok_or_else(|| {
+                    needs(
+                        "original, smooth, or sharp",
+                        "original, fsr, smooth, or sharp",
+                    )
+                })?);
+            }
+            "deadzone" => {
+                self.deadzone = Some(
+                    parse_percent(value)
+                        .filter(|d| *d <= 30)
+                        .ok_or_else(|| needs("a number from 0 to 30", "0 to 30"))?,
+                );
+            }
+            "rumble" => {
+                self.rumble =
+                    Some(parse_percent(value).ok_or_else(|| {
+                        needs("a number from 0 to 100 or off", "0 to 100 or off")
+                    })?);
+            }
+            "buttons" => {
+                let what = "original, modern, or 8 button numbers";
+                self.buttons = Some(parse_buttons(value).ok_or_else(|| needs(what, what))?);
+            }
+            "scaler" => {
+                let what = "nearest, pixel, fsr, or linear";
+                self.scaler = Some(Scaler::parse(value).ok_or_else(|| needs(what, what))?);
+            }
+            _ => return Err(Rejected::Unknown),
+        }
+        Ok(())
     }
 
     pub fn merged(self, over: Settings) -> Settings {
@@ -528,138 +545,31 @@ impl Settings {
         skip
     }
 
+    /// The command line's settings: `--key value` pairs and a bare game
+    /// name (`1`, `2`, `rally`, ...), which selects the game as `--which`.
     pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Settings, String> {
-        let mut s = Settings::default();
+        let mut words = Vec::new();
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
-            let mut value = |name: &str| {
-                args.next()
-                    .ok_or_else(|| format!("{name} needs a value\n\n{USAGE}"))
-            };
-            match arg.as_str() {
-                flag @ ("--which" | "--play") => {
-                    let v = value(flag)?;
-                    s.which = Some(Game::parse(&v).ok_or_else(|| {
-                        format!(
-                            "{flag} needs 1 (screamer), 2 (screamer2), or rally (screamer-rally), not {v}\n\n{USAGE}"
-                        )
-                    })?);
-                }
-                "--game" => s.game = Some(value("--game")?.into()),
-                "--runtime" => s.runtime = Some(value("--runtime")?.into()),
-                "--saves" => s.saves = Some(value("--saves")?.into()),
-                "--dosbox" => s.dosbox = Some(value("--dosbox")?.into()),
-                "--renderer" => {
-                    let v = value("--renderer")?;
-                    s.renderer = Some(RendererChoice::parse(&v).ok_or_else(|| {
-                        format!(
-                            "--renderer needs auto, 3dfx, svga16, svga8, or vga, not {v}\n\n{USAGE}"
-                        )
-                    })?);
-                }
-                "--resolution" => {
-                    let v = value("--resolution")?;
-                    s.resolution = Some(parse_resolution(&v).ok_or_else(|| {
-                        format!("--resolution needs WIDTHxHEIGHT or original, not {v}\n\n{USAGE}")
-                    })?);
-                }
-                "--buttons" => {
-                    let v = value("--buttons")?;
-                    s.buttons = Some(parse_buttons(&v).ok_or_else(|| {
-                        format!(
-                            "--buttons needs original, modern, or 8 button numbers, not {v}\n\n{USAGE}"
-                        )
-                    })?);
-                }
-                "--rumble" => {
-                    let v = value("--rumble")?;
-                    s.rumble = Some(parse_percent(&v).ok_or_else(|| {
-                        format!("--rumble needs 0 to 100 or off, not {v}\n\n{USAGE}")
-                    })?);
-                }
-                "--deadzone" => {
-                    let v = value("--deadzone")?;
-                    let d = parse_percent(&v)
-                        .filter(|&d| d <= 30)
-                        .ok_or_else(|| format!("--deadzone needs 0 to 30, not {v}\n\n{USAGE}"))?;
-                    s.deadzone = Some(d);
-                }
-                "--texture-filter" => {
-                    let v = value("--texture-filter")?;
-                    s.texture_filter = Some(parse_filter(&v).ok_or_else(|| {
-                        format!(
-                            "--texture-filter needs original, fsr, smooth, or sharp, not {v}\n\n{USAGE}"
-                        )
-                    })?);
-                }
-                "--fps-limit" => {
-                    let v = value("--fps-limit")?;
-                    s.fps_limit = Some(parse_fps(&v).ok_or_else(|| {
-                        format!("--fps-limit needs 10 to 1000 or off, not {v}\n\n{USAGE}")
-                    })?);
-                }
-                flag @ ("--widescreen"
-                | "--extended-draw-distance"
-                | "--gamepad-axes"
-                | "--vsync") => {
-                    let v = value(flag)?;
-                    let b = parse_bool(&v)
-                        .ok_or_else(|| format!("{flag} needs on or off, not {v}\n\n{USAGE}"))?;
-                    match flag {
-                        "--widescreen" => s.widescreen = Some(b),
-                        "--extended-draw-distance" => s.extended_draw_distance = Some(b),
-                        "--gamepad-axes" => s.gamepad_axes = Some(b),
-                        _ => s.vsync = Some(b),
-                    }
-                }
-                "--help" | "-h" | "/?" => return Err(USAGE.into()),
-                other => {
-                    if let Some(g) = Game::parse(other) {
-                        s.which = Some(g);
-                    } else {
-                        return Err(format!("unknown argument {other}\n\n{USAGE}"));
-                    }
-                }
+            if cfg::flag_key(&arg).is_some_and(|key| FLAG_KEYS.contains(&key.as_str())) {
+                words.push(arg);
+                words.extend(args.next());
+            } else if Game::parse(&arg).is_some() {
+                words.extend(["--which".to_string(), arg]);
+            } else {
+                words.push(arg);
             }
         }
+        let mut s = Settings::default();
+        cfg::parse_args(words, FLAG_KEYS, &[], |key, value| {
+            s.apply(key, value, true)
+        })
+        .map_err(|e| match e {
+            ArgError::Help => USAGE.to_string(),
+            e => format!("{e}\n\n{USAGE}"),
+        })?;
         Ok(s)
     }
-}
-
-pub fn set_key(text: &str, key: &str, value: &str) -> String {
-    let is_key = |line: &str| {
-        let line = line.trim();
-        !line.starts_with('#') && line.split_once('=').is_some_and(|(k, _)| k.trim() == key)
-    };
-    let mut out = String::with_capacity(text.len() + key.len() + value.len() + 4);
-    let mut done = false;
-    for line in text.lines() {
-        if !done && is_key(line) {
-            out.push_str(&format!("{key} = {value}"));
-            done = true;
-        } else {
-            out.push_str(line);
-        }
-        out.push('\n');
-    }
-    if !done {
-        out.push_str(&format!("{key} = {value}\n"));
-    }
-    out
-}
-
-pub fn clear_key(text: &str, key: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    for line in text.lines() {
-        let t = line.trim();
-        if !t.starts_with('#') && t.split_once('=').is_some_and(|(k, _)| k.trim() == key) {
-            out.push_str(&format!("#{key} ="));
-        } else {
-            out.push_str(line);
-        }
-        out.push('\n');
-    }
-    out
 }
 
 #[cfg(test)]
@@ -714,6 +624,66 @@ mod tests {
             Settings::parse_args(["--extended-draw-distance".to_string(), "off".to_string()])
                 .unwrap();
         assert_eq!(args.extended_draw_distance, Some(false));
+    }
+
+    #[test]
+    fn the_command_line_and_its_messages_are_unchanged() {
+        let args = |a: &[&str]| Settings::parse_args(a.iter().map(|s| s.to_string()));
+        assert_eq!(args(&["rally"]).unwrap().which, Some(Game::ScreamerRally));
+        assert_eq!(args(&["--play", "2"]).unwrap().which, Some(Game::Screamer2));
+        let s = args(&["--game", "rally", "1", "--vsync", "off"]).unwrap();
+        assert_eq!(s.game, Some(PathBuf::from("rally")));
+        assert_eq!((s.which, s.vsync), (Some(Game::Screamer), Some(false)));
+        let err = |a: &[&str]| args(a).unwrap_err();
+        assert_eq!(
+            err(&["--deadzone", "50"]),
+            format!("--deadzone needs 0 to 30, not 50\n\n{USAGE}")
+        );
+        assert_eq!(
+            err(&["--widescreen", "maybe"]),
+            format!("--widescreen needs on or off, not maybe\n\n{USAGE}")
+        );
+        assert_eq!(
+            err(&["--which", "4"]),
+            format!(
+                "--which needs 1 (screamer), 2 (screamer2), or rally (screamer-rally), not 4\n\n{USAGE}"
+            )
+        );
+        assert_eq!(err(&["--game"]), format!("--game needs a value\n\n{USAGE}"));
+        assert_eq!(
+            err(&["--scaler", "fsr"]),
+            format!("unknown argument --scaler\n\n{USAGE}")
+        );
+        assert_eq!(err(&["--help"]), USAGE);
+    }
+
+    #[test]
+    fn file_values_and_their_warnings() {
+        let (s, warn) = Settings::parse_file(
+            "renderer = glide\nresolution = 2560X1440\nrumble = loud\nscaler = pixel\n",
+        );
+        assert_eq!(s.renderer, Some(RendererChoice::Voodoo));
+        assert_eq!(s.resolution, Some((2560, 1440)));
+        assert_eq!(s.scaler, Some(Scaler::Pixel));
+        assert_eq!(
+            warn,
+            ["launcher.cfg line 3: rumble needs a number from 0 to 100 or off, not \"loud\""]
+        );
+        for (word, res) in [
+            ("fullscreen", FULLSCREEN),
+            ("Full", FULLSCREEN),
+            ("desktop", FULLSCREEN),
+            ("original", ORIGINAL),
+            ("off", ORIGINAL),
+        ] {
+            let (s, warn) = Settings::parse_file(&format!("resolution = {word}\n"));
+            assert_eq!((s.resolution, warn.len()), (Some(res), 0), "{word}");
+        }
+        let (s, warn) = Settings::parse_file("resolution = 100x100\nplay = 1\n");
+        assert_eq!((s.resolution, s.which), (None, None));
+        assert_eq!(warn.len(), 2, "{warn:?}");
+        assert!(warn[0].contains("resolution needs WIDTHxHEIGHT (320x200 to 7680x4320)"));
+        assert!(warn[1].contains("unknown setting \"play\""));
     }
 
     #[test]

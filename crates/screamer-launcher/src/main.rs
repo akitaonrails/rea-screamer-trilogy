@@ -1,9 +1,11 @@
 mod ui;
 
 use std::fs;
-use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
+
+use rea_launcher::cfg;
+use rea_launcher::log::Log;
 
 use screamer_launcher::config::{self, MachineCapabilities, Settings};
 use screamer_launcher::edition::Game;
@@ -22,8 +24,6 @@ const WINDOW_CLOSED: u8 = 3;
 /// `--settings` exit code: no window could be made; play with the saved
 /// settings (screamer-play treats it like Play).
 const WINDOW_UNAVAILABLE: u8 = 4;
-/// `launcher.log` is started afresh once it grows past this size.
-const LOG_LIMIT: u64 = 1 << 20;
 
 /// Set once the launcher runs the way a player starts it (double-click or
 /// a shortcut: the settings window, then the game). Only then are fatal
@@ -39,8 +39,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(msg) => {
-            eprintln!("{msg}");
-            log_line(&format!("error: {msg}"));
+            log().error(&msg);
             if INTERACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
                 show_error(&msg);
             }
@@ -49,54 +48,24 @@ fn main() -> ExitCode {
     }
 }
 
-/// `launcher.log`, next to `launcher.cfg`.
-fn log_path() -> PathBuf {
-    locate_config_file().with_file_name("launcher.log")
-}
-
-/// Appends a line to `launcher.log`; logging never fails the launch.
-fn log_line(line: &str) {
-    append_log(&log_path(), line);
-}
-
-fn append_log(path: &std::path::Path, line: &str) {
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
-    let fresh = fs::metadata(path).is_ok_and(|m| m.len() > LOG_LIMIT);
-    if let Ok(mut f) = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(!fresh)
-        .truncate(fresh)
-        .open(path)
-    {
-        let _ = writeln!(f, "{line}");
-    }
+/// `launcher.log`, next to `launcher.cfg` (1 MiB at most, then started
+/// afresh); logging never fails the launch.
+fn log() -> Log {
+    Log::new(locate_config_file().with_file_name("launcher.log"))
 }
 
 /// Logs and prints a warning.
 fn warn(message: &str) {
-    eprintln!("warning: {message}");
-    log_line(&format!("warning: {message}"));
+    log().warn(message);
 }
 
 /// On Windows the launcher is often started without a console: show fatal
 /// errors of an interactive launch in a message box as well.
 #[cfg(windows)]
 fn show_error(msg: &str) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
-    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
-    let text = format!("{msg}\n\nDetails: {}", log_path().display());
-    // SAFETY: both strings are NUL-terminated UTF-16 that outlive the call.
-    unsafe {
-        MessageBoxW(
-            std::ptr::null_mut(),
-            wide(&text).as_ptr(),
-            wide("Screamer Trilogy").as_ptr(),
-            MB_OK | MB_ICONERROR,
-        );
-    }
+    use rea_launcher_win32::dialog::{self, Icon};
+    let text = format!("{msg}\n\nDetails: {}", log().path().display());
+    dialog::message("Screamer Trilogy", &text, Icon::Error);
 }
 
 #[cfg(not(windows))]
@@ -109,24 +78,28 @@ fn run() -> Result<ExitCode, String> {
     let cli_settings = Settings::parse_args(filtered_args)?;
 
     let cfg_path = locate_config_file();
-    let mut cfg_text = if cfg_path.is_file() {
-        fs::read_to_string(&cfg_path).unwrap_or_else(|_| config::TEMPLATE.to_string())
-    } else {
-        if let Some(parent) = cfg_path.parent() {
-            let _ = fs::create_dir_all(parent);
+    // Only a missing file is a first run; one that cannot be read is never
+    // replaced.
+    let mut cfg_text = match cfg::read_file(&cfg_path) {
+        Ok(Some(text)) => text,
+        Ok(None) => {
+            if let Some(parent) = cfg_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::write(&cfg_path, config::TEMPLATE);
+            config::TEMPLATE.to_string()
         }
-        let _ = fs::write(&cfg_path, config::TEMPLATE);
-        config::TEMPLATE.to_string()
+        Err(_) => config::TEMPLATE.to_string(),
     };
 
     // Remember --game and --which passed on the CLI in launcher.cfg.
     let mut cfg_dirty = false;
     if let Some(g) = &cli_settings.game {
-        cfg_text = config::set_key(&cfg_text, "game", &g.display().to_string());
+        cfg_text = cfg::set_key(&cfg_text, "game", &g.display().to_string());
         cfg_dirty = true;
     }
     if let Some(w) = cli_settings.which {
-        cfg_text = config::set_key(&cfg_text, "which", w.slug());
+        cfg_text = cfg::set_key(&cfg_text, "which", w.slug());
         cfg_dirty = true;
     }
     if cfg_dirty {
@@ -163,8 +136,10 @@ fn run() -> Result<ExitCode, String> {
             let final_settings = if show_window {
                 match ui::show(&cfg_path, &cfg_text, cfg!(target_os = "linux")) {
                     Ok(ui::Outcome::Play) => {
-                        let reloaded =
-                            fs::read_to_string(&cfg_path).unwrap_or_else(|_| cfg_text.clone());
+                        let reloaded = cfg::read_file(&cfg_path)
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| cfg_text.clone());
                         Settings::parse_file(&reloaded).0.merged(cli_settings)
                     }
                     Ok(ui::Outcome::Closed) => return Ok(ExitCode::from(WINDOW_CLOSED)),
@@ -428,10 +403,7 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
 
     // The launcher writes into both folders; neither may overlap the
     // read-only game folder.
-    runtime::check_separate(&disc.root_dir, &runtime_dir)
-        .map_err(|e| format!("Runtime folder: {e}"))?;
-    runtime::check_separate(&disc.root_dir, &saves_dir)
-        .map_err(|e| format!("Saves folder: {e}"))?;
+    runtime::check_folders(&disc.root_dir, &runtime_dir, &saves_dir)?;
 
     let machine = MachineCapabilities::detect();
     let mut settings = settings.clone();
@@ -538,19 +510,5 @@ mod tests {
         ] {
             assert!(!is_interactive(&mode(scripted)), "{scripted:?}");
         }
-    }
-
-    #[test]
-    fn log_appends_and_starts_afresh_when_too_big() {
-        let dir = std::env::temp_dir().join(format!("screamer-log-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        let log = dir.join("launcher.log");
-        append_log(&log, "one");
-        append_log(&log, "two");
-        assert_eq!(fs::read_to_string(&log).unwrap(), "one\ntwo\n");
-        fs::write(&log, vec![b'x'; LOG_LIMIT as usize + 1]).unwrap();
-        append_log(&log, "three");
-        assert_eq!(fs::read_to_string(&log).unwrap(), "three\n");
-        fs::remove_dir_all(dir).unwrap();
     }
 }

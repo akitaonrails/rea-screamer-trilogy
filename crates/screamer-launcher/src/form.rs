@@ -3,6 +3,10 @@
 
 use std::path::PathBuf;
 
+use rea_launcher::cfg;
+pub use rea_launcher::display::STEAM_DECK_SCREEN;
+use rea_launcher::display::landscape;
+
 use crate::config::{self, RendererChoice, Scaler, Settings, TextureFilter};
 use crate::edition::Game;
 
@@ -16,8 +20,6 @@ pub struct Picture {
     pub fps_limit: Option<u32>,
     pub vsync: Option<bool>,
 }
-
-pub const STEAM_DECK_SCREEN: (u32, u32) = (1280, 800);
 
 impl Picture {
     pub const ORIGINAL: Picture = Picture {
@@ -64,11 +66,6 @@ pub fn recommended(screen: Option<(u32, u32)>) -> Look {
     }
 }
 
-fn landscape((a, b): (u32, u32)) -> Option<(u32, u32)> {
-    let (w, h) = (a.max(b) & !1, a.min(b) & !1);
-    (w > 640 && h > 480 && w <= 7680 && h <= 4320).then_some((w, h))
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layout {
     Original,
@@ -98,48 +95,6 @@ pub const PAD_BUTTONS: [(u8, &str); 10] = [
     (9, "LT"),
     (10, "RT"),
 ];
-
-pub const PAD_A: u16 = 1 << 0;
-pub const PAD_B: u16 = 1 << 1;
-pub const PAD_LB: u16 = 1 << 4;
-pub const PAD_RB: u16 = 1 << 5;
-pub const PAD_START: u16 = 1 << 7;
-pub const PAD_UP: u16 = 1 << 8;
-pub const PAD_DOWN: u16 = 1 << 9;
-pub const PAD_LEFT: u16 = 1 << 10;
-pub const PAD_RIGHT: u16 = 1 << 11;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PadAction {
-    Play,
-    Up,
-    Down,
-    Left,
-    Right,
-    Press,
-    NextTab,
-    PreviousTab,
-}
-
-pub fn pad_actions(before: u16, now: u16) -> Vec<PadAction> {
-    let pressed = now & !before;
-    let mut out = Vec::new();
-    for (bit, action) in [
-        (PAD_START, PadAction::Play),
-        (PAD_LB, PadAction::PreviousTab),
-        (PAD_RB, PadAction::NextTab),
-        (PAD_UP, PadAction::Up),
-        (PAD_DOWN, PadAction::Down),
-        (PAD_LEFT, PadAction::Left),
-        (PAD_RIGHT, PadAction::Right),
-        (PAD_A, PadAction::Press),
-    ] {
-        if pressed & bit != 0 {
-            out.push(action);
-        }
-    }
-    out
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Look {
@@ -229,18 +184,6 @@ pub fn physical_size(points: (f32, f32), native: f32) -> (u32, u32) {
         (points.0 * scale).round() as u32,
         (points.1 * scale).round() as u32,
     )
-}
-
-pub fn window_zoom(screen: Option<(u32, u32)>, native: f32) -> f32 {
-    let native = if native > 0.0 { native } else { 1.0 };
-    let Some((w, h)) = screen else {
-        return 1.0;
-    };
-    let (w, h) = (w as f32, h as f32);
-    let fit = 0.9 * (w / WINDOW.0).min(h / WINDOW.1);
-    let target = (w.min(h) / 1440.0).max(1.0).min(fit);
-    let zoom = (target / native).max(1.0);
-    (zoom * 20.0).round() / 20.0
 }
 
 /// The race sizes offered in the Picture tab. A size saved in
@@ -389,8 +332,8 @@ impl Form {
         let mut t = text.to_string();
         let mut put = |key: &str, value: Option<String>| {
             t = match &value {
-                Some(v) => config::set_key(&t, key, v),
-                None => config::clear_key(&t, key),
+                Some(v) => cfg::set_key(&t, key, v),
+                None => cfg::clear_key(&t, key),
             };
         };
         let path = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
@@ -505,13 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn pad_actions_detect_rising_edges_and_modern_triggers() {
-        assert_eq!(pad_actions(0, PAD_START), vec![PadAction::Play]);
-        assert_eq!(pad_actions(PAD_START, PAD_START), Vec::<PadAction>::new());
-        assert_eq!(
-            pad_actions(0, PAD_RB | PAD_DOWN),
-            vec![PadAction::NextTab, PadAction::Down]
-        );
+    fn the_template_starts_with_the_modern_pad_layout() {
         let f = form(config::TEMPLATE);
         assert_eq!(f.layout, Layout::Modern);
         assert_eq!(f.buttons[0], 10); // Accelerate = RT

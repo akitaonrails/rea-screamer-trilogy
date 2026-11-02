@@ -11,13 +11,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Key, Mesh,
-    Rect, Sense, Shape, Stroke, StrokeKind, TextureHandle, Vec2, pos2, vec2,
+    self, Align2, Color32, CornerRadius, Key, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2,
+    pos2, vec2,
 };
+use rea_launcher::pad::{self as bits, Nav, PadNav};
+use rea_launcher_ui::theme::{self, Palette, body, condensed, decal, semibold};
+use rea_launcher_ui::widgets::{self, Fade};
+use rea_launcher_ui::window::WindowFit;
 
 use screamer_launcher::config::{MachineCapabilities, RendererChoice, Settings};
 use screamer_launcher::edition::Game;
-use screamer_launcher::form::{self, Form, Layout, Look, PadAction};
+use screamer_launcher::form::{self, Form, Layout, Look};
 use screamer_launcher::runtime::{self, DiscoveredTrilogy};
 
 const CHASSIS: Color32 = Color32::from_rgb(0x0e, 0x17, 0x2a);
@@ -30,6 +34,25 @@ const DISABLED_INK: Color32 = Color32::from_rgb(0x4f, 0x60, 0x85);
 const DISABLED_LINE: Color32 = Color32::from_rgb(0x1b, 0x29, 0x47);
 const ON_GOLD: Color32 = Color32::from_rgb(0x0e, 0x17, 0x2a);
 const ERROR: Color32 = Color32::from_rgb(0xff, 0x8a, 0x80);
+
+/// The settings window's colours, by the SDK's roles: gold is both the
+/// action (Play, tab underline) and the selection.
+const PALETTE: Palette = Palette {
+    base: CHASSIS,
+    panel: PANEL,
+    line: LINE,
+    ink: INK,
+    muted: MUTED,
+    action: GOLD,
+    action_hover: Color32::from_rgb(0xff, 0xd3, 0x2a),
+    on_action: ON_GOLD,
+    select: GOLD,
+    on_select: ON_GOLD,
+    error: ERROR,
+    disabled_ink: DISABLED_INK,
+    disabled_line: DISABLED_LINE,
+    focus: GOLD,
+};
 
 const SIZE: Vec2 = vec2(form::WINDOW.0, form::WINDOW.1);
 const PHOTO_W: f32 = 284.0;
@@ -67,17 +90,10 @@ fn finish(
 pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, ShowError> {
     let mut outcome = Outcome::Closed;
     let mut opened = false;
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Screamer Trilogy")
-            .with_inner_size(SIZE)
-            .with_min_inner_size(SIZE)
-            .with_max_inner_size(SIZE)
-            .with_resizable(false)
-            .with_maximize_button(false),
-        centered: true,
-        ..Default::default()
-    };
+    // Native on Linux and Windows (never Wine): created at 1x, fitted to
+    // the screen and its scale on the first frame.
+    let fit = WindowFit::new(SIZE, false, None, 1.0);
+    let options = fit.native_options("Screamer Trilogy");
     let path = settings_path.to_path_buf();
     let text = text.to_string();
     let result = eframe::run_native(
@@ -85,9 +101,10 @@ pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, Sh
         options,
         Box::new(|cc| {
             opened = true;
-            set_style(&cc.egui_ctx);
+            theme::install(&cc.egui_ctx, &PALETTE);
             Ok(Box::new(Window::new(
                 &cc.egui_ctx,
+                fit,
                 path,
                 text,
                 linux,
@@ -97,74 +114,6 @@ pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, Sh
     )
     .map_err(|e| e.to_string());
     finish(opened, result, outcome)
-}
-
-fn set_style(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
-    let font = |bytes: &'static [u8]| std::sync::Arc::new(FontData::from_static(bytes));
-    fonts.font_data.insert(
-        "barlow".into(),
-        font(include_bytes!("../assets/fonts/Barlow-Regular.ttf")),
-    );
-    fonts.font_data.insert(
-        "barlow-semibold".into(),
-        font(include_bytes!("../assets/fonts/Barlow-SemiBold.ttf")),
-    );
-    fonts.font_data.insert(
-        "condensed".into(),
-        font(include_bytes!(
-            "../assets/fonts/BarlowCondensed-SemiBold.ttf"
-        )),
-    );
-    fonts.font_data.insert(
-        "decal".into(),
-        font(include_bytes!(
-            "../assets/fonts/BarlowCondensed-BlackItalic.ttf"
-        )),
-    );
-    for family in [FontFamily::Proportional, FontFamily::Monospace] {
-        fonts.families.insert(family, vec!["barlow".into()]);
-    }
-    for name in ["barlow-semibold", "condensed", "decal"] {
-        fonts.families.insert(
-            FontFamily::Name(name.into()),
-            vec![name.into(), "barlow".into()],
-        );
-    }
-    ctx.set_fonts(fonts);
-
-    ctx.set_theme(egui::Theme::Dark);
-    ctx.all_styles_mut(|style| {
-        let v = &mut style.visuals;
-        *v = egui::Visuals::dark();
-        v.panel_fill = CHASSIS;
-        v.extreme_bg_color = PANEL;
-        v.text_edit_bg_color = Some(PANEL);
-        v.override_text_color = Some(INK);
-        v.selection.bg_fill = GOLD.gamma_multiply(0.5);
-        v.selection.stroke = Stroke::new(1.0, GOLD);
-        v.text_cursor.stroke = Stroke::new(2.0, GOLD);
-        for w in [
-            &mut v.widgets.inactive,
-            &mut v.widgets.hovered,
-            &mut v.widgets.active,
-            &mut v.widgets.open,
-        ] {
-            w.bg_stroke = Stroke::new(1.0, LINE);
-            w.corner_radius = CornerRadius::same(6);
-        }
-        v.widgets.hovered.bg_stroke = Stroke::new(1.0, MUTED);
-        v.widgets.active.bg_stroke = Stroke::new(1.0, GOLD);
-        style.spacing.item_spacing = vec2(8.0, 8.0);
-    });
-}
-
-fn font(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Proportional)
-}
-
-fn named(name: &str, size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name(name.into()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +129,7 @@ struct Window<'a> {
     tab: Tab,
     focus_row: usize,
     pad: PadPoller,
+    fit: WindowFit,
     trilogy: DiscoveredTrilogy,
     checked: String,
     machine: MachineCapabilities,
@@ -198,6 +148,7 @@ struct Window<'a> {
 impl<'a> Window<'a> {
     fn new(
         ctx: &egui::Context,
+        fit: WindowFit,
         path: PathBuf,
         text: String,
         linux: bool,
@@ -246,23 +197,24 @@ impl<'a> Window<'a> {
             tab: initial_tab,
             focus_row: 0,
             pad: PadPoller::default(),
+            fit,
             machine,
             screen,
             resolutions,
             controllers: detect_controllers(),
             linux,
             covers: [
-                load_jpeg(
+                widgets::load_jpeg(
                     ctx,
                     "cover_s1",
                     include_bytes!("../assets/cover_screamer1.jpg"),
                 ),
-                load_jpeg(
+                widgets::load_jpeg(
                     ctx,
                     "cover_s2",
                     include_bytes!("../assets/cover_screamer2.jpg"),
                 ),
-                load_jpeg(
+                widgets::load_jpeg(
                     ctx,
                     "cover_sr",
                     include_bytes!("../assets/cover_screamer_rally.jpg"),
@@ -276,30 +228,17 @@ impl<'a> Window<'a> {
         }
     }
 
-    fn fit_screen(&mut self, ctx: &egui::Context) {
+    /// The first frame: the monitor's size in pixels (egui reports logical
+    /// points) for the Steam Deck check and the resolution choices.
+    fn measure_screen(&mut self, ctx: &egui::Context) {
         self.sized = true;
         let native = ctx.native_pixels_per_point().unwrap_or(1.0);
-        // egui reports the monitor in logical points; the Steam Deck check,
-        // the resolution list and the zoom all work in pixels.
         if let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) {
             let mon = form::physical_size((monitor.x, monitor.y), native);
             if mon.0 >= 640 && mon.1 >= 480 {
                 self.screen = Some(mon);
                 self.resolutions = form::resolutions(self.screen, self.form.picture.resolution);
             }
-        }
-        let zoom = form::window_zoom(self.screen, native);
-        if zoom == 1.0 {
-            return;
-        }
-        ctx.set_zoom_factor(zoom);
-        let size = SIZE * zoom;
-        for cmd in [
-            egui::ViewportCommand::MinInnerSize(size),
-            egui::ViewportCommand::MaxInnerSize(size),
-            egui::ViewportCommand::InnerSize(size),
-        ] {
-            ctx.send_viewport_cmd(cmd);
         }
     }
 
@@ -423,38 +362,29 @@ fn pick_folder_dialog(title: &str) -> Option<PathBuf> {
     None
 }
 
-fn load_jpeg(ctx: &egui::Context, name: &str, bytes: &[u8]) -> Option<TextureHandle> {
-    let mut decoder = jpeg_decoder::Decoder::new(bytes);
-    let rgb = decoder.decode().ok()?;
-    let info = decoder.info()?;
-    let size = [usize::from(info.width), usize::from(info.height)];
-    (rgb.len() == size[0] * size[1] * 3).then(|| {
-        ctx.load_texture(
-            name,
-            egui::ColorImage::from_rgb(size, &rgb),
-            egui::TextureOptions::LINEAR,
-        )
-    })
-}
-
 impl eframe::App for Window<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.fit.first_frame(&ctx);
         if !self.sized {
-            self.fit_screen(&ctx);
+            self.measure_screen(&ctx);
         }
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(33));
-        for action in self.pad.poll() {
-            self.handle_pad_action(action, &ctx);
+        for nav in self.pad.poll() {
+            self.handle_pad_action(nav, &ctx);
         }
 
         let full = ui.max_rect();
         ui.painter().rect_filled(full, 0.0, CHASSIS);
         self.draw_box_art(ui, full);
-        draw_decal(ui, full);
+        widgets::stripes(
+            ui.painter(),
+            full,
+            &[(30.0, GOLD), (16.0, GOLD.gamma_multiply(0.65))],
+        );
 
         let content = Rect::from_min_max(
             pos2(full.left() + PHOTO_W + 16.0, full.top() + 22.0),
@@ -469,7 +399,7 @@ impl eframe::App for Window<'_> {
         ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
             ui.label(
                 egui::RichText::new(self.form.which.short_title())
-                    .font(named("decal", 44.0))
+                    .font(decal(44.0))
                     .color(INK),
             );
             ui.add_space(-6.0);
@@ -531,18 +461,20 @@ impl Window<'_> {
             p.image(tex.id(), rect, uv, Color32::WHITE);
         }
         // Smooth horizontal and bottom fades into the chassis background
-        gradient(
+        widgets::gradient(
             &p,
             Rect::from_min_max(
                 pos2(rect.left() + rect.width() * 0.52, rect.top()),
                 rect.max,
             ),
-            true,
+            CHASSIS,
+            Fade::Right,
         );
-        gradient(
+        widgets::gradient(
             &p,
             Rect::from_min_max(pos2(rect.left(), rect.bottom() - 150.0), rect.max),
-            false,
+            CHASSIS,
+            Fade::Down,
         );
         let x = rect.left() + 20.0;
         let y = rect.bottom() - 20.0;
@@ -550,21 +482,21 @@ impl Window<'_> {
             pos2(x, y),
             Align2::LEFT_BOTTOM,
             "Cover art: Virgin Interactive / Milestone",
-            font(11.0),
+            body(11.0),
             MUTED,
         );
         p.text(
             pos2(x, y - 16.0),
             Align2::LEFT_BOTTOM,
             self.form.which.studio_credit(),
-            font(13.0),
+            body(13.0),
             MUTED,
         );
         p.text(
             pos2(x, y - 34.0),
             Align2::LEFT_BOTTOM,
             self.form.which.display_name(),
-            named("barlow-semibold", 19.0),
+            semibold(19.0),
             INK,
         );
     }
@@ -595,9 +527,11 @@ impl Window<'_> {
                 ERROR,
             )
         };
-        ui.label(egui::RichText::new(text).font(font(14.0)).color(color));
+        ui.label(egui::RichText::new(text).font(body(14.0)).color(color));
     }
 
+    // Not `widgets::tabs_bar`: it lays every name out in `muted`, so the
+    // current tab would lose its `ink`.
     fn tabs(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 26.0;
@@ -610,7 +544,7 @@ impl Window<'_> {
                 let on = self.tab == tab;
                 let galley = ui.painter().layout_no_wrap(
                     name.to_string(),
-                    named("condensed", 22.0),
+                    condensed(22.0),
                     if on { INK } else { MUTED },
                 );
                 let (rect, resp) =
@@ -682,7 +616,7 @@ impl Window<'_> {
         }
 
         ui.add_space(8.0);
-        heading(ui, "Game or trilogy folder");
+        widgets::heading(ui, "Game or trilogy folder");
         let hint = "Folder with Screamer, Screamer 2, Screamer Rally, or all three (e.g. .../screamer/games)";
         if folder_field(
             ui,
@@ -712,7 +646,7 @@ impl Window<'_> {
                 ERROR,
             )
         };
-        ui.label(egui::RichText::new(note).font(font(13.0)).color(color));
+        ui.label(egui::RichText::new(note).font(body(13.0)).color(color));
         ui.add_space(8.0);
 
         heading_focused(ui, "Look", focus == 1);
@@ -761,7 +695,7 @@ impl Window<'_> {
         draw_focus_bar(ui, r1.response.rect, focus == 1);
         ui.add_space(8.0);
 
-        heading(ui, "Saves");
+        widgets::heading(ui, "Saves");
         folder_field(
             ui,
             &mut self.form.saves,
@@ -835,7 +769,7 @@ impl Window<'_> {
             && matches!(p.renderer, RendererChoice::Auto | RendererChoice::Voodoo);
         ui.label(
             egui::RichText::new(self.machine.summary_line(is_3dfx))
-                .font(font(13.0))
+                .font(body(13.0))
                 .color(GOLD),
         );
         ui.add_space(4.0);
@@ -843,7 +777,7 @@ impl Window<'_> {
             egui::RichText::new(
                 "Note: 3dfx Voodoo renders internally at 1280×960 (2x supersampled) and SVGA at 640×480. Sharp is the stable pixel-preserving default; FSR, Smooth, and experimental 100 FPS optical-flow Frame Gen remain available.",
             )
-            .font(font(13.0))
+            .font(body(13.0))
             .color(MUTED),
         );
         let _ = self.linux;
@@ -899,7 +833,7 @@ impl Window<'_> {
                 self.controllers.join(", ")
             )
         };
-        ui.label(egui::RichText::new(pad_status).font(font(13.0)).color(
+        ui.label(egui::RichText::new(pad_status).font(body(13.0)).color(
             if self.controllers.is_empty() {
                 MUTED
             } else {
@@ -912,7 +846,7 @@ impl Window<'_> {
             egui::RichText::new(
                 "Keyboard arrows (Up/Down/Left/Right) and gamepad work simultaneously in menus and races.",
             )
-            .font(font(13.0))
+            .font(body(13.0))
             .color(MUTED),
         );
     }
@@ -959,7 +893,7 @@ impl Window<'_> {
             egui::RichText::new(
                 "RT/LT (R2/L2) analog triggers & A/X buttons work together in Modern mode. D-pad / Left Stick navigate menus.",
             )
-            .font(font(13.0))
+            .font(body(13.0))
             .color(MUTED),
         );
         ui.spacing_mut().item_spacing.y = 4.0;
@@ -984,51 +918,11 @@ impl Window<'_> {
     }
 
     fn footer(&mut self, ui: &mut egui::Ui, rect: Rect, ctx: &egui::Context) {
-        let button = Rect::from_min_size(
-            pos2(rect.right() - 170.0, rect.top()),
-            vec2(170.0, rect.height()),
-        );
         let hint = format!(
             "Settings are saved when you press Play ({}).",
             self.form.which.display_name()
         );
-        let galley =
-            ui.painter()
-                .layout(hint, font(13.0), MUTED, button.left() - rect.left() - 20.0);
-        let y = rect.center().y - galley.size().y / 2.0;
-        ui.painter().galley(pos2(rect.left(), y), galley, MUTED);
-
-        let resp = ui.interact(button, ui.scope_id().with("play"), Sense::click());
-        let ready = self.ready();
-        let fill = match (ready, resp.hovered()) {
-            (false, _) => LINE,
-            (true, true) => Color32::from_rgb(0xff, 0xd3, 0x2a),
-            (true, false) => GOLD,
-        };
-        let s = 10.0;
-        let plate = vec![
-            pos2(button.left() + s, button.top()),
-            button.right_top(),
-            pos2(button.right() - s, button.bottom()),
-            button.left_bottom(),
-        ];
-        ui.painter()
-            .add(Shape::convex_polygon(plate, fill, Stroke::NONE));
-        ui.painter().text(
-            button.center(),
-            Align2::CENTER_CENTER,
-            "Play",
-            named("decal", 30.0),
-            if ready { ON_GOLD } else { MUTED },
-        );
-        if resp
-            .on_hover_cursor(if ready {
-                egui::CursorIcon::PointingHand
-            } else {
-                egui::CursorIcon::Default
-            })
-            .clicked()
-        {
+        if widgets::footer(ui, rect, &hint, self.ready()).clicked() {
             self.play(ctx);
         }
     }
@@ -1042,21 +936,23 @@ impl Window<'_> {
         }
     }
 
-    fn handle_pad_action(&mut self, action: PadAction, ctx: &egui::Context) {
+    fn handle_pad_action(&mut self, nav: Nav, ctx: &egui::Context) {
         let tabs = [Tab::Play, Tab::Picture, Tab::Controls, Tab::Buttons];
-        match action {
-            PadAction::Play => self.play(ctx),
-            PadAction::PreviousTab => {
+        match nav {
+            Nav::Play => self.play(ctx),
+            // B has no step of its own in this window.
+            Nav::Back => {}
+            Nav::PreviousTab => {
                 let idx = tabs.iter().position(|&t| t == self.tab).unwrap_or(0);
                 self.tab = tabs[(idx + tabs.len() - 1) % tabs.len()];
                 self.focus_row = 0;
             }
-            PadAction::NextTab => {
+            Nav::NextTab => {
                 let idx = tabs.iter().position(|&t| t == self.tab).unwrap_or(0);
                 self.tab = tabs[(idx + 1) % tabs.len()];
                 self.focus_row = 0;
             }
-            PadAction::Up => {
+            Nav::Up => {
                 let max = self.max_focus_row();
                 self.focus_row = if self.focus_row == 0 {
                     max
@@ -1064,7 +960,7 @@ impl Window<'_> {
                     self.focus_row - 1
                 };
             }
-            PadAction::Down => {
+            Nav::Down => {
                 let max = self.max_focus_row();
                 self.focus_row = if self.focus_row >= max {
                     0
@@ -1072,9 +968,9 @@ impl Window<'_> {
                     self.focus_row + 1
                 };
             }
-            PadAction::Left => self.step_focused_option(-1),
-            PadAction::Right => self.step_focused_option(1),
-            PadAction::Press => match (self.tab, self.focus_row) {
+            Nav::Left => self.step_focused_option(-1),
+            Nav::Right => self.step_focused_option(1),
+            Nav::Press => match (self.tab, self.focus_row) {
                 (Tab::Play, 0) => self.play(ctx),
                 (Tab::Play, 1) if self.form.look == Look::Custom => {
                     self.tab = Tab::Picture;
@@ -1232,9 +1128,11 @@ impl Window<'_> {
     }
 }
 
+/// The pad, read as XInput button bits ([`rea_launcher::pad`]): the
+/// joystick device on Linux, WinMM on Windows.
 #[derive(Default)]
 struct PadPoller {
-    last_mask: u16,
+    nav: PadNav,
     #[cfg(target_os = "linux")]
     js_file: Option<std::fs::File>,
     #[cfg(target_os = "linux")]
@@ -1244,11 +1142,9 @@ struct PadPoller {
 }
 
 impl PadPoller {
-    fn poll(&mut self) -> Vec<PadAction> {
+    fn poll(&mut self) -> Vec<Nav> {
         let now = self.read_mask();
-        let actions = form::pad_actions(self.last_mask, now);
-        self.last_mask = now;
-        actions
+        self.nav.update(now)
     }
 
     #[cfg(target_os = "linux")]
@@ -1297,35 +1193,7 @@ impl PadPoller {
             }
         }
 
-        let mut m = 0u16;
-        if self.buttons[0] {
-            m |= form::PAD_A;
-        }
-        if self.buttons[1] {
-            m |= form::PAD_B;
-        }
-        if self.buttons[4] {
-            m |= form::PAD_LB;
-        }
-        if self.buttons[5] {
-            m |= form::PAD_RB;
-        }
-        if self.buttons[7] {
-            m |= form::PAD_START;
-        }
-        if self.axes[1] < -16000 || self.axes[7] < -16000 {
-            m |= form::PAD_UP;
-        }
-        if self.axes[1] > 16000 || self.axes[7] > 16000 {
-            m |= form::PAD_DOWN;
-        }
-        if self.axes[0] < -16000 || self.axes[6] < -16000 {
-            m |= form::PAD_LEFT;
-        }
-        if self.axes[0] > 16000 || self.axes[6] > 16000 {
-            m |= form::PAD_RIGHT;
-        }
-        m
+        js_mask(&self.buttons, &self.axes)
     }
 
     #[cfg(target_os = "windows")]
@@ -1390,36 +1258,60 @@ fn win32_joy_poll(idx: u32) -> Option<u16> {
         return None;
     }
     let mut m = 0u16;
-    if info.dw_buttons & (1 << 0) != 0 {
-        m |= form::PAD_A;
-    }
-    if info.dw_buttons & (1 << 1) != 0 {
-        m |= form::PAD_B;
-    }
-    if info.dw_buttons & (1 << 4) != 0 {
-        m |= form::PAD_LB;
-    }
-    if info.dw_buttons & (1 << 5) != 0 {
-        m |= form::PAD_RB;
-    }
-    if info.dw_buttons & (1 << 7) != 0 {
-        m |= form::PAD_START;
+    for (button, bit) in PAD_BUTTON_BITS {
+        if info.dw_buttons & (1 << button) != 0 {
+            m |= bit;
+        }
     }
     if info.dw_ypos < 16384
         || (info.dw_pov <= 4500 || (info.dw_pov >= 31500 && info.dw_pov < 36000))
     {
-        m |= form::PAD_UP;
+        m |= bits::DPAD_UP;
     }
     if info.dw_ypos > 49152 || (info.dw_pov >= 13500 && info.dw_pov <= 22500) {
-        m |= form::PAD_DOWN;
+        m |= bits::DPAD_DOWN;
     }
     if info.dw_xpos < 16384 || (info.dw_pov >= 22500 && info.dw_pov <= 31500) {
-        m |= form::PAD_LEFT;
+        m |= bits::DPAD_LEFT;
     }
     if info.dw_xpos > 49152 || (info.dw_pov >= 4500 && info.dw_pov <= 13500) {
-        m |= form::PAD_RIGHT;
+        m |= bits::DPAD_RIGHT;
     }
     Some(m)
+}
+
+/// Joystick buttons (Linux `js` numbers, WinMM bits: an Xbox-style pad's
+/// A, B, LB, RB, Start) and the XInput bits they stand for.
+const PAD_BUTTON_BITS: [(usize, u16); 5] = [
+    (0, bits::A),
+    (1, bits::B),
+    (4, bits::LEFT_SHOULDER),
+    (5, bits::RIGHT_SHOULDER),
+    (7, bits::START),
+];
+
+/// A Linux joystick's state as XInput bits: the buttons above, and the
+/// left stick (axes 0/1) or d-pad hat (axes 6/7) past half way as d-pad.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn js_mask(buttons: &[bool; 16], axes: &[i16; 8]) -> u16 {
+    let lean = bits::STICK_THRESHOLD;
+    let mut m = 0u16;
+    for (button, bit) in PAD_BUTTON_BITS {
+        if buttons[button] {
+            m |= bit;
+        }
+    }
+    for (pressed, bit) in [
+        (axes[1] < -lean || axes[7] < -lean, bits::DPAD_UP),
+        (axes[1] > lean || axes[7] > lean, bits::DPAD_DOWN),
+        (axes[0] < -lean || axes[6] < -lean, bits::DPAD_LEFT),
+        (axes[0] > lean || axes[6] > lean, bits::DPAD_RIGHT),
+    ] {
+        if pressed {
+            m |= bit;
+        }
+    }
+    m
 }
 
 trait RoleLabel {
@@ -1439,50 +1331,10 @@ impl RoleLabel for screamer_launcher::edition::Edition {
     }
 }
 
-fn gradient(p: &egui::Painter, rect: Rect, horizontal: bool) {
-    let mut mesh = Mesh::default();
-    let clear = Color32::from_rgba_unmultiplied(CHASSIS.r(), CHASSIS.g(), CHASSIS.b(), 0);
-    let (a, b, c, d) = if horizontal {
-        (clear, CHASSIS, CHASSIS, clear)
-    } else {
-        (clear, clear, CHASSIS, CHASSIS)
-    };
-    mesh.colored_vertex(rect.left_top(), a);
-    mesh.colored_vertex(rect.right_top(), b);
-    mesh.colored_vertex(rect.right_bottom(), c);
-    mesh.colored_vertex(rect.left_bottom(), d);
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    p.add(Shape::mesh(mesh));
-}
-
-fn draw_decal(ui: &egui::Ui, full: Rect) {
-    let p = ui.painter().with_clip_rect(full);
-    for (i, (w, alpha)) in [(30.0, 1.0), (16.0, 0.65)].into_iter().enumerate() {
-        let x = full.right() - 120.0 + i as f32 * 40.0;
-        let slant = 60.0;
-        let pts = vec![
-            pos2(x, full.top()),
-            pos2(x + w, full.top()),
-            pos2(x + w - slant, full.top() + 112.0),
-            pos2(x - slant, full.top() + 112.0),
-        ];
-        p.add(Shape::convex_polygon(
-            pts,
-            GOLD.gamma_multiply(alpha),
-            Stroke::NONE,
-        ));
-    }
-}
-
-fn heading(ui: &mut egui::Ui, text: &str) {
-    heading_focused(ui, text, false);
-}
-
 fn heading_focused(ui: &mut egui::Ui, text: &str, focused: bool) {
     ui.label(
         egui::RichText::new(text)
-            .font(named("barlow-semibold", 14.0))
+            .font(semibold(14.0))
             .color(if focused { GOLD } else { MUTED }),
     );
 }
@@ -1493,7 +1345,7 @@ fn field_focused(ui: &mut egui::Ui, text: &str, focused: bool) {
         rect.left_center(),
         Align2::LEFT_CENTER,
         text,
-        font(15.0),
+        body(15.0),
         if focused { GOLD } else { INK },
     );
 }
@@ -1514,7 +1366,7 @@ fn folder_field(ui: &mut egui::Ui, value: &mut String, hint: &str, title: &str) 
         let w = ui.available_width() - 100.0;
         let edit = egui::TextEdit::singleline(value)
             .hint_text(egui::RichText::new(hint).color(MUTED))
-            .font(font(15.0))
+            .font(body(15.0))
             .margin(vec2(10.0, 8.0))
             .desired_width(w);
         changed |= ui.add(edit).changed();
@@ -1542,7 +1394,7 @@ fn outline_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
         rect.center(),
         Align2::CENTER_CENTER,
         text,
-        named("barlow-semibold", 15.0),
+        semibold(15.0),
         GOLD,
     );
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1599,11 +1451,7 @@ fn chips_styled_with_disabled<T: PartialEq + Copy>(
             };
             let galley = ui.painter().layout_no_wrap(
                 label.to_string(),
-                if on {
-                    named("barlow-semibold", 14.0)
-                } else {
-                    font(14.0)
-                },
+                if on { semibold(14.0) } else { body(14.0) },
                 text_color,
             );
             let size = vec2(galley.size().x + pad_x, 30.0);
@@ -1656,7 +1504,7 @@ fn toggle(ui: &mut egui::Ui, on: &mut bool, text: &str, disabled_reason: Option<
     let label_color = if enabled { INK } else { DISABLED_INK };
     let galley = ui
         .painter()
-        .layout_no_wrap(text.to_string(), font(15.0), label_color);
+        .layout_no_wrap(text.to_string(), body(15.0), label_color);
     let size = vec2(46.0 + 12.0 + galley.size().x, 30.0);
     let sense = if enabled {
         Sense::click()
@@ -1743,7 +1591,7 @@ fn game_card(
         rect.left_top() + vec2(pad, 10.0),
         Align2::LEFT_TOP,
         title,
-        named("condensed", 20.0),
+        condensed(20.0),
         if on { GOLD } else { INK },
     );
     let dot_color = if installed { GOLD } else { DISABLED_INK };
@@ -1752,7 +1600,7 @@ fn game_card(
         rect.left_top() + vec2(pad, 36.0),
         Align2::LEFT_TOP,
         subtitle,
-        font(12.5),
+        body(12.5),
         if installed { MUTED } else { DISABLED_INK },
     );
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1789,15 +1637,11 @@ fn look_card(
         rect.left_top() + vec2(pad, pad - 2.0),
         Align2::LEFT_TOP,
         title,
-        named("condensed", 20.0),
+        condensed(20.0),
         if on { GOLD } else { INK },
     );
     if recommended {
-        let galley = p.layout_no_wrap(
-            "Recommended".into(),
-            named("barlow-semibold", 11.5),
-            ON_GOLD,
-        );
+        let galley = p.layout_no_wrap("Recommended".into(), semibold(11.5), ON_GOLD);
         let tab = Rect::from_min_size(
             pos2(
                 rect.right() - pad - galley.size().x - 10.0,
@@ -1808,7 +1652,7 @@ fn look_card(
         p.rect_filled(tab, CornerRadius::same(4), GOLD);
         p.galley(tab.min + vec2(5.0, 1.0), galley, ON_GOLD);
     }
-    let galley = p.layout(note.to_string(), font(12.5), MUTED, w - 2.0 * pad);
+    let galley = p.layout(note.to_string(), body(12.5), MUTED, w - 2.0 * pad);
     p.galley(rect.left_top() + vec2(pad, pad + 28.0), galley, MUTED);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
@@ -1817,6 +1661,31 @@ fn look_card(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_palette_keeps_its_contrast() {
+        assert_eq!(PALETTE.contrast_problems(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_linux_joystick_becomes_xinput_bits() {
+        let mut buttons = [false; 16];
+        let mut axes = [0i16; 8];
+        assert_eq!(js_mask(&buttons, &axes), 0);
+        buttons[0] = true;
+        buttons[7] = true;
+        axes[1] = -20_000; // stick up
+        axes[6] = 32_767; // hat right
+        axes[0] = 15_000; // not past half way
+        assert_eq!(
+            js_mask(&buttons, &axes),
+            bits::A | bits::START | bits::DPAD_UP | bits::DPAD_RIGHT
+        );
+        // Start plays first; held buttons do nothing more.
+        let mut nav = PadNav::default();
+        assert_eq!(nav.update(js_mask(&buttons, &axes))[0], Nav::Play);
+        assert!(nav.update(js_mask(&buttons, &axes)).is_empty());
+    }
 
     #[test]
     fn only_a_window_that_never_opened_falls_back_to_saved_settings() {
