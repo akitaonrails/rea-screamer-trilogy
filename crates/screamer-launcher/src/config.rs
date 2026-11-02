@@ -310,10 +310,26 @@ fn parse_resolution(v: &str) -> Option<(u32, u32)> {
     if !(320..=7680).contains(&w) || !(200..=4320).contains(&h) {
         return None;
     }
-    if w > 1920 || h > 1080 {
-        return Some(FULLSCREEN);
-    }
     Some((w, h))
+}
+
+/// The race size to give DOSBox on a screen of `screen` pixels. DOSBox
+/// cannot open a window larger than the screen (it rejects the setting), so
+/// such a size becomes fullscreen, with a warning saying so.
+pub fn fit_to_screen(
+    race: Option<(u32, u32)>,
+    screen: (u32, u32),
+) -> (Option<(u32, u32)>, Option<String>) {
+    match race {
+        Some((w, h)) if (w, h) != FULLSCREEN && (w > screen.0 || h > screen.1) => (
+            Some(FULLSCREEN),
+            Some(format!(
+                "resolution {w}x{h} is larger than the {}x{} screen; playing fullscreen instead",
+                screen.0, screen.1
+            )),
+        ),
+        other => (other, None),
+    }
 }
 
 fn parse_percent(v: &str) -> Option<u32> {
@@ -677,14 +693,38 @@ mod tests {
         assert_eq!(s.extended_draw_distance, Some(false));
         assert_eq!(s.fps_limit, Some(60));
 
-        // Legacy 4K/1440p values map cleanly to FULLSCREEN ("desktop")
-        let (s_legacy, _) = Settings::parse_file("resolution = 3840x2160\n");
-        assert_eq!(s_legacy.resolution, Some(FULLSCREEN));
+        // Sizes above 1080p are kept as written.
+        let (s_large, warn) = Settings::parse_file("resolution = 3840x2160\n");
+        assert!(warn.is_empty());
+        assert_eq!(s_large.resolution, Some((3840, 2160)));
+        let (s_large, _) = Settings::parse_file("resolution = 2560X1440\n");
+        assert_eq!(s_large.race_resolution(), Some((2560, 1440)));
 
         let args =
             Settings::parse_args(["--extended-draw-distance".to_string(), "off".to_string()])
                 .unwrap();
         assert_eq!(args.extended_draw_distance, Some(false));
+    }
+
+    #[test]
+    fn sizes_larger_than_the_screen_become_fullscreen_with_a_warning() {
+        let screen = (2560, 1440);
+        assert_eq!(
+            fit_to_screen(Some((2560, 1440)), screen),
+            (Some((2560, 1440)), None)
+        );
+        assert_eq!(fit_to_screen(None, screen), (None, None));
+        assert_eq!(
+            fit_to_screen(Some(FULLSCREEN), screen),
+            (Some(FULLSCREEN), None)
+        );
+        let (res, warn) = fit_to_screen(Some((3840, 2160)), screen);
+        assert_eq!(res, Some(FULLSCREEN));
+        assert!(warn.unwrap().contains("3840x2160"));
+        assert_eq!(
+            fit_to_screen(Some((1920, 1440)), (1920, 1080)).0,
+            Some(FULLSCREEN)
+        );
     }
 }
 

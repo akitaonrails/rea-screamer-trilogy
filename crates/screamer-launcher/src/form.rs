@@ -229,7 +229,13 @@ pub fn window_zoom(screen: Option<(u32, u32)>, native: f32) -> f32 {
     (zoom * 20.0).round() / 20.0
 }
 
-pub fn resolutions(screen: Option<(u32, u32)>) -> Vec<(Option<(u32, u32)>, String)> {
+/// The race sizes offered in the Picture tab. A size saved in
+/// `launcher.cfg` that is not one of them (e.g. 2560x1440) gets its own chip,
+/// so it shows as selected and is kept when saving.
+pub fn resolutions(
+    screen: Option<(u32, u32)>,
+    current: Option<(u32, u32)>,
+) -> Vec<(Option<(u32, u32)>, String)> {
     let mut out = vec![
         (None, "4:3 (1280×960)".to_string()),
         (Some((1280, 720)), "720p".to_string()),
@@ -240,6 +246,11 @@ pub fn resolutions(screen: Option<(u32, u32)>) -> Vec<(Option<(u32, u32)>, Strin
         out.push((Some(STEAM_DECK_SCREEN), "Steam Deck".to_string()));
     }
     out.push((Some(config::FULLSCREEN), "Fullscreen".to_string()));
+    if let Some((w, h)) = current
+        && !out.iter().any(|(r, _)| *r == current)
+    {
+        out.insert(out.len() - 1, (current, format!("{w}×{h}")));
+    }
     out
 }
 
@@ -491,5 +502,16 @@ mod tests {
         assert_eq!(f.layout, Layout::Modern);
         assert_eq!(f.buttons[0], 10); // Accelerate = RT
         assert_eq!(f.buttons[4], 9); // Brake = LT
+    }
+
+    #[test]
+    fn a_saved_custom_size_gets_its_own_chip() {
+        let plain = resolutions(None, Some((1920, 1080)));
+        assert_eq!(plain.len(), 5);
+        let custom = resolutions(None, Some((2560, 1440)));
+        assert_eq!(custom.len(), 6);
+        assert_eq!(custom[4], (Some((2560, 1440)), "2560×1440".to_string()));
+        assert_eq!(custom[5].0, Some(config::FULLSCREEN));
+        assert_eq!(resolutions(None, None).len(), 5);
     }
 }

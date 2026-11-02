@@ -212,6 +212,7 @@ impl<'a> Window<'a> {
             _ => Tab::Play,
         };
 
+        let resolutions = form::resolutions(screen, form.picture.resolution);
         Self {
             checked: form.game.clone(),
             trilogy,
@@ -221,7 +222,7 @@ impl<'a> Window<'a> {
             pad: PadPoller::default(),
             machine,
             screen,
-            resolutions: form::resolutions(screen),
+            resolutions,
             controllers: detect_controllers(),
             linux,
             covers: [
@@ -255,7 +256,7 @@ impl<'a> Window<'a> {
             let mon = (monitor.x as u32, monitor.y as u32);
             if mon.0 >= 640 && mon.1 >= 480 {
                 self.screen = Some(mon);
-                self.resolutions = form::resolutions(self.screen);
+                self.resolutions = form::resolutions(self.screen, self.form.picture.resolution);
             }
         }
         let native = ctx.native_pixels_per_point().unwrap_or(1.0);

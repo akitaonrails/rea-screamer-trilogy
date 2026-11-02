@@ -336,6 +336,15 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
     runtime::check_separate(&disc.root_dir, &saves_dir)
         .map_err(|e| format!("Saves folder: {e}"))?;
 
+    let machine = MachineCapabilities::detect();
+    let mut settings = settings.clone();
+    let (race, warning) = config::fit_to_screen(settings.race_resolution(), machine.display_res);
+    if let Some(warning) = warning {
+        eprintln!("warning: {warning}");
+        settings.resolution = race;
+    }
+    let settings = &settings;
+
     let prepared =
         runtime::prepare_runtime(&disc, settings, &runtime_dir, Some(saves_dir.as_path()))?;
     let dosbox =
@@ -353,7 +362,6 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
         .arg("-conf")
         .arg(&prepared.conf_path);
 
-    let machine = MachineCapabilities::detect();
     let is_3dfx = prepared.selected_exe.eq_ignore_ascii_case("S2_3DFX.EXE")
         || prepared.selected_exe.eq_ignore_ascii_case("STRT3FX.EXE");
     let voodoo_scale = if is_3dfx && settings.race_resolution().is_some() {

@@ -6,6 +6,7 @@
 - Refuse a runtime or saves folder that lies inside the game folder (or contains it), resolving symlinks, `..` and folders that do not exist yet, before anything is written.
 - Save sync between the runtime folder and the saves folder now copies only when the other side is missing or older, so an older `CHOICE.DAT`, `.SAV` or replay never replaces a newer one.
 - Fix (Linux): `resolution = fullscreen` reached gamescope as `-w fullscreen -h fullscreen`. `screamer-play` now validates `WIDTHxHEIGHT` (any case or spacing), uses the screen size for `fullscreen` (`SCREAMER_SCREEN` overrides the xrandr probe) and keeps 1920x1080 for `original` and anything malformed.
+- Fix: a resolution above 1920x1080 (e.g. `3840x2160`) was silently turned into fullscreen when `launcher.cfg` was read. It is now kept as written and shown as its own choice in the Picture tab; only when it is larger than the screen (DOSBox cannot open such a window) does the launcher play fullscreen, with a warning.
 
 ## 0.6.0 - 2026-11-01
 
