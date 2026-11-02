@@ -329,6 +329,13 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
         .clone()
         .unwrap_or_else(|| default_saves_dir(slug));
 
+    // The launcher writes into both folders; neither may overlap the
+    // read-only game folder.
+    runtime::check_separate(&disc.root_dir, &runtime_dir)
+        .map_err(|e| format!("Runtime folder: {e}"))?;
+    runtime::check_separate(&disc.root_dir, &saves_dir)
+        .map_err(|e| format!("Saves folder: {e}"))?;
+
     let prepared =
         runtime::prepare_runtime(&disc, settings, &runtime_dir, Some(saves_dir.as_path()))?;
     let dosbox =
