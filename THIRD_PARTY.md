@@ -7,7 +7,7 @@ source. Add a row before bundling anything new.
 
 | Component | Licence | Source |
 | --- | --- | --- |
-| `rea-launcher`, `rea-launcher-ui`, `rea-launcher-win32` (Windows) from rea-launcher-sdk v0.2.0 | MIT OR Apache-2.0 | https://github.com/akitaonrails/rea-launcher-sdk/tree/v0.2.0 |
+| `rea-launcher`, `rea-launcher-ui`, `rea-launcher-win32` (Windows) from rea-launcher-sdk (the tag in `sdk/VERSION`) | MIT OR Apache-2.0 | https://github.com/akitaonrails/rea-launcher-sdk |
 | `sha2` and its RustCrypto dependencies | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | `eframe`, `egui` and their dependencies (`winit`, `glutin`, `glow`, `ab_glyph`, …): the settings window | MIT OR Apache-2.0 (dependencies: MIT, Apache-2.0, Zlib, BSD; see `cargo tree`) | https://github.com/emilk/egui |
 | `egui_kittest` (tests only, not shipped) | MIT OR Apache-2.0 | https://github.com/emilk/egui |
@@ -30,7 +30,7 @@ source. Add a row before bundling anything new.
 | --- | --- | --- |
 | The project-built `dosbox-staging` v0.82.2 executable and selected shared libraries listed above | GPL-2.0-or-later and the libraries' respective licences | recursive corresponding-source archive attached to each release |
 | AppImage runtime (added by `appimagetool`) | MIT | https://github.com/AppImage/type2-runtime |
-| `rea-play.sh` (beside `screamer-play`, also in the zip's `linux/`), vendored from rea-launcher-sdk v0.2.0 as `sdk/rea-play.sh` | MIT OR Apache-2.0 | https://github.com/akitaonrails/rea-launcher-sdk/tree/v0.2.0 |
+| `rea-play.sh` (beside `screamer-play`, also in the zip's `linux/`), vendored from rea-launcher-sdk (the tag in `sdk/VERSION`) as `sdk/rea-play.sh` | MIT OR Apache-2.0 | https://github.com/akitaonrails/rea-launcher-sdk |
 | The AppImage icon `packaging/appimage/screamer-launcher.png` | ours (MIT OR Apache-2.0), set in Barlow (OFL) | this repository |
 
 ## Settings window fonts (compiled into `screamer-launcher` through `rea-launcher-ui`)
@@ -47,7 +47,7 @@ source. Add a row before bundling anything new.
 | `crates/screamer-launcher/assets/cover_screamer2.jpg` (compiled into the launcher) | Box art of *Screamer 2* (1996) © Virgin Interactive, the publisher (developed by Milestone); the publisher's original packaging | As above (owner decision 2026-11-02) | Scan from MobyGames.com (the JPEG's comment says `MobyGames.com`) |
 | `crates/screamer-launcher/assets/cover_screamer_rally.jpg` (compiled into the launcher) | Box art of *Screamer Rally* (1997) © Virgin Interactive, the publisher (developed by Milestone); the publisher's original packaging | As above (owner decision 2026-11-02) | Believed to be a MobyGames.com scan like the other two, but this file carries no comment and its source was not recorded: to be confirmed |
 | Gameplay video and its poster, linked from the README (hosted outside the repository, at `new-uploads-akitaonrails.s3.us-east-2.amazonaws.com/2026/11/02/rea-screamer-trilogy/`) | The repository owner's recording of *Screamer* (1995) running through the launcher | Game footage © the game's rights holders; recording the owner's | Recorded by the owner |
-| `docs/screenshots/*.png` (README only, not shipped) | Screenshots of this launcher's window, which shows the box art above | Ours for the window; the box art as above | Taken from the launcher |
+| `docs/images/*.jpg` (README only, not shipped) | Screenshots of this launcher's window, which shows the box art above | Ours for the window; the box art as above | Taken from the launcher |
 
 The window shows the credit "Box art: Virgin Interactive. Scans: MobyGames" under the art.
 

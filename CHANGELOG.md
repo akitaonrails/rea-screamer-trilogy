@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Docs: the README follows the rea launcher layout: problems and fixes as a table, current screenshots (JPEG, `docs/images/`), what you need, install steps for Windows, the Steam Deck and Linux, first run, the settings window and its looks, the gamepad layout, every option with its default and effect, where things live, troubleshooting, known limitations and an uninstall that backs up the saves first. The engine and gamepad internals moved to `docs/05-launcher-in-depth.md`. `linux/README.md` has an Environment section and the one-run `--scaler`/`--resolution`.
 - CI: a weekly `sdk-update` workflow opens a pull request when rea-launcher-sdk has a new tag (the bump and its Migration items; it never merges).
 - Updated rea-launcher-sdk to v0.3.0. The game and saves folder fields are now named "Game folder" and "Saves folder" for screen readers (the hint text is their description).
 - Window: with the gamepad off, the Buttons tab's layout cards are dimmed and tell screen readers why ("Turn on Gamepad in the Controls tab first."), like the button chips below them.
