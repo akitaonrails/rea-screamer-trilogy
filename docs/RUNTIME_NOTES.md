@@ -142,3 +142,11 @@ This document records notable observations from running the original 1995–1997
   - Because the DOS game's internal SOS timer and 50-entry physics lookup table must remain at `50 Hz` (`20 ms` per frame), presentation-layer Frame Generation in `vendor/dosbox-staging/src/gui/sdlmain.cpp` (`ScreamerFrameGenState`) maintains two OpenGL textures (`GL_TEXTURE0` = current frame $F_t$, `GL_TEXTURE1` = previous frame $F_{t-1}$):
     - At `t = 0 ms` (when `update_frame_gl` receives a new 50 Hz frame from the DOS game), `present_frame_gl()` renders with `rubyFrameBlend = 0.5`, invoking a bidirectional optical-flow motion search in the fragment shader (`fsr.glsl`, `sharp.glsl`, `bilinear.glsl`) that protects static HUD/UI pixels (`|L_curr - L_prev| < 0.015`) while warping moving 3D geometry along the best-matching motion vector $\vec{v}$ with disocclusion fallback.
     - At `t = +10 ms` (checked inside `GFX_Events()` on the main thread), `present_frame_gl()` renders the exact unblended frame $F_t$ (`rubyFrameBlend = 0.0`), doubling the output frame rate from **50 FPS to 100 FPS** with zero impact on game timers or physics.
+
+---
+
+## 12. Pending Real-Game Checks (Launcher Normalisation, Unreleased)
+
+These launcher changes are covered by unit tests but have not yet been run against the real games:
+
+- **Runtime staging without links.** The runtime folder is now built from real directories with one file at a time: `.EXE`/`.COM`/`.386`/`.OVL`/`.DLL`/`.ICO`/`.PDF` files are hard-linked when the runtime shares a volume with the game folder, everything else (including `DATA/`, `GFX/`, `TABS/`) is copied, and the CD image plus the files its cue sheet names stay mounted from the source. Check on each game that a race starts, CD audio plays, `CHOICE.DAT`/replays are written in the runtime folder, and that the game folder's modification times are unchanged afterwards. If the games never write into `DATA/`, `GFX/` or `TABS/`, those could be hard-linked too to save space; that is unverified, so they are copied for now. A runtime folder made by an older launcher (symbolic links) is converted on the next launch.

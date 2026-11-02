@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fix: the runtime folder no longer symlinks files and whole directories into the user's game folder, which let the game write into it. Files are hard-linked (code and drivers only) or copied one at a time into real directories, launcher writes replace whole files, and a manifest of size and modification time brings changed source files in again while keeping the game's saves and replays. Runtime folders from older versions are converted on the next launch.
+
 ## 0.6.0 - 2026-11-01
 
 - Add optional E6 extended draw distance to the Enhanced and Steam Deck presets: managed animated objects are visible 20% farther away in Screamer, while Screamer 2 and Screamer Rally use twice the original scenery/object admission radius across all supported renderers.
