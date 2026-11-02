@@ -1,4 +1,6 @@
 mod ui;
+#[cfg(windows)]
+mod win32;
 
 use std::fs;
 use std::path::PathBuf;

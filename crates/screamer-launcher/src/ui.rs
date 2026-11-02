@@ -10,13 +10,11 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use eframe::egui::{
-    self, Align2, Color32, CornerRadius, Key, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2,
-    pos2, vec2,
-};
 use rea_launcher::pad::{self as bits, Nav, PadNav};
-use rea_launcher_ui::theme::{self, Palette, body, condensed, decal, semibold};
-use rea_launcher_ui::widgets::{self, Fade};
+use rea_launcher_ui::eframe;
+use rea_launcher_ui::egui::{self, Align2, Color32, Key, Rect, TextureHandle, Vec2, pos2, vec2};
+use rea_launcher_ui::theme::{self, Metrics, Palette, body, decal, semibold};
+use rea_launcher_ui::widgets::{self, Chip, ChipSize, Fade, GameCard, LookCard};
 use rea_launcher_ui::window::WindowFit;
 
 use screamer_launcher::config::{MachineCapabilities, RendererChoice, Settings};
@@ -26,7 +24,9 @@ use screamer_launcher::runtime::{self, DiscoveredTrilogy};
 
 const CHASSIS: Color32 = Color32::from_rgb(0x0e, 0x17, 0x2a);
 const PANEL: Color32 = Color32::from_rgb(0x16, 0x24, 0x42);
-const LINE: Color32 = Color32::from_rgb(0x28, 0x3e, 0x6b);
+/// Control borders: 3:1 against the chassis and the panel (WCAG non-text
+/// contrast); the old `#283e6b` was 1.70:1.
+const LINE: Color32 = Color32::from_rgb(0x5d, 0x6e, 0x90);
 const GOLD: Color32 = Color32::from_rgb(0xf5, 0xc4, 0x00);
 const INK: Color32 = Color32::from_rgb(0xee, 0xf2, 0xfb);
 const MUTED: Color32 = Color32::from_rgb(0x9f, 0xb0, 0xd4);
@@ -52,6 +52,25 @@ const PALETTE: Palette = Palette {
     disabled_ink: DISABLED_INK,
     disabled_line: DISABLED_LINE,
     focus: GOLD,
+    selection: theme::tint(GOLD, 128),
+};
+
+/// Screamer's widget sizes (the values its own widgets drew before the SDK
+/// had them).
+const METRICS: Metrics = Metrics {
+    chip_pad: 22.0,
+    field_width: 128.0,
+    toggle_wrap: false,
+    card: theme::CardMetrics {
+        pad: 12.0,
+        title: 20.0,
+        badge: 11.5,
+        badge_pad: 5.0,
+        badge_rise: 8.0,
+        note: 12.5,
+        note_top: 28.0,
+    },
+    ..Metrics::DEFAULT
 };
 
 const SIZE: Vec2 = vec2(form::WINDOW.0, form::WINDOW.1);
@@ -92,7 +111,7 @@ pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, Sh
     let mut opened = false;
     // Native on Linux and Windows (never Wine): created at 1x, fitted to
     // the screen and its scale on the first frame.
-    let fit = WindowFit::new(SIZE, false, None, 1.0);
+    let fit = WindowFit::new(SIZE, false, None, 1.0).with_native_fit(true);
     let options = fit.native_options("Screamer Trilogy");
     let path = settings_path.to_path_buf();
     let text = text.to_string();
@@ -101,7 +120,7 @@ pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, Sh
         options,
         Box::new(|cc| {
             opened = true;
-            theme::install(&cc.egui_ctx, &PALETTE);
+            theme::install_with(&cc.egui_ctx, &PALETTE, &METRICS);
             Ok(Box::new(Window::new(
                 &cc.egui_ctx,
                 fit,
@@ -530,51 +549,21 @@ impl Window<'_> {
         ui.label(egui::RichText::new(text).font(body(14.0)).color(color));
     }
 
-    // Not `widgets::tabs_bar`: it lays every name out in `muted`, so the
-    // current tab would lose its `ink`.
     fn tabs(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 26.0;
-            for (tab, name) in [
-                (Tab::Play, "Play"),
-                (Tab::Picture, "Picture"),
-                (Tab::Controls, "Controls"),
-                (Tab::Buttons, "Buttons"),
-            ] {
-                let on = self.tab == tab;
-                let galley = ui.painter().layout_no_wrap(
-                    name.to_string(),
-                    condensed(22.0),
-                    if on { INK } else { MUTED },
-                );
-                let (rect, resp) =
-                    ui.allocate_exact_size(galley.size() + vec2(0.0, 8.0), Sense::click());
-                let color = if on || resp.hovered() { INK } else { MUTED };
-                ui.painter().galley(rect.min, galley, color);
-                if on {
-                    let bar = Rect::from_min_size(
-                        pos2(rect.left(), rect.bottom() - 3.0),
-                        vec2(rect.width(), 3.0),
-                    );
-                    ui.painter().rect_filled(bar, 0.0, GOLD);
-                }
-                if resp
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    self.tab = tab;
-                }
-            }
-        });
-        let y = ui.cursor().top() - 4.0;
-        let r = ui.max_rect();
-        ui.painter()
-            .hline(r.left()..=r.right(), y, Stroke::new(1.0, LINE));
+        let tabs = [
+            (Tab::Play, "Play"),
+            (Tab::Picture, "Picture"),
+            (Tab::Controls, "Controls"),
+            (Tab::Buttons, "Buttons"),
+        ];
+        if widgets::tabs_bar(ui, &tabs, &mut self.tab) {
+            self.focus_row = 0;
+        }
     }
 
     fn play_tab(&mut self, ui: &mut egui::Ui) {
         let focus = self.focus_row;
-        heading_focused(ui, "Game in the trilogy", focus == 0);
+        widgets::heading_focused(ui, "Game in the trilogy", focus == 0);
         ui.add_space(2.0);
         let gap = 10.0;
         let card_w = (ui.available_width() - 2.0 * gap) / 3.0;
@@ -596,19 +585,18 @@ impl Window<'_> {
                     }
                     None => format!("{} · Not in folder", game.year()),
                 };
-                if game_card(
-                    ui,
-                    vec2(card_w, 64.0),
-                    self.form.which == game,
-                    game.short_title(),
-                    &subtitle,
+                let card = GameCard {
+                    title: game.short_title(),
+                    subtitle: &subtitle,
+                    selected: self.form.which == game,
                     installed,
-                ) {
+                };
+                if widgets::game_card(ui, vec2(card_w, 64.0), &card).clicked() {
                     chosen_game = Some(game);
                 }
             }
         });
-        draw_focus_bar(ui, r0.response.rect, focus == 0);
+        widgets::focus_bar(ui, r0.response.rect, focus == 0);
         if let Some(g) = chosen_game {
             let has_glide = self.trilogy.get(g).is_none_or(|d| d.can_use_dos_glide());
             self.form.set_which(g, has_glide, self.screen);
@@ -618,12 +606,9 @@ impl Window<'_> {
         ui.add_space(8.0);
         widgets::heading(ui, "Game or trilogy folder");
         let hint = "Folder with Screamer, Screamer 2, Screamer Rally, or all three (e.g. .../screamer/games)";
-        if folder_field(
-            ui,
-            &mut self.form.game,
-            hint,
-            "Choose your Screamer or trilogy folder",
-        ) {
+        if widgets::folder_field(ui, &mut self.form.game, hint, || {
+            pick_folder_dialog("Choose your Screamer or trilogy folder")
+        }) {
             self.error = None;
         }
 
@@ -649,7 +634,7 @@ impl Window<'_> {
         ui.label(egui::RichText::new(note).font(body(13.0)).color(color));
         ui.add_space(8.0);
 
-        heading_focused(ui, "Look", focus == 1);
+        widgets::heading_focused(ui, "Look", focus == 1);
         ui.add_space(4.0);
         let best = form::recommended(self.screen);
         let orig_title = format!("Original {}", self.form.which.year());
@@ -675,14 +660,14 @@ impl Window<'_> {
         let r1 = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             for (look, title, desc) in cards {
-                if look_card(
-                    ui,
-                    vec2(look_w, 96.0),
-                    self.form.look == look,
+                let card = LookCard {
                     title,
-                    desc,
-                    look == best,
-                ) {
+                    note: desc,
+                    selected: self.form.look == look,
+                    badge: (look == best).then_some("Recommended"),
+                    ..LookCard::default()
+                };
+                if widgets::look_card(ui, vec2(look_w, 96.0), &card).clicked() {
                     self.form.set_look(look, self.screen);
                     let has_glide = self.has_dos_glide_for_current();
                     self.form.set_which(self.form.which, has_glide, self.screen);
@@ -692,15 +677,15 @@ impl Window<'_> {
                 }
             }
         });
-        draw_focus_bar(ui, r1.response.rect, focus == 1);
+        widgets::focus_bar(ui, r1.response.rect, focus == 1);
         ui.add_space(8.0);
 
         widgets::heading(ui, "Saves");
-        folder_field(
+        widgets::folder_field(
             ui,
             &mut self.form.saves,
             "Default per-game saves folder (~/.local/share/screamer-launcher/saves)",
-            "Choose where your saves are kept",
+            || pick_folder_dialog("Choose where your saves are kept"),
         );
     }
 
@@ -715,38 +700,38 @@ impl Window<'_> {
         let row =
             |ui: &mut egui::Ui, focused: bool, name: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
                 let resp = ui.horizontal_top(|ui| {
-                    field_focused(ui, name, focused);
+                    widgets::field_focused(ui, name, focused);
                     ui.vertical(|ui| add(ui));
                 });
-                draw_focus_bar(ui, resp.response.rect, focused);
+                widgets::focus_bar(ui, resp.response.rect, focused);
             };
 
         row(ui, focus == 0, "Renderer", &mut |ui| {
-            let opts: Vec<(RendererChoice, &str, Option<&str>)> = RendererChoice::ALL
+            let opts: Vec<Chip<'_, RendererChoice>> = RendererChoice::ALL
                 .into_iter()
-                .map(|r| (r, r.label(), r.disabled_reason(which, has_glide)))
+                .map(|r| Chip::new(r, r.label()).disabled(r.disabled_reason(which, has_glide)))
                 .collect();
-            chips_with_disabled(ui, &opts, &mut p.renderer);
+            widgets::chips_with(ui, &opts, &mut p.renderer);
         });
 
         row(ui, focus == 1, "Display", &mut |ui| {
-            chips(ui, resolutions, &mut p.resolution);
+            widgets::chips(ui, resolutions, &mut p.resolution, None);
         });
 
         row(ui, focus == 2, "Shader / Upscaler", &mut |ui| {
-            chips(ui, &form::FILTERS, &mut p.texture_filter);
+            widgets::chips(ui, &form::FILTERS, &mut p.texture_filter, None);
         });
 
         row(ui, focus == 3, "Frame rate", &mut |ui| {
-            chips(ui, &form::FRAME_RATES, &mut p.fps_limit);
+            widgets::chips(ui, &form::FRAME_RATES, &mut p.fps_limit, None);
         });
 
         row(ui, focus == 4, "Vsync", &mut |ui| {
-            chips(ui, &form::VSYNCS, &mut p.vsync);
+            widgets::chips(ui, &form::VSYNCS, &mut p.vsync, None);
         });
 
         row(ui, focus == 5, "", &mut |ui| {
-            toggle(
+            widgets::toggle(
                 ui,
                 &mut p.widescreen,
                 "Widescreen: 16:9 Hor+ 3D camera FOV (shows more to the sides)",
@@ -755,7 +740,7 @@ impl Window<'_> {
         });
 
         row(ui, focus == 6, "", &mut |ui| {
-            toggle(
+            widgets::toggle(
                 ui,
                 &mut p.extended_draw_distance,
                 "Extended draw distance: reduce scenery and animated-object pop-in",
@@ -790,38 +775,35 @@ impl Window<'_> {
     fn controls_tab(&mut self, ui: &mut egui::Ui) {
         let focus = self.focus_row;
         let r0 = ui.horizontal_top(|ui| {
-            toggle(
+            widgets::toggle(
                 ui,
                 &mut self.form.gamepad_axes,
                 "Gamepad: proportional analog steering, L2/R2 trigger pedals, D-pad menus",
                 None,
             );
         });
-        draw_focus_bar(ui, r0.response.rect, focus == 0);
+        widgets::focus_bar(ui, r0.response.rect, focus == 0);
         ui.add_space(6.0);
 
         let pad_off_reason = (!self.form.gamepad_axes)
             .then_some("Turn on Gamepad above to configure steering deadzone and rumble.");
 
         let r1 = ui.horizontal_top(|ui| {
-            field_focused(ui, "Deadzone", focus == 1);
-            let opts: Vec<_> = form::DEADZONES
-                .into_iter()
-                .map(|(dz, label)| (dz, label, pad_off_reason))
-                .collect();
-            chips_with_disabled(ui, &opts, &mut self.form.deadzone);
+            widgets::field_focused(ui, "Deadzone", focus == 1);
+            widgets::chips(
+                ui,
+                &form::DEADZONES,
+                &mut self.form.deadzone,
+                pad_off_reason,
+            );
         });
-        draw_focus_bar(ui, r1.response.rect, focus == 1);
+        widgets::focus_bar(ui, r1.response.rect, focus == 1);
 
         let r2 = ui.horizontal_top(|ui| {
-            field_focused(ui, "Rumble", focus == 2);
-            let opts: Vec<_> = form::RUMBLES
-                .into_iter()
-                .map(|(r, label)| (r, label, pad_off_reason))
-                .collect();
-            chips_with_disabled(ui, &opts, &mut self.form.rumble);
+            widgets::field_focused(ui, "Rumble", focus == 2);
+            widgets::chips(ui, &form::RUMBLES, &mut self.form.rumble, pad_off_reason);
         });
-        draw_focus_bar(ui, r2.response.rect, focus == 2);
+        widgets::focus_bar(ui, r2.response.rect, focus == 2);
 
         ui.add_space(8.0);
         let pad_status = if self.controllers.is_empty() {
@@ -875,20 +857,20 @@ impl Window<'_> {
         let r0 = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             for (layout, title, note, recommended) in cards {
-                if look_card(
-                    ui,
-                    vec2(w, 68.0),
-                    self.form.layout == layout,
+                let card = LookCard {
                     title,
                     note,
-                    recommended,
-                ) && self.form.gamepad_axes
+                    selected: self.form.layout == layout,
+                    badge: recommended.then_some("Recommended"),
+                    ..LookCard::default()
+                };
+                if widgets::look_card(ui, vec2(w, 68.0), &card).clicked() && self.form.gamepad_axes
                 {
                     self.form.set_layout(layout);
                 }
             }
         });
-        draw_focus_bar(ui, r0.response.rect, focus == 0);
+        widgets::focus_bar(ui, r0.response.rect, focus == 0);
         ui.label(
             egui::RichText::new(
                 "RT/LT (R2/L2) analog triggers & A/X buttons work together in Modern mode. D-pad / Left Stick navigate menus.",
@@ -899,21 +881,21 @@ impl Window<'_> {
         ui.spacing_mut().item_spacing.y = 4.0;
         let pad_off_reason =
             (!self.form.gamepad_axes).then_some("Turn on Gamepad in the Controls tab first.");
-        let options: Vec<_> = form::PAD_BUTTONS
+        let options: Vec<Chip<'_, u8>> = form::PAD_BUTTONS
             .iter()
-            .map(|&(b, l)| (b, l, pad_off_reason))
+            .map(|&(b, l)| Chip::new(b, l).disabled(pad_off_reason))
             .collect();
         for (row_idx, (k, name)) in form::ACTIONS.into_iter().enumerate() {
             let row_focused = focus == row_idx + 1;
             let r = ui.horizontal_top(|ui| {
-                field_focused(ui, name, row_focused);
+                widgets::field_focused(ui, name, row_focused);
                 let mut button = self.form.pad_button(k);
-                chips_compact_with_disabled(ui, &options, &mut button);
+                widgets::chips_sized(ui, &options, &mut button, ChipSize::Compact);
                 if self.form.gamepad_axes {
                     self.form.set_pad_button(k, button);
                 }
             });
-            draw_focus_bar(ui, r.response.rect, row_focused);
+            widgets::focus_bar(ui, r.response.rect, row_focused);
         }
     }
 
@@ -1212,72 +1194,36 @@ impl PadPoller {
     }
 }
 
-#[cfg(target_os = "windows")]
-#[repr(C)]
-struct JoyInfoEx {
-    dw_size: u32,
-    dw_flags: u32,
-    dw_xpos: u32,
-    dw_ypos: u32,
-    dw_zpos: u32,
-    dw_rpos: u32,
-    dw_upos: u32,
-    dw_vpos: u32,
-    dw_buttons: u32,
-    dw_button_number: u32,
-    dw_pov: u32,
-    dw_reserved1: u32,
-    dw_reserved2: u32,
-}
-
-#[cfg(target_os = "windows")]
-#[link(name = "winmm")]
-unsafe extern "system" {
-    fn joyGetPosEx(u_joy_id: u32, pji: *mut JoyInfoEx) -> u32;
-}
-
+/// One WinMM joystick's state as XInput bits. WinMM (not XInput) because
+/// it also sees DirectInput/HID pads, which DOSBox (SDL) drives in the game.
 #[cfg(target_os = "windows")]
 fn win32_joy_poll(idx: u32) -> Option<u16> {
-    const JOY_RETURNALL: u32 = 0x0000_00FF;
-    let mut info = JoyInfoEx {
-        dw_size: std::mem::size_of::<JoyInfoEx>() as u32,
-        dw_flags: JOY_RETURNALL,
-        dw_xpos: 32767,
-        dw_ypos: 32767,
-        dw_zpos: 32767,
-        dw_rpos: 32767,
-        dw_upos: 32767,
-        dw_vpos: 32767,
-        dw_buttons: 0,
-        dw_button_number: 0,
-        dw_pov: 0xFFFF,
-        dw_reserved1: 0,
-        dw_reserved2: 0,
-    };
-    if unsafe { joyGetPosEx(idx, &mut info) } != 0 {
-        return None;
-    }
+    crate::win32::joystick(idx).map(|j| joy_mask(j.buttons, j.x, j.y, j.pov))
+}
+
+/// WinMM buttons, stick (0–65535, centre 32767) and POV hat (hundredths
+/// of a degree, 0xFFFF centred) as XInput bits.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn joy_mask(buttons: u32, x: u32, y: u32, pov: u32) -> u16 {
     let mut m = 0u16;
     for (button, bit) in PAD_BUTTON_BITS {
-        if info.dw_buttons & (1 << button) != 0 {
+        if buttons & (1 << button) != 0 {
             m |= bit;
         }
     }
-    if info.dw_ypos < 16384
-        || (info.dw_pov <= 4500 || (info.dw_pov >= 31500 && info.dw_pov < 36000))
-    {
+    if y < 16384 || (pov <= 4500 || (31500..36000).contains(&pov)) {
         m |= bits::DPAD_UP;
     }
-    if info.dw_ypos > 49152 || (info.dw_pov >= 13500 && info.dw_pov <= 22500) {
+    if y > 49152 || (13500..=22500).contains(&pov) {
         m |= bits::DPAD_DOWN;
     }
-    if info.dw_xpos < 16384 || (info.dw_pov >= 22500 && info.dw_pov <= 31500) {
+    if x < 16384 || (22500..=31500).contains(&pov) {
         m |= bits::DPAD_LEFT;
     }
-    if info.dw_xpos > 49152 || (info.dw_pov >= 4500 && info.dw_pov <= 13500) {
+    if x > 49152 || (4500..=13500).contains(&pov) {
         m |= bits::DPAD_RIGHT;
     }
-    Some(m)
+    m
 }
 
 /// Joystick buttons (Linux `js` numbers, WinMM bits: an Xbox-style pad's
@@ -1331,340 +1277,32 @@ impl RoleLabel for screamer_launcher::edition::Edition {
     }
 }
 
-fn heading_focused(ui: &mut egui::Ui, text: &str, focused: bool) {
-    ui.label(
-        egui::RichText::new(text)
-            .font(semibold(14.0))
-            .color(if focused { GOLD } else { MUTED }),
-    );
-}
-
-fn field_focused(ui: &mut egui::Ui, text: &str, focused: bool) {
-    let (rect, _) = ui.allocate_exact_size(vec2(128.0, 30.0), Sense::hover());
-    ui.painter().text(
-        rect.left_center(),
-        Align2::LEFT_CENTER,
-        text,
-        body(15.0),
-        if focused { GOLD } else { INK },
-    );
-}
-
-fn draw_focus_bar(ui: &egui::Ui, rect: Rect, focused: bool) {
-    if focused {
-        let bar = Rect::from_min_size(
-            pos2(rect.left() - 8.0, rect.top() + 2.0),
-            vec2(3.0, (rect.height() - 4.0).max(8.0)),
-        );
-        ui.painter().rect_filled(bar, CornerRadius::same(1), GOLD);
-    }
-}
-
-fn folder_field(ui: &mut egui::Ui, value: &mut String, hint: &str, title: &str) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        let w = ui.available_width() - 100.0;
-        let edit = egui::TextEdit::singleline(value)
-            .hint_text(egui::RichText::new(hint).color(MUTED))
-            .font(body(15.0))
-            .margin(vec2(10.0, 8.0))
-            .desired_width(w);
-        changed |= ui.add(edit).changed();
-        if outline_button(ui, "Browse…").clicked()
-            && let Some(dir) = pick_folder_dialog(title)
-        {
-            *value = dir.display().to_string();
-            changed = true;
-        }
-    });
-    changed
-}
-
-fn outline_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(92.0, 34.0), Sense::click());
-    let hover = resp.hovered();
-    ui.painter().rect(
-        rect,
-        CornerRadius::same(6),
-        if hover { LINE } else { Color32::TRANSPARENT },
-        Stroke::new(1.5, GOLD),
-        StrokeKind::Inside,
-    );
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        text,
-        semibold(15.0),
-        GOLD,
-    );
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
-fn chips<T: PartialEq + Copy, S: AsRef<str>>(
-    ui: &mut egui::Ui,
-    options: &[(T, S)],
-    current: &mut T,
-) {
-    let mapped: Vec<(T, &str, Option<&str>)> = options
-        .iter()
-        .map(|(v, s)| (*v, s.as_ref(), None))
-        .collect();
-    chips_with_disabled(ui, &mapped, current);
-}
-
-/// Renders a horizontal row of choice chips where options with `Some(reason)`
-/// are visibly grayed out (disabled) and explain why on hover.
-fn chips_with_disabled<T: PartialEq + Copy>(
-    ui: &mut egui::Ui,
-    options: &[(T, &str, Option<&str>)],
-    current: &mut T,
-) {
-    chips_styled_with_disabled(ui, options, current, 22.0, 6.0);
-}
-
-fn chips_compact_with_disabled<T: PartialEq + Copy>(
-    ui: &mut egui::Ui,
-    options: &[(T, &str, Option<&str>)],
-    current: &mut T,
-) {
-    chips_styled_with_disabled(ui, options, current, 14.0, 5.0);
-}
-
-fn chips_styled_with_disabled<T: PartialEq + Copy>(
-    ui: &mut egui::Ui,
-    options: &[(T, &str, Option<&str>)],
-    current: &mut T,
-    pad_x: f32,
-    gap_x: f32,
-) {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = gap_x;
-        for &(value, label, disabled_reason) in options {
-            let enabled = disabled_reason.is_none();
-            let on = enabled && *current == value;
-            let text_color = if !enabled {
-                DISABLED_INK
-            } else if on {
-                ON_GOLD
-            } else {
-                INK
-            };
-            let galley = ui.painter().layout_no_wrap(
-                label.to_string(),
-                if on { semibold(14.0) } else { body(14.0) },
-                text_color,
-            );
-            let size = vec2(galley.size().x + pad_x, 30.0);
-            let sense = if enabled {
-                Sense::click()
-            } else {
-                Sense::hover()
-            };
-            let (rect, resp) = ui.allocate_exact_size(size, sense);
-            let fill = if !enabled {
-                Color32::TRANSPARENT
-            } else if on {
-                GOLD
-            } else if resp.hovered() {
-                LINE
-            } else {
-                Color32::TRANSPARENT
-            };
-            let border = if !enabled {
-                DISABLED_LINE
-            } else if on {
-                GOLD
-            } else {
-                LINE
-            };
-            ui.painter().rect(
-                rect,
-                CornerRadius::same(6),
-                fill,
-                Stroke::new(1.0, border),
-                StrokeKind::Inside,
-            );
-            let at = rect.center() - galley.size() / 2.0;
-            ui.painter().galley(at, galley, text_color);
-
-            if let Some(why) = disabled_reason {
-                resp.on_hover_text(why);
-            } else if resp
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-            {
-                *current = value;
-            }
-        }
-    });
-}
-
-fn toggle(ui: &mut egui::Ui, on: &mut bool, text: &str, disabled_reason: Option<&str>) {
-    let enabled = disabled_reason.is_none();
-    let label_color = if enabled { INK } else { DISABLED_INK };
-    let galley = ui
-        .painter()
-        .layout_no_wrap(text.to_string(), body(15.0), label_color);
-    let size = vec2(46.0 + 12.0 + galley.size().x, 30.0);
-    let sense = if enabled {
-        Sense::click()
-    } else {
-        Sense::hover()
-    };
-    let (rect, resp) = ui.allocate_exact_size(size, sense);
-    if enabled && resp.clicked() {
-        *on = !*on;
-    }
-    let active = enabled && *on;
-    let t = ui.ctx().animate_bool(resp.id, active);
-    let track = Rect::from_min_size(pos2(rect.left(), rect.center().y - 13.0), vec2(46.0, 26.0));
-    let p = ui.painter();
-    p.rect(
-        track,
-        CornerRadius::same(13),
-        if active { GOLD } else { Color32::TRANSPARENT },
-        Stroke::new(
-            1.5,
-            if !enabled {
-                DISABLED_LINE
-            } else if active {
-                GOLD
-            } else {
-                MUTED
-            },
-        ),
-        StrokeKind::Inside,
-    );
-    let x = egui::lerp(track.left() + 13.0..=track.right() - 13.0, t);
-    p.circle_filled(
-        pos2(x, track.center().y),
-        9.0,
-        if !enabled {
-            DISABLED_INK
-        } else if active {
-            ON_GOLD
-        } else {
-            MUTED
-        },
-    );
-    p.galley(
-        pos2(
-            track.right() + 12.0,
-            rect.center().y - galley.size().y / 2.0,
-        ),
-        galley,
-        label_color,
-    );
-    if let Some(why) = disabled_reason {
-        resp.on_hover_text(why);
-    } else {
-        resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-    }
-}
-
-fn game_card(
-    ui: &mut egui::Ui,
-    size: Vec2,
-    on: bool,
-    title: &str,
-    subtitle: &str,
-    installed: bool,
-) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let p = ui.painter();
-    let fill = if on {
-        PANEL
-    } else if resp.hovered() {
-        PANEL.gamma_multiply(0.6)
-    } else {
-        Color32::TRANSPARENT
-    };
-    p.rect(
-        rect,
-        CornerRadius::same(8),
-        fill,
-        Stroke::new(if on { 2.0 } else { 1.0 }, if on { GOLD } else { LINE }),
-        StrokeKind::Inside,
-    );
-    let pad = 12.0;
-    p.text(
-        rect.left_top() + vec2(pad, 10.0),
-        Align2::LEFT_TOP,
-        title,
-        condensed(20.0),
-        if on { GOLD } else { INK },
-    );
-    let dot_color = if installed { GOLD } else { DISABLED_INK };
-    p.circle_filled(pos2(rect.right() - pad, rect.top() + 18.0), 4.0, dot_color);
-    p.text(
-        rect.left_top() + vec2(pad, 36.0),
-        Align2::LEFT_TOP,
-        subtitle,
-        body(12.5),
-        if installed { MUTED } else { DISABLED_INK },
-    );
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-}
-
-fn look_card(
-    ui: &mut egui::Ui,
-    size: Vec2,
-    on: bool,
-    title: &str,
-    note: &str,
-    recommended: bool,
-) -> bool {
-    let w = size.x;
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let p = ui.painter();
-    let fill = if on {
-        PANEL
-    } else if resp.hovered() {
-        PANEL.gamma_multiply(0.6)
-    } else {
-        Color32::TRANSPARENT
-    };
-    p.rect(
-        rect,
-        CornerRadius::same(8),
-        fill,
-        Stroke::new(if on { 2.0 } else { 1.0 }, if on { GOLD } else { LINE }),
-        StrokeKind::Inside,
-    );
-    let pad = 12.0;
-    p.text(
-        rect.left_top() + vec2(pad, pad - 2.0),
-        Align2::LEFT_TOP,
-        title,
-        condensed(20.0),
-        if on { GOLD } else { INK },
-    );
-    if recommended {
-        let galley = p.layout_no_wrap("Recommended".into(), semibold(11.5), ON_GOLD);
-        let tab = Rect::from_min_size(
-            pos2(
-                rect.right() - pad - galley.size().x - 10.0,
-                rect.top() - 8.0,
-            ),
-            galley.size() + vec2(10.0, 2.0),
-        );
-        p.rect_filled(tab, CornerRadius::same(4), GOLD);
-        p.galley(tab.min + vec2(5.0, 1.0), galley, ON_GOLD);
-    }
-    let galley = p.layout(note.to_string(), body(12.5), MUTED, w - 2.0 * pad);
-    p.galley(rect.left_top() + vec2(pad, pad + 28.0), galley, MUTED);
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn the_palette_keeps_its_contrast() {
-        assert_eq!(PALETTE.contrast_problems(), Vec::<String>::new());
+        assert_eq!(
+            theme::contrast_problems(&PALETTE, &METRICS),
+            Vec::<String>::new()
+        );
+        assert_eq!(theme::text_size_problems(&METRICS), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_winmm_joystick_becomes_xinput_bits() {
+        let centre = 32767;
+        assert_eq!(joy_mask(0, centre, centre, 0xFFFF), 0);
+        assert_eq!(
+            joy_mask(1 | 1 << 7, centre, 0, 0xFFFF),
+            bits::A | bits::START | bits::DPAD_UP
+        );
+        assert_eq!(joy_mask(0, centre, centre, 9000), bits::DPAD_RIGHT);
+        assert_eq!(
+            joy_mask(0, 65535, centre, 18000),
+            bits::DPAD_RIGHT | bits::DPAD_DOWN
+        );
     }
 
     #[test]

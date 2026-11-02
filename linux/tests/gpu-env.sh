@@ -8,7 +8,7 @@ T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 export HOME=$T
 
 fake_nv_lib() { [ -n "${NV_LIB:-}" ]; }
-SCREAMER_PLAY_DIR=$HERE/.. SCREAMER_PLAY_FUNCTIONS_ONLY=1 . "$HERE/../screamer-play"
+REA_FUNCTIONS_ONLY=1 REA_PLAY_HERE=$HERE/.. . "$HERE/../screamer-play"
 REA_TEST=1 REA_NV_LIB_CHECK=fake_nv_lib
 
 # gpu <tree> <card> <vendor> <driver> <boot_vga> [vram]

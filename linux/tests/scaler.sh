@@ -15,7 +15,7 @@ chmod +x "$T/ScreamerLauncher"
 fake_gs() { return 0; }
 fake_launch() { echo "$*" > "$T/ran"; }
 SCREAMER_SCREEN=2560x1600 SCREAMER_LAUNCHER=$T/ScreamerLauncher \
-  SCREAMER_PLAY_DIR=$HERE/.. SCREAMER_PLAY_FUNCTIONS_ONLY=1 . "$HERE/../screamer-play"
+  REA_FUNCTIONS_ONLY=1 REA_PLAY_HERE=$HERE/.. . "$HERE/../screamer-play"
 REA_TEST=1 REA_GAMESCOPE_CHECK=fake_gs REA_LAUNCH_CMD=fake_launch REA_SYSFS=$T/nosys
 REA_GPU=
 fails=0

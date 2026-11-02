@@ -21,8 +21,9 @@
 #   SCREAMER_SCREEN     WIDTHxHEIGHT for "resolution = fullscreen" (default:
 #                       the current mode from xrandr, else 1920x1080)
 set -u
-# SCREAMER_PLAY_DIR: this script's folder, for tests that source it.
-_here=${SCREAMER_PLAY_DIR:-$(dirname "$(readlink -f "$0")")}
+_fonly=${REA_FUNCTIONS_ONLY:-}
+_here=$(dirname "$(readlink -f "$0")")
+[ "$_fonly" = 1 ] && [ -n "${REA_PLAY_HERE:-}" ] && _here=$REA_PLAY_HERE
 if [ -f "$_here/rea-play.sh" ]; then
   . "$_here/rea-play.sh"
 elif [ -f "$_here/../sdk/rea-play.sh" ]; then
@@ -31,6 +32,7 @@ else
   echo "rea-play.sh not found next to $0 or in ../sdk (run scripts/sdk-sync)" >&2
   exit 1
 fi
+REA_HERE=$_here REA_NAME=screamer-play
 
 REA_MODE=native
 REA_APP=screamer-launcher
@@ -66,5 +68,5 @@ rea_hook_command() {
 }
 
 rea_init || exit 1
-[ -n "${SCREAMER_PLAY_FUNCTIONS_ONLY:-}" ] && return 0
+[ "$_fonly" = 1 ] && return 0
 rea_main "$@"

@@ -22,7 +22,7 @@ cleanup() {
   rm -rf "$T"
 }
 trap cleanup EXIT HUP INT TERM
-SCREAMER_PLAY_DIR=$HERE/.. SCREAMER_PLAY_FUNCTIONS_ONLY=1 . "$HERE/../screamer-play"
+REA_FUNCTIONS_ONLY=1 REA_PLAY_HERE=$HERE/.. . "$HERE/../screamer-play"
 fails=0
 ok() { echo "ok   $1"; }
 fail() { echo "FAIL $1"; fails=$((fails + 1)); }
@@ -116,7 +116,7 @@ done
 # Passing anything else on without a launcher is a clear error, not
 # `exec ""`.
 mkdir -p "$T/alone/bin"; cp "$HERE/../screamer-play" "$HERE/../../sdk/rea-play.sh" "$T/alone/bin/"
-out=$(env -u SCREAMER_PLAY_FUNCTIONS_ONLY -u SCREAMER_PLAY_DIR sh "$T/alone/bin/screamer-play" --check 2>&1); rc=$?
+out=$(env -u REA_FUNCTIONS_ONLY -u REA_PLAY_HERE sh "$T/alone/bin/screamer-play" --check 2>&1); rc=$?
 case "$rc:$out" in
   1:*"ScreamerLauncher not found"*) ok "missing launcher is reported" ;;
   *) fail "missing launcher gave $rc: $out" ;;

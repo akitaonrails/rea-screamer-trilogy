@@ -12,9 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 rea-launcher.workspace = true
-# The settings window; it turns on eframe's x11/wayland backends on Linux.
 rea-launcher-ui.workspace = true
-eframe = { version = "0.37", default-features = false, features = ["glow"] }
 
 [target.'cfg(windows)'.dependencies]
 rea-launcher-win32.workspace = true

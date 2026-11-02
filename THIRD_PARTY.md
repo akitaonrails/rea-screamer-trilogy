@@ -7,7 +7,7 @@ source. Add a row before bundling anything new.
 
 | Component | Licence | Source |
 | --- | --- | --- |
-| `rea-launcher`, `rea-launcher-ui`, `rea-launcher-win32` (Windows) from rea-launcher-sdk v0.1.0 | MIT OR Apache-2.0 | https://github.com/akitaonrails/rea-launcher-sdk/tree/v0.1.0 |
+| `rea-launcher`, `rea-launcher-ui`, `rea-launcher-win32` (Windows) from rea-launcher-sdk v0.2.0 | MIT OR Apache-2.0 | https://github.com/akitaonrails/rea-launcher-sdk/tree/v0.2.0 |
 | `sha2` and its RustCrypto dependencies | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | `eframe`, `egui` and their dependencies (`winit`, `glutin`, `glow`, `ab_glyph`, …): the settings window | MIT OR Apache-2.0 (dependencies: MIT, Apache-2.0, Zlib, BSD; see `cargo tree`) | https://github.com/emilk/egui |
 | `jpeg-decoder` | MIT OR Apache-2.0 | https://github.com/image-rs/jpeg-decoder |
@@ -29,7 +29,7 @@ source. Add a row before bundling anything new.
 | --- | --- | --- |
 | The project-built `dosbox-staging` v0.82.2 executable and selected shared libraries listed above | GPL-2.0-or-later and the libraries' respective licences | recursive corresponding-source archive attached to each release |
 | AppImage runtime (added by `appimagetool`) | MIT | https://github.com/AppImage/type2-runtime |
-| `rea-play.sh` (beside `screamer-play`, also in the zip's `linux/`), vendored from rea-launcher-sdk v0.1.0 as `sdk/rea-play.sh` | MIT OR Apache-2.0 | https://github.com/akitaonrails/rea-launcher-sdk/tree/v0.1.0 |
+| `rea-play.sh` (beside `screamer-play`, also in the zip's `linux/`), vendored from rea-launcher-sdk v0.2.0 as `sdk/rea-play.sh` | MIT OR Apache-2.0 | https://github.com/akitaonrails/rea-launcher-sdk/tree/v0.2.0 |
 | The AppImage icon `packaging/appimage/screamer-launcher.png` | ours (MIT OR Apache-2.0), set in Barlow (OFL) | this repository |
 
 ## Settings window fonts (compiled into `screamer-launcher` through `rea-launcher-ui`)
