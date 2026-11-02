@@ -712,10 +712,21 @@ fn native(root: &Path, rel: &str) -> PathBuf {
         .fold(root.to_path_buf(), |p, part| p.join(part))
 }
 
+/// Lets the owner write `path`: the owner write bit on Unix (not
+/// `set_readonly(false)`, which would make it writable by everyone), the
+/// read-only attribute cleared on Windows.
 fn make_writable(path: &Path) -> io::Result<()> {
     let mut perm = fs::metadata(path)?.permissions();
-    #[allow(clippy::permissions_set_readonly_false)]
-    perm.set_readonly(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        perm.set_mode(perm.mode() | 0o200);
+    }
+    #[cfg(not(unix))]
+    {
+        #[allow(clippy::permissions_set_readonly_false)]
+        perm.set_readonly(false);
+    }
     fs::set_permissions(path, perm)
 }
 
@@ -764,10 +775,9 @@ fn bring_over(from: &Path, to: &Path, rel: &str, stamp: Stamp) -> io::Result<boo
         fs::create_dir_all(dir)?;
     }
     remove_file(to)?;
-    // On Windows a read-only original would have to lose its read-only
-    // attribute to be replaced later, so such files are copied instead.
-    let linkable = is_static(rel)
-        && !(cfg!(windows) && fs::metadata(from).is_ok_and(|m| m.permissions().readonly()));
+    // A read-only original is copied: the link would share its read-only
+    // state, and making it writable later would change the user's file.
+    let linkable = is_static(rel) && fs::metadata(from).is_ok_and(|m| !m.permissions().readonly());
     // A hard link to a symbolic link would be the link itself (dangling
     // when relative); link the file it points to.
     if linkable
@@ -1491,6 +1501,43 @@ mod tests {
         assert_eq!(fs::read(&dst).unwrap().len(), 200_000);
 
         for d in [game, rt, outside] {
+            fs::remove_dir_all(d).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copies_get_only_the_owner_write_bit_and_read_only_files_are_not_linked() {
+        use std::os::unix::fs::PermissionsExt;
+        let game = temp("perm-game");
+        let rt = temp("perm-rt");
+        make_game(&game);
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        fs::set_permissions(
+            game.join("DATA/track.dat"),
+            fs::Permissions::from_mode(0o640),
+        )
+        .unwrap();
+        fs::set_permissions(game.join("DOS4GW.EXE"), fs::Permissions::from_mode(0o444)).unwrap();
+        fs::set_permissions(
+            game.join("CONFIG/CHOICE.DAT"),
+            fs::Permissions::from_mode(0o400),
+        )
+        .unwrap();
+
+        let (_, linked) = stage_source_tree(&game, &rt, None).unwrap();
+        assert_eq!(linked, 0, "the read-only extender is copied, not linked");
+        assert_eq!(mode(&rt.join("DATA/TRACK.DAT")), 0o640);
+        assert_eq!(mode(&rt.join("DOS4GW.EXE")), 0o644);
+        assert_eq!(mode(&rt.join("CONFIG/CHOICE.DAT")), 0o600);
+        assert_eq!(
+            mode(&game.join("DOS4GW.EXE")),
+            0o444,
+            "the original is untouched"
+        );
+
+        for d in [game, rt] {
+            fs::set_permissions(&d, fs::Permissions::from_mode(0o755)).unwrap();
             fs::remove_dir_all(d).unwrap();
         }
     }
