@@ -72,10 +72,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(msg) => {
-            log().error(&msg);
-            if INTERACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
-                show_error(&msg);
-            }
+            report_error(&msg, INTERACTIVE.load(std::sync::atomic::Ordering::Relaxed));
             ExitCode::from(2)
         }
     }
@@ -92,17 +89,25 @@ fn warn(message: &str) {
     log().warn(message);
 }
 
-/// On Windows the launcher is often started without a console: show fatal
-/// errors of an interactive launch in a message box as well.
-#[cfg(windows)]
-fn show_error(msg: &str) {
-    use rea_launcher_win32::dialog::{self, Icon};
-    let text = format!("{msg}\n\nDetails: {}", log().path().display());
-    dialog::message("Screamer Trilogy", &text, Icon::Error);
+/// A fatal error: always in `launcher.log`; on Windows through the SDK's
+/// `report` (printed when there is a console or a redirect, and a message
+/// box when a person started the launcher the interactive way); on Linux
+/// on stderr, which is the terminal or `screamer-play`'s log.
+fn report_error(msg: &str, interactive: bool) {
+    let log = log();
+    log.line(&format!("error: {msg}"));
+    #[cfg(windows)]
+    {
+        use rea_launcher_win32::report::{self, Mode};
+        let text = format!("{msg}\n\nDetails: {}", log.path().display());
+        report::fatal(ui::TITLE, &text, Mode::Play { interactive });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = interactive;
+        eprintln!("{msg}");
+    }
 }
-
-#[cfg(not(windows))]
-fn show_error(_msg: &str) {}
 
 fn run() -> Result<ExitCode, String> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();

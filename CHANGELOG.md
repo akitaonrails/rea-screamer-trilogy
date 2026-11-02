@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Errors: a fatal error goes through the SDK's `report` on Windows: in `launcher.log`, printed when there is a console or a redirect, and in a message box when the launcher was started the interactive way (the settings window, then the game), also when its output is captured in a log. On Linux it is printed to stderr (the terminal or `screamer-play`'s log) and written to `launcher.log`.
 - Updated rea-launcher-sdk to v0.3.2. On Linux, `screamer-play --scaler=pixel` style flags now reach the launcher as `--scaler pixel`.
 - Docs: the README follows the rea launcher layout: problems and fixes as a table, current screenshots (JPEG, `docs/images/`), what you need, install steps for Windows, the Steam Deck and Linux, first run, the settings window and its looks, the gamepad layout, every option with its default and effect, where things live, troubleshooting, known limitations and an uninstall that backs up the saves first. The engine and gamepad internals moved to `docs/05-launcher-in-depth.md`. `linux/README.md` has an Environment section and the one-run `--scaler`/`--resolution`.
 - CI: a weekly `sdk-update` workflow opens a pull request when rea-launcher-sdk has a new tag (the bump and its Migration items; it never merges).
