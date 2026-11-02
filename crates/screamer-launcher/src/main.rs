@@ -1,6 +1,7 @@
 mod ui;
 
 use std::fs;
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
@@ -16,15 +17,78 @@ enum Mode {
     Controllers { seconds: u32 },
 }
 
+/// `--settings` exit code: the window was closed without playing.
+const WINDOW_CLOSED: u8 = 3;
+/// `--settings` exit code: no window could be made; play with the saved
+/// settings (screamer-play treats it like Play).
+const WINDOW_UNAVAILABLE: u8 = 4;
+/// `launcher.log` is started afresh once it grows past this size.
+const LOG_LIMIT: u64 = 1 << 20;
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(msg) => {
             eprintln!("{msg}");
+            log_line(&format!("error: {msg}"));
+            show_error(&msg);
             ExitCode::from(2)
         }
     }
 }
+
+/// `launcher.log`, next to `launcher.cfg`.
+fn log_path() -> PathBuf {
+    locate_config_file().with_file_name("launcher.log")
+}
+
+/// Appends a line to `launcher.log`; logging never fails the launch.
+fn log_line(line: &str) {
+    append_log(&log_path(), line);
+}
+
+fn append_log(path: &std::path::Path, line: &str) {
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let fresh = fs::metadata(path).is_ok_and(|m| m.len() > LOG_LIMIT);
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(!fresh)
+        .truncate(fresh)
+        .open(path)
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+/// Logs and prints a warning.
+fn warn(message: &str) {
+    eprintln!("warning: {message}");
+    log_line(&format!("warning: {message}"));
+}
+
+/// On Windows the launcher is often started without a console: show fatal
+/// errors in a message box as well.
+#[cfg(windows)]
+fn show_error(msg: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let text = format!("{msg}\n\nDetails: {}", log_path().display());
+    // SAFETY: both strings are NUL-terminated UTF-16 that outlive the call.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            wide(&text).as_ptr(),
+            wide("Screamer Trilogy").as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn show_error(_msg: &str) {}
 
 fn run() -> Result<ExitCode, String> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
@@ -58,7 +122,7 @@ fn run() -> Result<ExitCode, String> {
 
     let (file_settings, warnings) = Settings::parse_file(&cfg_text);
     for w in warnings {
-        eprintln!("warning: {w}");
+        warn(&w);
     }
     let mut settings = file_settings.merged(cli_settings.clone());
     if settings.game.is_none()
@@ -71,19 +135,33 @@ fn run() -> Result<ExitCode, String> {
     match mode {
         Mode::Check => run_check(&settings, cli_settings.which),
         Mode::Controllers { seconds } => run_controllers(seconds),
-        Mode::SettingsOnly { linux } => match ui::show(&cfg_path, &cfg_text, linux)? {
-            ui::Outcome::Play => Ok(ExitCode::SUCCESS),
-            ui::Outcome::Closed => Ok(ExitCode::from(3)),
+        Mode::SettingsOnly { linux } => match ui::show(&cfg_path, &cfg_text, linux) {
+            Ok(ui::Outcome::Play) => Ok(ExitCode::SUCCESS),
+            Ok(ui::Outcome::Closed) => Ok(ExitCode::from(WINDOW_CLOSED)),
+            Err(e) => {
+                warn(&format!(
+                    "settings window unavailable ({e}); playing with saved settings"
+                ));
+                Ok(ExitCode::from(WINDOW_UNAVAILABLE))
+            }
         },
         Mode::Play { show_window } => {
             let final_settings = if show_window {
-                match ui::show(&cfg_path, &cfg_text, cfg!(target_os = "linux"))? {
-                    ui::Outcome::Play => {
+                match ui::show(&cfg_path, &cfg_text, cfg!(target_os = "linux")) {
+                    Ok(ui::Outcome::Play) => {
                         let reloaded =
                             fs::read_to_string(&cfg_path).unwrap_or_else(|_| cfg_text.clone());
                         Settings::parse_file(&reloaded).0.merged(cli_settings)
                     }
-                    ui::Outcome::Closed => return Ok(ExitCode::from(3)),
+                    Ok(ui::Outcome::Closed) => return Ok(ExitCode::from(WINDOW_CLOSED)),
+                    // No window possible (no display or OpenGL): play with
+                    // the saved settings, like the sibling launchers.
+                    Err(e) => {
+                        warn(&format!(
+                            "settings window unavailable ({e}); playing with saved settings"
+                        ));
+                        settings
+                    }
                 }
             } else {
                 settings
@@ -340,7 +418,7 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
     let mut settings = settings.clone();
     let (race, warning) = config::fit_to_screen(settings.race_resolution(), machine.display_res);
     if let Some(warning) = warning {
-        eprintln!("warning: {warning}");
+        warn(&warning);
         settings.resolution = race;
     }
     let settings = &settings;
@@ -415,5 +493,24 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
         Ok(ExitCode::SUCCESS)
     } else {
         Ok(ExitCode::from(status.code().unwrap_or(1) as u8))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_appends_and_starts_afresh_when_too_big() {
+        let dir = std::env::temp_dir().join(format!("screamer-log-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let log = dir.join("launcher.log");
+        append_log(&log, "one");
+        append_log(&log, "two");
+        assert_eq!(fs::read_to_string(&log).unwrap(), "one\ntwo\n");
+        fs::write(&log, vec![b'x'; LOG_LIMIT as usize + 1]).unwrap();
+        append_log(&log, "three");
+        assert_eq!(fs::read_to_string(&log).unwrap(), "three\n");
+        fs::remove_dir_all(dir).unwrap();
     }
 }
