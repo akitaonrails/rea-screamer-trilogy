@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 - 2026-11-02
 
 - CI: the Windows zip's `ScreamerLauncher.exe`, DOSBox and DLLs are import-checked (`sdk/packaging/check-imports.sh`) where they are packaged (MSYS2), not only the Ubuntu cross-build; `packaging/tests/workflow.sh` keeps that step in place.
 - Fix: `fps_limit = 1` (any number below 10 or above 1000, which 0.6.0 refused) was read as frame generation on. It is refused again with a warning in `launcher.log` (`--fps-limit 1` is an error), and the setting keeps its default. `--key=value` flags read the old spellings too (`--which=2`, `--fps-limit=100`, `--rumble=off`).

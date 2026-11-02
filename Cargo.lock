@@ -2035,7 +2035,7 @@ version = "0.6.0"
 
 [[package]]
 name = "screamer-launcher"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "png",
  "rea-launcher",
