@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- CI: the Windows zip's `ScreamerLauncher.exe`, DOSBox and DLLs are import-checked (`sdk/packaging/check-imports.sh`) where they are packaged (MSYS2), not only the Ubuntu cross-build; `packaging/tests/workflow.sh` keeps that step in place.
 - Fix: `fps_limit = 1` (any number below 10 or above 1000, which 0.6.0 refused) was read as frame generation on. It is refused again with a warning in `launcher.log` (`--fps-limit 1` is an error), and the setting keeps its default. `--key=value` flags read the old spellings too (`--which=2`, `--fps-limit=100`, `--rumble=off`).
 - Fix (Windows): a second start looked for the open settings window by its title alone, so an Explorer window on a folder named "Screamer Trilogy" could be brought forward instead (and the player was not told the game is running). It now matches the window's class and title.
 - Errors: a fatal error goes through the SDK's `report` on Windows: in `launcher.log`, printed when there is a console or a redirect, and in a message box when the launcher was started the interactive way (the settings window, then the game), also when its output is captured in a log. On Linux it is printed to stderr (the terminal or `screamer-play`'s log) and written to `launcher.log`.

@@ -158,6 +158,9 @@ jobs:
                   exit "$copy_status"
                 }
           )
+          # The shipped programs, not only the cross-build: every import
+          # must belong to an import descriptor (GNU ld 2.47 leaves some out).
+          sh sdk/packaging/check-imports.sh "$package"/*.exe "$package"/*.dll
           (cd dist && zip -r "${name}-windows-x86_64.zip" "${name}-windows-x86_64")
           echo "WINDOWS_ZIP=dist/${name}-windows-x86_64.zip" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
