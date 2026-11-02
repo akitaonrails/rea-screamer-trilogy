@@ -21,12 +21,10 @@ use std::rc::Rc;
 use rea_launcher::cfg::spec::OptionSpec;
 use rea_launcher::pad::{self as bits, Nav, PadNav};
 use rea_launcher_ui::eframe;
-use rea_launcher_ui::egui::{
-    self, Align2, Color32, Key, Rect, Response, TextureHandle, Vec2, pos2, vec2,
-};
+use rea_launcher_ui::egui::{self, Color32, Key, Rect, Response, TextureHandle, Vec2, pos2, vec2};
 use rea_launcher_ui::spec as spec_ui;
 use rea_launcher_ui::theme::{self, Metrics, Palette, body, decal, semibold};
-use rea_launcher_ui::widgets::{self, Chip, ChipSize, Fade, GameCard, LookCard};
+use rea_launcher_ui::widgets::{self, CaptionStyle, Chip, ChipSize, Fade, GameCard, LookCard};
 use rea_launcher_ui::window::WindowFit;
 
 use screamer_launcher::config::{self, MachineCapabilities, RendererChoice, Scaler, Settings};
@@ -450,7 +448,7 @@ impl Window {
         }
     }
 
-    fn draw_box_art(&self, ui: &egui::Ui, full: Rect) {
+    fn draw_box_art(&self, ui: &mut egui::Ui, full: Rect) {
         let rect = Rect::from_min_size(full.min, vec2(PHOTO_W, full.height()));
         let p = ui.painter().with_clip_rect(rect);
         if let Some(Some(tex)) = self.covers.as_ref().map(|c| &c[self.form.which.index()]) {
@@ -490,28 +488,16 @@ impl Window {
             0.0,
             CHASSIS,
         );
-        let x = rect.left() + 20.0;
-        let y = rect.bottom() - 20.0;
-        p.text(
-            pos2(x, y),
-            Align2::LEFT_BOTTOM,
-            ART_CREDIT,
-            body(11.0),
-            MUTED,
-        );
-        p.text(
-            pos2(x, y - 18.0),
-            Align2::LEFT_BOTTOM,
-            self.form.which.studio_credit(),
-            body(13.0),
-            MUTED,
-        );
-        p.text(
-            pos2(x, y - 36.0),
-            Align2::LEFT_BOTTOM,
-            self.form.which.display_name(),
-            semibold(19.0),
-            INK,
+        let game = self.form.which.display_name();
+        widgets::photo_caption(
+            ui,
+            rect,
+            &format!("{} box art", self.form.which.short_title()),
+            &[
+                (game, CaptionStyle::Title),
+                (self.form.which.studio_credit(), CaptionStyle::Text),
+                (ART_CREDIT, CaptionStyle::Credit),
+            ],
         );
     }
 
@@ -850,7 +836,11 @@ impl Window {
                 widgets::field_focused(ui, name, row_focused);
                 let mut button = self.form.pad_button(k);
                 let resp = widgets::chips_sized(ui, &options, &mut button, ChipSize::Compact);
-                name_control(ui, &resp, name, "The gamepad button for this action.");
+                widgets::name_control(
+                    &resp,
+                    Some(name),
+                    Some("The gamepad button for this action."),
+                );
                 if pad_off_reason.is_none() {
                     self.form.set_pad_button(k, button);
                 }
@@ -1011,15 +1001,6 @@ fn step<T: PartialEq + Copy>(values: &[T], current: T, dir: isize) -> T {
     values[(idx + dir).rem_euclid(values.len() as isize) as usize]
 }
 
-/// Names a control for screen readers (the chip row is a radio group).
-fn name_control(ui: &egui::Ui, control: &Response, label: &str, description: &str) {
-    let (label, description) = (label.to_owned(), description.to_owned());
-    ui.ctx().accesskit_node_builder(control.id, |node| {
-        node.set_label(label);
-        node.set_description(description);
-    });
-}
-
 /// A labelled chip row from an option row (recorded for the parity
 /// test); the row when the pointer or the focus is on it, for the
 /// [`help_board`].
@@ -1034,7 +1015,7 @@ fn chip_row(
     let r = ui.horizontal_top(|ui| {
         widgets::field_focused(ui, row.label, focused);
         let resp = chips(ui);
-        name_control(ui, &resp, row.label, row.description);
+        widgets::name_control(&resp, Some(row.label), Some(row.description));
         active |= resp.has_focus();
     });
     active |= ui.rect_contains_pointer(r.response.rect);
@@ -1054,7 +1035,7 @@ fn toggle_cell(
     let row = config::option(key);
     spec_ui::mark_rendered(ui.ctx(), row.key);
     let resp = widgets::toggle(ui, on, row.label, None);
-    name_control(ui, &resp, row.label, row.description);
+    widgets::name_control(&resp, Some(row.label), Some(row.description));
     widgets::focus_bar(ui, resp.rect, focused);
     (focused || resp.has_focus() || resp.hovered()).then_some(row)
 }
@@ -1488,6 +1469,16 @@ mod tests {
         assert_eq!(
             testing::description(&vsync).as_deref(),
             Some(config::option("vsync").description)
+        );
+    }
+
+    #[test]
+    fn the_box_art_and_its_credit_reach_screen_readers() {
+        let ui = open("which = screamer2\n", false, "box-art");
+        ui.get_by_role_and_label(Role::Image, "Screamer 2 box art");
+        assert!(
+            ui.query_by_label_contains("Box art: Virgin Interactive. Scans: MobyGames")
+                .is_some()
         );
     }
 
