@@ -103,13 +103,13 @@ Before drawing the main menu, `SETUP.EXE` (S1/S2) and `ST.EXE` (SR) run a VRAM b
 
 ### 4.2 VESA / SVGA Bugs Across `STARTH.EXE` and `START65H.EXE`
 1. **Bug A — Screamer 2 `START65H.EXE` VBE 2.0 Mode `0x120` Hijack**:
-   - At VA `0x0D7825..0x0D7852` (file offset **`0x0EB025..0x0EB052`**), `START65H.EXE` checks `cmp eax, 0x200` (`VbeVersion >= 2.0`). If true, it requests VESA mode `0x120` (an old UniVBE `640x400x16bpp` mode), which S3 Trio64 VBE 2.0 defines as **`1600x1200x8bpp`**!
-   - **Fix**: Patching `7c 16` (`jl 0xd7847`) at file offset **`0x0EB02F`** to `eb 16` (`jmp 0xd7847`) forces standard VESA mode `0x111` (`640x480x16bpp`).
+   - At VA `0x0D7825..0x0D7852` (file offset **`0x0EC025..0x0EC052`**), `START65H.EXE` checks `cmp eax, 0x200` (`VbeVersion >= 2.0`). If true, it requests VESA mode `0x120` (an old UniVBE `640x400x16bpp` mode), which S3 Trio64 VBE 2.0 defines as **`1600x1200x8bpp`**!
+   - **Fix**: Patching `7c 16` (`jl 0xd7847`) at file offset **`0x0EC02F`** (the launcher's `F5`; `0x0EB02F` in earlier versions of this note was wrong: it holds `FF` bytes) to `eb 16` (`jmp 0xd7847`) forces standard VESA mode `0x111` (`640x480x16bpp`).
 2. **Bug B — Broken `WinGranularity & 7` Bank-Switching Shift**:
-   - S1 `STARTH.EXE` (`0x08BE5B` / file `0x09665B`), S2 `STARTH.EXE` (`0x07FA9B` / file `0x092A9B`), S2 `START65H.EXE` (`0x0D78A6` / file `0x0EB0A6`), SR `STARTH.EXE` (`0x0AE6ED` / file `0x0C0EED` & `0x0B1678` / file `0x0C3E78`), SR `START65H.EXE` (`0x0CB398` / file `0x0DF198`).
+   - S1 `STARTH.EXE` (`0x08BE5B` / file `0x09665B`), S2 `STARTH.EXE` (`0x07FA9B` / file `0x092A9B`), S2 `START65H.EXE` (`0x0D78A6` / file `0x0EC0A6`), SR `STARTH.EXE` (`0x0AE6ED` / file `0x0C0EED` & `0x0B1678` / file `0x0C3E78`), SR `START65H.EXE` (`0x0CB398` / file `0x0DF198`).
    - Masks `ModeInfoBlock.WinGranularity` with `and eax, 7` and uses it as a shift count (`shl al, cl`) for `INT 10h, AX=4F05h`, which fails whenever `WinGranularity` is 8, 16, or 32 KB instead of 64 KB or 4 KB.
 3. **Bug C — Direct VGA CRTC (`0x3D4`/`0x3D5`) & Misc Output (`0x3C2`) Register Overwrites**:
-   - S2 `START65H.EXE` (`0x0D78B7` / file `0x0EB0B7`), S2 `START65L.EXE` (`0x0D76AB` / file `0x0EAEAB`), SR `STARTH.EXE` (`0x0AE70B` / file `0x0C0F0B`), SR `START65H.EXE` (`0x0CB3A4` / file `0x0DF1A4`).
+   - S2 `START65H.EXE` (`0x0D78B7` / file `0x0EC0B7`), S2 `START65L.EXE` (`0x0D76AB` / file `0x0EAEAB`), SR `STARTH.EXE` (`0x0AE70B` / file `0x0C0F0B`), SR `START65H.EXE` (`0x0CB3A4` / file `0x0DF1A4`).
    - Overwrites VGA CRTC vertical/horizontal retrace and scanline-doubling registers after `INT 10h, AX=4F02h` unless the video preset in `SETUP.CFG` offset `+0x00` is `9` (or `7`).
 
 ### 4.3 CD-ROM Volume Check Offsets (No-CD / ISO Mounting)

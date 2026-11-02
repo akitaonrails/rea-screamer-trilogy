@@ -35,11 +35,11 @@ In Watcom Linear Executables (`LE`):
 
 1. **No Speed-Benchmark Divide-by-Zero in `STARTH.EXE` / `STARTL.EXE`**:
    - Disassembly of every `div`/`idiv` instruction in `STARTH.EXE` and `STARTL.EXE` confirms that the VRAM/CPU speed benchmark (`idiv ecx`) exists **only** in `SETUP.EXE` / `ST.EXE`.
-2. **DPMI Free Memory Probe (`0x02F8CA` -> `0x02F758`, `FileOff 0x039F58`) — Stack Overflow & Signed 32-Bit Overflow**:
+2. **DPMI Free Memory Probe (`VA 0x02F8CA`, `FileOff 0x03A0CA`; its loop at `VA 0x02F758`) — Stack Overflow & Signed 32-Bit Overflow**:
    - At startup (`VA 0x010045`, `FileOff 0x01A845`), `main_` calls `0x02F8CA` to determine available DPMI RAM, stores it in `[0x1062AC]`, checks `cmp eax, 0x0061A800; jge 0x010084` (signed comparison against 6.4 MB!), and pre-allocates a single master heap of size `[0x1062AC]`.
    - Because DOSBox/DOS4GW returns `-1` for `PagingFileSizeInPages` in `INT 31h, AX=0500h` (`0x02F952`), `0x02F78B..0x02F80F` enters a loop allocating chunks via `malloc` into a **fixed 100-element stack array `[ebp - 0x1A4 + count*4]`** with no bounds check on `count`!
    - If DPMI memory is fragmented into `>100` chunks, it overflows the stack; if `>= 2 GB` is reported, the signed `jge` fails with `"Insufficient memory available"`.
-   - **Fix**: Clamping the maximum probed block in `0x02F5AE` (`VA 0x02F602`, `FileOff 0x039E02`) or returning a fixed safe heap size (e.g. `16 MB` = `0x01000000`) from `0x02F8CA` prevents both overflows.
+   - **Fix (`F2`, what `fixes.rs` patches)**: the probe function at `VA 0x02F8CA` (`FileOff 0x03A0CA`) returns a fixed 16 MB at once: `53 51 52 56 57 55` (its `push` prologue) becomes `B8 00 00 00 01 C3` (`mov eax, 0x01000000; ret`), which avoids both overflows. (An earlier version of this note proposed clamping inside `0x02F5AE` instead; that is not what the launcher does.)
 3. **VESA `WinGranularity & 7` Bank Shift Bug (`VA 0x08BE5B`, `FileOff 0x09665B`)**:
    - `66 8b 46 04 83 e0 07 a3 8c c1 07 00` masks `WinGranularity` with `7`.
 4. **SVGA Asset Path (`<gfx_path>\GFX\MAP%dH.DAT`)**:
@@ -139,11 +139,11 @@ Runtime testing of the offsets below revealed that all three games rely on a **5
 ### 5.1 Master Input Normalization Function & Hardcoded 10% Deadzone
 All three games poll input once per frame and normalize the 6 race actions (`0: Accelerate`, `1: Brake`, `2: Steer Left / Full Analog Steer`, `3: Steer Right`, `4: Gear Up`, `5: Gear Down`) into signed 10-bit integers in `[-1023, +1023]` (`-0x3FF..+0x3FF`):
 - **Screamer 1 `STARTH.EXE`**: `VA 0x024DA0..0x025015` (`FileOff 0x02F5A0`), outputs at `VA 0x119880..0x119897`.
-  - Hardcoded **10% (`0x66 = 102 / 1024`) center deadzone** at **`VA 0x024F3C`** (`FileOff 0x02F73C`): `83 f8 66 7d 05 31 f6` (`cmp eax, 0x66; jge +5; xor esi, esi`).
+  - Hardcoded **10% (`0x66 = 102 / 1024`) center deadzone** at **`VA 0x024F3C`** (`FileOff 0x02F73C`; the `66` byte `E5` changes is at `0x02F73E`): `83 f8 66 7d 05 31 f6` (`cmp eax, 0x66; jge +5; xor esi, esi`).
 - **Screamer 2 `S2_3DFX.EXE`**: `VA 0x03A0A0..0x03A271` (`FileOff 0x03FCA0`), outputs at `VA 0x148950..0x148967`.
-  - Hardcoded **10% (`0x66`) center deadzone** at **`VA 0x03A202`** (`FileOff 0x03FE02`): `83 f8 66 7d 0e 31 db`.
+  - Hardcoded **10% (`0x66`) center deadzone** at **`VA 0x03A202`** (`FileOff 0x03FE02`; the `66` byte at `0x03FE04`): `83 f8 66 7d 0e 31 db`.
 - **Screamer Rally `STRT3FX.EXE`**: `VA 0x03A2E0..0x03A4BF` (`FileOff 0x03F4E0`), outputs at `VA 0x13A560..0x13A577`.
-  - Hardcoded **10% (`0x66`) center deadzone** at **`VA 0x03A442`** (`FileOff 0x03F642`): `83 f8 66 7d 0e 31 db`.
+  - Hardcoded **10% (`0x66`) center deadzone** at **`VA 0x03A442`** (`FileOff 0x03F642`; the `66` byte at `0x03F644`): `83 f8 66 7d 0e 31 db`.
 
 ### 5.2 Complete `CONTROLS.CFG` Structure (`1,328`B in S1; `1,496`B in S2/SR)
 1. **Control Binding Array** (`6 * 28B = 168B` for P1 in S1; `12 * 28B = 336B` for P1+P2 in S2/SR):

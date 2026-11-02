@@ -104,13 +104,16 @@ pub enum ExeRole {
 
 pub type Renderer = ExeRole;
 
-/// SHA-256 of the 31,425-byte Windows-wrapper port-0x600 `glide2x.ovl` stub bundled with GOG Screamer 2.
+/// SHA-256 of the 31,425-byte Windows-wrapper port-0x600 `glide2x.ovl` stub
+/// bundled with GOG Screamer 2 (as measured on the GOG files). Files are
+/// also told apart by size, so other copies still work.
 pub const S2_GLIDE2X_WIN_STUB_SHA256: [u8; 32] =
-    hex32("ad743bcad8ccaa62ca55dc9f2986173aa5a86475a6f07fa9a0b43b8c0204aa39");
+    hex32("fe6f33d3add608eee61f956b82eaa9c9027ee79441dde29b3fbc687f0605f37b");
 
-/// SHA-256 of the genuine 348,791-byte 3dfx DOS `GLIDE2X.OVL` driver.
+/// SHA-256 of the genuine 348,791-byte 3dfx DOS `GLIDE2X.OVL` driver (from
+/// the Screamer Rally ISO).
 pub const S2_GLIDE2X_DOS_SHA256: [u8; 32] =
-    hex32("05975df4c8ca13efcbfe7134e4cf4bfef2fc5aaad41ca9eb0f31ed83cd2be058");
+    hex32("6981a7bd77445be7b360ca367af1e527927db396546db15b69803b16a67676a9");
 
 /// A known executable and the binary fixes it needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

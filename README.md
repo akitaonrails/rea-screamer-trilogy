@@ -10,6 +10,17 @@ Point `ScreamerLauncher` at a parent folder containing one, two, or all three ga
 
 ![Screamer (1995) — Play Tab](docs/screenshots/launcher-play-screamer1.png)
 
+### Problems this launcher solves
+
+- No DOS setup: sound, paths and controls are configured for you; no `SETUP.EXE`, no DOSBox config, no mapper files.
+- GOG's CD images and cue sheets are found and mounted with their music.
+- Screamer 2's 3dfx mode works in DOSBox with Screamer Rally's DOS Glide driver, and Glide no longer exits with `MAXCACHE`.
+- 16:9 widescreen that shows more to the sides (Hor+) instead of stretching.
+- Less pop-in (extended draw distance) and an optional 100 FPS frame generation, with the game's physics untouched.
+- Modern gamepads: analog steering, trigger pedals, rumble, remappable buttons.
+- Known DOSBox trouble spots (VESA bank granularity, a 1600×1200 mode request, the DPMI memory probe overflow) are patched in a private copy of the game; your game folder is never written.
+- Unknown builds are refused with their SHA-256 instead of being patched blindly.
+
 ---
 
 ## Gameplay Showcase
@@ -36,7 +47,7 @@ Screamer (1995) running through the launcher with the Enhanced preset. [Watch th
 
 - **Unified Trilogy GUI & CLI (with Full Gamepad Navigation)**:
   - One executable (`ScreamerLauncher`) discovers **Screamer (1995)**, **Screamer 2 (1996)**, and **Screamer Rally (1997)** automatically from a single parent folder (or an individual game folder), complete with cover art and per-game capability filtering (unsupported renderers for the chosen game are automatically grayed out with an explanation on hover).
-  - Navigate the entire launcher with a controller: focus starts on the **Game in the trilogy** row (`Left`/`Right` to pick a game, `Start` or `A` to launch **Play** immediately, `LB`/`RB` to switch between `Play`, `Picture`, and `Buttons` tabs, and `Up`/`Down`/`Left`/`Right` to adjust any option).
+  - Navigate the entire launcher with a controller: focus starts on the **Game in the trilogy** row (`Left`/`Right` to pick a game, `Start` or `A` to launch **Play** immediately, `LB`/`RB` to switch between the `Play`, `Picture`, `Controls` and `Buttons` tabs, and `Up`/`Down`/`Left`/`Right` to adjust any option).
 - **Zero Manual Setup**:
   - No `SETUP.EXE` / `ST.EXE` runs, no `Ctrl+F1` DOSBox mapper files, no CUE/ISO editing, and no manual `dosbox.conf` tweaking.
   - Synthesizes binary-exact `SCREAMER.CFG`, `CONFIG/SETUP.CFG` (Sound Blaster 16 `Port 0x220, IRQ 7, DMA 1` + OPL3), and `CONFIG/CONTROLS.CFG` before every launch, and stages existing `CONFIG/CHOICE.DAT` and `*.SAV` files into a private runtime folder (`~/.local/share/screamer-launcher/runtime/<game>/`).
@@ -52,7 +63,7 @@ Screamer (1995) running through the launcher with the Enhanced preset. [Watch th
 - **2× Internal 3dfx Voodoo Superscaling (`1280×960`), AMD FSR 1.0 (`EASU + RCAS`), & 100 FPS Optical-Flow Frame Generation**:
   - When an enhanced display resolution is selected (`1280×960`, `720p`, `900p`, `1080p`, or `Fullscreen`), our patched `vendor/dosbox-staging` 3dfx Voodoo emulator (`SCREAMER_VOODOO_SCALE=2`) scales internal Voodoo triangle setup (`ax..cy`), parameter gradients (`d*dx`, `d*dy`), clip windows, and 2D LFB HUD overlays to **`1280×960` (2× internal resolution)** while keeping `TMU0` at 2 MB for full texture-cache compatibility.
   - **AMD FSR 1.0 (`interpolation/fsr.glsl`)**: Edge-Adaptive Spatial Upsampling (**EASU**, 12-tap directional elliptical Lanczos2 with anti-ringing clamp) + Robust Contrast-Adaptive Sharpening (**RCAS**) upscales `1280×960` (Voodoo) or `640×480` (SVGA) cleanly to `1080p` / `1440p` / `4K` on any GPU (NVIDIA, AMD, Intel, Steam Deck).
-  - **100 FPS GPU Optical-Flow Frame Generation (`SCREAMER_FRAME_GEN=1`)**: Because all three DOS games lock their internal SOS timer and 50-entry physics lookup table to `50 Hz` (`20 ms`), enabling `100 FPS (Frame Gen)` in the **Picture** tab synthesizes a motion-compensated optical-flow midpoint frame ($F_{t-0.5}$) every `10 ms` between $F_{t-1}$ and $F_t$ on the GPU (with static HUD/menu ghosting protection), doubling presentation smoothness from **50 FPS to 100 FPS** without altering game physics or timing.
+  - **100 FPS GPU Optical-Flow Frame Generation (`SCREAMER_FRAME_GEN=1`)**: Because all three DOS games lock their internal SOS timer and 50-entry physics lookup table to `50 Hz` (`20 ms`), turning on **Frame generation (100 FPS)** in the **Picture** tab (`frame_generation = on`) synthesizes a motion-compensated optical-flow midpoint frame ($F_{t-0.5}$) every `10 ms` between $F_{t-1}$ and $F_t$ on the GPU (with static HUD/menu ghosting protection), doubling presentation smoothness from **50 FPS to 100 FPS** without altering game physics or timing.
   - Patches the 3×3 camera rotation matrix inside `SetCamera3D` (`E2`) to scale horizontal basis components (`M00, M01, M02`) by `3/4` (`0.75`). When presented in a 16:9 window or fullscreen display, the center 4:3 region retains exact original proportions while expanding horizontal field of view from 90° to ~106.3° without stretching cars or causing frustum pop-in at screen edges.
 - **Modern Gamepad Support (`RT`/`LT` Analog Triggers + Direct Guest RAM Injection)**:
   - Works out of the box with both SDL `GameController` pads and newer Linux `evdev` / XInput controllers not yet in SDL2's built-in GUID database (such as the **8BitDo Ultimate 2 Wireless Controller**).
@@ -77,7 +88,8 @@ Download the signed build-provenance artifacts and `SHA256SUMS` from the [latest
 ### Prerequisites (When Building from Source)
 
 1. Your own copy of **Screamer**, **Screamer 2**, and/or **Screamer Rally** (GOG or original CD releases).
-2. Standard `dosbox-staging` build dependencies (`meson`, `ninja`, `pkg-config`, `sdl2`, `opusfile`, `speexdsp`, `fluidsynth`, `alsa`, `libpng`, `libslirp`, `glew`, `zlib`) when building from source.
+2. Rust (1.95 or later) and the bundled `dosbox-staging`'s build dependencies, as CI installs them on Ubuntu: `meson`, `ninja-build`, `pkg-config`, `libsdl2-dev`, `libopusfile-dev`, `libspeexdsp-dev`, `libasound2-dev`, `libpng-dev`, `zlib1g-dev`, `libgl1-mesa-dev`, plus `libwayland-dev` and `libxkbcommon-dev` for the settings window. FluidSynth, slirp and MT-32 are switched off in our build.
+3. For the Windows build from Linux: MinGW-w64 (`x86_64-w64-mingw32-gcc`) and LLD (`.cargo/config.toml` links with it; GNU ld 2.47 produces an executable that crashes before `main`).
 
 ### Building from Source
 
@@ -125,7 +137,8 @@ Unlike late-1990s Windows Direct3D games (where patching `IDirect3DDevice` allow
 - **3dfx Voodoo Glide Modes (`S2_3DFX.EXE`, `STRT3FX.EXE`)** initialize the Voodoo1 SST-1 at `GR_RESOLUTION_640x480` (`640×480` 16-bit) and convert integer screen coordinates via 640-entry `X_table` and 400-entry `Y_table` lookup arrays.
 - Rather than offering a misleading "4K internal resolution" setting (which only causes `dosbox-staging` to log `Invalid 'viewport' setting` on smaller or portrait displays), the **Picture** tab provides clean **Display** targets (`4:3 (1280×960)` 2× integer window, `720p`, `900p`, `1080p`, and `Fullscreen`) paired with `dosbox-staging`'s OpenGL **Shader / Filter** pipeline:
   - **CRT Monitor (`crt-auto`)**: Authentic 1995 aperture-grille / scanline CRT presentation.
-  - **Sharp (`sharp`)**: Crisp pixel-interpolated scaling with no blur.
+  - **FSR (`interpolation/fsr`)**: AMD FSR 1.0 upscaling and sharpening.
+  - **Sharp (`sharp`)**: Crisp pixel-interpolated scaling with no blur (the default).
   - **Smooth (`bilinear`)**: Bilinear OpenGL scaling + 3dfx Voodoo texture filtering.
 
 ### 2. The 100 Hz SOS Timer & 50-Entry Physics Lookup Table (`50 Hz` Ceiling)
@@ -185,10 +198,68 @@ Detailed reverse-engineering notes, Watcom `LE` relocation tables, binary SHA-25
 - [`docs/02-cmr-launcher-architecture.md`](docs/02-cmr-launcher-architecture.md) — Launcher UI and configuration architecture
 - [`docs/03-screamer-binary-analysis.md`](docs/03-screamer-binary-analysis.md) — Watcom `LE` object tables, `SETUP.CFG` / `CONTROLS.CFG` binary formats, and executable hashes
 - [`docs/04-screamer-engine-and-patches.md`](docs/04-screamer-engine-and-patches.md) — 3D projection matrices, Hor+ widescreen math, SOS timer & 50-entry physics lookup table, and `PollControls` internals
-- [`docs/RUNTIME_NOTES.md`](docs/RUNTIME_NOTES.md) — Runtime verification findings, `MemBase` injection rules, `MenuPollInput` behavior, and `clock_gettime` thread-safety notes
+- [`docs/RUNTIME_NOTES.md`](docs/RUNTIME_NOTES.md) — Runtime verification findings, `MemBase` injection rules, `MenuPollInput` behavior, and what was and wasn't checked per option and platform (§13)
+- [`docs/RESEARCH.md`](docs/RESEARCH.md) — Community components, what the launcher does with each, dead ends
+- [`docs/CONTRIBUTIONS.md`](docs/CONTRIBUTIONS.md) — Drafts for PCGamingWiki (S1–S9), posted only by the owner
 
 ---
 
+## Options
+
+Every option is one `launcher.cfg` key, one command-line flag (same name, `_` as `-`) and one control in the window; `ScreamerLauncher --help` lists them, and the first run writes a commented `launcher.cfg` with each one.
+
+| Key / flag | Values | Window |
+| --- | --- | --- |
+| `which` / `--which` (or a bare `1`, `2`, `rally`) | `screamer`, `screamer2`, `screamer-rally` | Play: game cards |
+| `game` / `--game` | a folder (remembered) | Play: game or trilogy folder |
+| `saves` / `--saves` | a folder | Play: saves folder |
+| `renderer` / `--renderer` | `auto`, `3dfx`, `svga16`, `svga8`, `vga` | Picture: Renderer |
+| `resolution` / `--resolution` | `WIDTHxHEIGHT`, `fullscreen`, `original` | Picture: Display |
+| `texture_filter` / `--texture-filter` | `original` (CRT), `fsr`, `sharp`, `smooth` | Picture: Shader / Upscaler |
+| `scaler` / `--scaler` | `nearest`, `pixel`, `fsr`, `linear` (Linux, gamescope; remembered) | Picture: Scaler (Linux) |
+| `widescreen` / `--widescreen` | `on`, `off` | Picture: Widescreen |
+| `extended_draw_distance` / `--extended-draw-distance` | `on`, `off` | Picture: Extended draw distance |
+| `vsync` / `--vsync` | `on`, `off` | Picture: Vsync |
+| `frame_generation` / `--frame-generation` | `on`, `off` (was `fps_limit`; 60 or more still means on) | Picture: Frame generation (100 FPS) |
+| `gamepad_axes` / `--gamepad-axes` | `on`, `off` | Controls: Gamepad |
+| `deadzone` / `--deadzone` | `0`–`30` (percent) | Controls: Deadzone |
+| `rumble` / `--rumble` | `0`–`100` | Controls: Rumble |
+| `buttons` / `--buttons` | `modern`, `original`, or 8 button numbers | Buttons |
+| `runtime` / `--runtime`, `dosbox` / `--dosbox` | a folder / a program | launcher only |
+
+Other flags: `--no-window` (play with the saved settings), `--settings [--linux]` (only the window; exit code 0 Play pressed, 3 closed, 4 no window possible), `--check` (verify the games and every fix without playing), `--controllers` (list pads), `--help`.
+
+## Where things live, and how to uninstall
+
+| What | Windows | Linux |
+| --- | --- | --- |
+| `launcher.cfg` and `launcher.log` | `%APPDATA%\ScreamerLauncher\` (or next to `ScreamerLauncher.exe` when a `launcher.cfg` is there) | `~/.config/screamer-launcher/` (or next to `ScreamerLauncher`) |
+| Runtime copy of each game | `%LOCALAPPDATA%\ScreamerLauncher\runtime\<game>\` | `~/.local/share/screamer-launcher/runtime/<game>/` |
+| Saves, `CHOICE.DAT`, replays | `%APPDATA%\ScreamerLauncher\saves\<game>\` | `~/.local/share/screamer-launcher/saves/<game>/` |
+
+Your game folder is never written. To uninstall, delete the launcher's folder (or the AppImage) and the runtime folders above. **Back up the saves folders first** if you want to keep your progress; the runtime folders hold a copy of the saves too.
+
+## Credits
+
+- [dosbox-staging](https://github.com/dosbox-staging/dosbox-staging): runs the games, with its 3dfx Voodoo emulation.
+- GOG's releases, whose layouts the launcher reads; Screamer Rally's DOS `GLIDE2X.OVL`, which lets Screamer 2's 3dfx build run.
+- AMD FidelityFX Super Resolution 1.0, the algorithm behind the FSR shader.
+- The box art of the three games, © Virgin Interactive, from MobyGames scans (used by the owner's decision; see `THIRD_PARTY.md`).
+- Barlow fonts (SIL OFL) through rea-launcher-sdk.
+
+Full list with licences: [`THIRD_PARTY.md`](THIRD_PARTY.md). Research notes: [`docs/RESEARCH.md`](docs/RESEARCH.md).
+
+## Built on rea-launcher-sdk
+
+The runtime folder, save mirroring, `launcher.cfg` handling, the option table behind `--help` and the window, the settings-window widgets, `screamer-play`'s `rea-play.sh` library, packaging and CI come from [rea-launcher-sdk](https://github.com/akitaonrails/rea-launcher-sdk) (pinned in `Cargo.toml`, vendored under `sdk/`). Screamer's own parts are the edition table, the LE parser and binary fixes, the DOSBox configuration and hooks, and the window's tabs.
+
+## Contributing
+
+- **Game-specific problems** (a Screamer build the launcher refuses, a fix that misbehaves, DOSBox settings, the hooks, this window's tabs): issues and pull requests here. For an unknown build, use the "Unknown game build" issue template with the SHA-256 and `launcher.log`.
+- **Shared code** (the runtime folder, settings-window widgets, `rea-play.sh`, packaging, CI workflows, anything under `sdk/`): issues and pull requests at [rea-launcher-sdk](https://github.com/akitaonrails/rea-launcher-sdk).
+- How to tell: if the code lives under `sdk/` or comes from a `rea_launcher*` crate, it is the SDK's. Never patch `sdk/` or copy SDK code into this repository (CI checks `sdk/` against `sdk/VERSION`); report the gap to the SDK instead.
+- Checks before a pull request: `cargo fmt --all -- --check`, `cargo test --workspace --locked`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `sh linux/tests/*.sh`, and the Windows tests under Wine (`sdk/scripts/wine-test --locked --workspace --target x86_64-pc-windows-gnu`, headless).
+
 ## License
 
-MIT — see [`THIRD_PARTY.md`](THIRD_PARTY.md) for open-source component attributions (`dosbox-staging`, `eframe`/`egui`, Barlow fonts). No copyrighted game executables or assets are included in this repository.
+The launcher's code is under MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`). The bundled DOSBox is GPL-2.0-or-later, with its corresponding source attached to every release. See [`THIRD_PARTY.md`](THIRD_PARTY.md) for every component and image. No game executables or assets are included in this repository.

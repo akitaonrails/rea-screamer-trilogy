@@ -34,7 +34,7 @@ This document records notable observations from running the original 1995–1997
 ## 4. Screamer 2 `S2_3DFX.EXE` vs. Windows `glide2x.ovl` Stub
 
 - Both **Screamer 2** (`S2_3DFX.EXE`) and **Screamer Rally** (`STRT3FX.EXE`) dynamically load `GLIDE2X.OVL` from the working directory or `PATH`.
-- GOG's **Screamer 2** ships with a `31,425`-byte Windows port-`0x600` stub `glide2x.ovl` (`SHA-256: b4df3c2d...`) intended for Windows 9x DOS boxes, whereas **Screamer Rally** ships with the genuine `348,791`-byte DOS 3dfx Voodoo driver `GLIDE2X.OVL` (`SHA-256: 65d2a7e5...`).
+- GOG's **Screamer 2** ships with a `31,425`-byte Windows port-`0x600` stub `glide2x.ovl` (31,425 bytes; SHA-256 `fe6f33d3add608eee61f956b82eaa9c9027ee79441dde29b3fbc687f0605f37b`, measured on the GOG files) intended for Windows 9x DOS boxes, whereas **Screamer Rally** ships with the genuine `348,791`-byte DOS 3dfx Voodoo driver `GLIDE2X.OVL` (348,791 bytes; SHA-256 `6981a7bd77445be7b360ca367af1e527927db396546db15b69803b16a67676a9`, from the Screamer Rally ISO). The launcher tells them apart by size (under 50,000 bytes: the stub; over 100,000: the DOS driver), so a different copy of either still works.
 - `ScreamerLauncher` automatically skips the `31,425`-byte Windows stub when staging the runtime folder and links a genuine DOS `GLIDE2X.OVL` if present (via `SCREAMER_GLIDE2X_OVL` or a sibling `Screamer Rally` installation), allowing **Screamer 2** to run in full hardware-accelerated 3dfx Voodoo Glide mode (`S2_3DFX.EXE`) as well as 16-bit SVGA mode (`START65H.EXE`).
 
 ---
@@ -162,3 +162,29 @@ These launcher changes are covered by unit tests but have not yet been run again
 - **Vsync "As the game" removed.** It wrote no `vsync` key, which DOSBox ran as `vsync = auto` (the same as On). The Original look now saves `vsync = on`; the DOSBox configuration is unchanged.
 - **Unknown builds refused.** A `STARTH.EXE` (or another game executable name) with an unknown SHA-256 is now reported with its hash and the issue link (window, `--check`, `launcher.log`) instead of being skipped silently. Verified with synthetic files only.
 - **Windows build linked with LLD.** The x86_64 `ScreamerLauncher.exe` and its tests now run under Wine 11.21 (they crashed before `main` with GNU ld 2.47). Not yet run on real Windows 10/11.
+
+## 13. Verification Matrix (Options × Platforms)
+
+What has been seen in the real game, per option and platform. "headless" is a run in `gamescope --backend headless`; "unit" means only the launcher's tests cover it (the setting reaches the right file, variable or patch, but its effect in the game was not looked at).
+
+| Option | Linux desktop | Steam Deck | Windows 10/11 | 1440p / 4K | Ultrawide |
+|---|---|---|---|---|---|
+| `renderer` (3dfx / SVGA / VGA) | headless (§5) | not yet | not yet | not yet | not yet |
+| `resolution` up to 1080p | 1080p in the gameplay video | not yet | not yet | — | — |
+| `resolution` above 1080p, `fullscreen` | unit | not yet | not yet | not yet (§12) | not yet |
+| `widescreen` (E2) | Screamer 1: in the gameplay video (owner to confirm it shows Hor+, not a stretch); Screamer 2/Rally not yet | not yet | not yet | not yet | not yet (16:9 math only) |
+| `extended_draw_distance` (E6) | headless Rally segment (§8) | not yet | not yet | — | — |
+| `frame_generation` | implemented (§11); no recorded run confirms 100 FPS | not yet | not yet | not yet | — |
+| `vsync` | unit (DOSBox setting) | not yet | not yet | — | — |
+| `texture_filter` | Sharp in the gameplay video; CRT, FSR, Smooth not recorded | not yet | not yet | not yet | — |
+| `gamepad_axes`, `buttons`, `rumble` | used with an 8BitDo Ultimate 2 (§6) | not yet | not yet | — | — |
+| `deadzone` (E5, DOSBox gameport) | not yet (the launcher's injection bypasses it) | not yet | not yet | — | — |
+| `scaler` (gamescope, Linux helper) | unit (`linux/tests/scaler.sh`) | not yet | — | not yet | — |
+| Looks: Original / Enhanced / Steam Deck | Enhanced in the gameplay video | Steam Deck look not yet tried on the device | not yet | — | — |
+| Window focus loss mid-race | not yet | not yet | not yet | — | — |
+
+The Steam Deck look is made only of individually verified values and ships before a device check (SDK standard); multi-monitor, HiDPI and Proton-without-the-helper are not applicable or not yet checked: the launcher is native on both platforms.
+
+### Generated game files
+
+`SCREAMER.CFG`, `CONFIG/SETUP.CFG` and `CONFIG/CONTROLS.CFG` are rewritten at every launch. Whether a game writes `CONTROLS.CFG` itself (an in-game key redefinition) has not been established: the menus were not driven to that screen, and the executables were not searched for a write of that file. If a game does write it, a player's in-game key bindings are lost at the next launch. Recommendation for the owner: verify in the real game; if it writes the file, seed it only when it is missing (or still byte-identical to what the launcher last wrote), as the SDK standard asks for game config files. `SCREAMER.CFG` and `SETUP.CFG` hold paths and the sound card, which only `SETUP.EXE`/`ST.EXE` write, and the launcher never runs those.
