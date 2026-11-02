@@ -25,13 +25,25 @@ const WINDOW_UNAVAILABLE: u8 = 4;
 /// `launcher.log` is started afresh once it grows past this size.
 const LOG_LIMIT: u64 = 1 << 20;
 
+/// Set once the launcher runs the way a player starts it (double-click or
+/// a shortcut: the settings window, then the game). Only then are fatal
+/// errors also shown in a message box; scripts (`--check`, `--no-window`,
+/// `--settings`, `--controllers`, bad arguments) get stderr and the log.
+static INTERACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn is_interactive(mode: &Mode) -> bool {
+    *mode == Mode::Play { show_window: true }
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(msg) => {
             eprintln!("{msg}");
             log_line(&format!("error: {msg}"));
-            show_error(&msg);
+            if INTERACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+                show_error(&msg);
+            }
             ExitCode::from(2)
         }
     }
@@ -70,7 +82,7 @@ fn warn(message: &str) {
 }
 
 /// On Windows the launcher is often started without a console: show fatal
-/// errors in a message box as well.
+/// errors of an interactive launch in a message box as well.
 #[cfg(windows)]
 fn show_error(msg: &str) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
@@ -93,6 +105,7 @@ fn show_error(_msg: &str) {}
 fn run() -> Result<ExitCode, String> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
     let (mode, filtered_args) = extract_mode(&raw_args)?;
+    INTERACTIVE.store(is_interactive(&mode), std::sync::atomic::Ordering::Relaxed);
     let cli_settings = Settings::parse_args(filtered_args)?;
 
     let cfg_path = locate_config_file();
@@ -508,6 +521,24 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_double_click_path_is_interactive() {
+        let mode = |args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+            extract_mode(&args).unwrap().0
+        };
+        assert!(is_interactive(&mode(&[])));
+        assert!(is_interactive(&mode(&["rally"])));
+        for scripted in [
+            &["--check"][..],
+            &["--no-window"],
+            &["--settings", "--linux"],
+            &["--controllers"],
+        ] {
+            assert!(!is_interactive(&mode(scripted)), "{scripted:?}");
+        }
+    }
 
     #[test]
     fn log_appends_and_starts_afresh_when_too_big() {
