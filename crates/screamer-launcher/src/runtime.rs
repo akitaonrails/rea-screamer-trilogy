@@ -978,7 +978,9 @@ fn normalize(path: &Path) -> PathBuf {
 
 /// Resolves a path even when its final components do not exist yet.
 /// Canonicalizing the nearest existing ancestor resolves symlinks and
-/// Windows path aliases; the remaining suffix is normalized lexically.
+/// Windows path aliases; the remaining suffix is normalized lexically. A
+/// path that cannot be canonicalized for another reason is normalized
+/// lexically as a whole.
 pub fn resolve(path: &Path, cwd: &Path) -> Result<PathBuf, String> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -1010,19 +1012,17 @@ pub fn resolve(path: &Path, cwd: &Path) -> Result<PathBuf, String> {
                     .parent()
                     .ok_or_else(|| format!("cannot resolve {}: {error}", path.display()))?;
             }
-            Err(error) => return Err(format!("cannot resolve {}: {error}", path.display())),
+            // Some volumes cannot be canonicalized at all (Windows RAM
+            // disks, `subst` drives, some network shares: "Incorrect
+            // function"); compare their absolute path as written instead of
+            // refusing to launch.
+            Err(_) => return Ok(normalize(&absolute)),
         }
     }
 }
 
 fn check_separate_from(game: &Path, folder: &Path, cwd: &Path) -> Result<(), String> {
-    let absolute_game = if game.is_absolute() {
-        game.to_path_buf()
-    } else {
-        cwd.join(game)
-    };
-    let game_real = fs::canonicalize(&absolute_game)
-        .map_err(|error| format!("game folder {}: {error}", game.display()))?;
+    let game_real = resolve(game, cwd)?;
     let folder_real = resolve(folder, cwd)?;
     if folder_real.starts_with(&game_real) || game_real.starts_with(&folder_real) {
         return Err(format!(
@@ -1383,6 +1383,30 @@ mod tests {
         assert!(!game.join("child").exists());
         assert!(check_separate_from(&game, Path::new("../outside"), &game).is_ok());
         fs::remove_dir_all(game).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn paths_that_cannot_be_canonicalized_are_compared_lexically() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = temp("uncanonical");
+        let locked = base.join("locked");
+        fs::create_dir_all(locked.join("game")).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let blocked = fs::canonicalize(locked.join("game"))
+            .is_err_and(|e| e.kind() != io::ErrorKind::NotFound);
+        if blocked {
+            // Not running as root: canonicalize fails with "permission denied".
+            let game = locked.join("game");
+            assert_eq!(
+                resolve(&game.join("x/../rt"), &base).unwrap(),
+                game.join("rt")
+            );
+            assert!(check_separate_from(&game, &game.join("rt"), &base).is_err());
+            assert!(check_separate_from(&game, &locked.join("rt"), &base).is_ok());
+        }
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[cfg(unix)]
