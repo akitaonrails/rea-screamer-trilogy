@@ -186,7 +186,7 @@ fn run() -> Result<ExitCode, String> {
     }
 
     match mode {
-        Mode::Check => run_check(&settings, cli_settings.which),
+        Mode::Check => run_check(&settings, cli_settings.which).map_err(runtime::with_bug_link),
         Mode::Controllers { seconds } => run_controllers(seconds),
         Mode::SettingsOnly { linux } => match ui::show(&cfg_path, &cfg_text, linux) {
             Ok(ui::Outcome::Play) => Ok(ExitCode::SUCCESS),

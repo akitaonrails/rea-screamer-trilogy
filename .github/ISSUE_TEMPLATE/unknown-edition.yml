@@ -1,13 +1,14 @@
-name: Unknown game build
-description: The launcher says your Screamer, Screamer 2 or Screamer Rally executable is a build it does not know.
-title: "Unknown build: <game> <file name>"
-labels: [edition]
+name: Unknown edition
+description: "ScreamerLauncher said your Screamer, Screamer 2 or Screamer Rally executable is a build it does not know."
+title: "Unknown edition: "
+labels: ["edition"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks! The launcher only patches builds it knows by their SHA-256, so it needs yours on file.
-        Never attach game files: the hash is enough.
+        The launcher only changes builds it has identified by SHA-256, so it left yours alone and
+        did not use it. Tell us about your copy and we will add it. Never attach game files: the
+        SHA-256 is enough.
   - type: dropdown
     id: game
     attributes:
@@ -15,24 +16,41 @@ body:
       options: [Screamer (1995), Screamer 2 (1996), Screamer Rally (1997)]
     validations:
       required: true
-  - type: input
-    id: edition
-    attributes:
-      label: Where is your copy from?
-      placeholder: GOG, original CD (which country), a budget re-release, ...
-    validations:
-      required: true
   - type: textarea
-    id: hash
+    id: sha256
     attributes:
       label: The message with the file name and SHA-256
-      description: Copy it from the window or from `ScreamerLauncher --check --game <folder>`.
+      description: Copy it from the window or from `ScreamerLauncher --check --game <folder>` (also in launcher.log).
       render: text
     validations:
       required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Where is your copy of the game from?
+      options:
+        - Original CD
+        - GOG
+        - A budget or compilation re-release
+        - Patched by hand (official or community patch)
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: details
+    attributes:
+      label: Version, language and country
+      description: e.g. "Italian CD, 1997". The file's size in bytes helps too.
+  - type: input
+    id: version
+    attributes:
+      label: Launcher version
+      description: The first line of `ScreamerLauncher --help`, e.g. "ScreamerLauncher 0.6.0".
   - type: textarea
     id: log
     attributes:
       label: launcher.log
-      description: Next to launcher.cfg (Windows `%APPDATA%\ScreamerLauncher\`, Linux `~/.config/screamer-launcher/`). Paste it or attach it.
+      description: |
+        Optional. Next to launcher.cfg (Windows `%APPDATA%\ScreamerLauncher\`, Linux
+        `~/.config/screamer-launcher/`). Remove personal paths before posting.
       render: text

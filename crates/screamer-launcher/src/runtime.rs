@@ -33,6 +33,20 @@ pub struct DiscoveredExe {
 pub const ISSUE_URL: &str =
     "https://github.com/akitaonrails/rea-screamer-trilogy/issues/new?template=unknown-edition.yml";
 
+/// The bug report form (`.github/ISSUE_TEMPLATE/bug-report.yml`).
+pub const BUG_URL: &str =
+    "https://github.com/akitaonrails/rea-screamer-trilogy/issues/new?template=bug-report.yml";
+
+/// A failed `--check`'s message with where to report it, unless it already
+/// names a form (an unknown build links the unknown-edition form).
+pub fn with_bug_link(message: String) -> String {
+    if message.contains("/issues/new") {
+        message
+    } else {
+        format!("{message}\nIf this looks wrong, open a bug report with launcher.log: {BUG_URL}")
+    }
+}
+
 /// A game executable (by its name) whose SHA-256 is in no edition table:
 /// never patched or run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1116,6 +1130,26 @@ mod tests {
 
     fn listing(items: &[(&str, Stamp)]) -> Listing {
         items.iter().map(|(r, s)| (r.to_string(), *s)).collect()
+    }
+
+    #[test]
+    fn a_failed_check_links_one_issue_form() {
+        let plain = with_bug_link("Screamer 2 (1996) was not found under /g".into());
+        assert!(plain.ends_with(BUG_URL), "{plain}");
+        let unknown = UnknownExe {
+            path: PathBuf::from("/g/STARTH.EXE"),
+            file_name: "STARTH.EXE".into(),
+            sha256: [0xab; 32],
+        };
+        let message = with_bug_link(unknown.message());
+        assert!(message.ends_with(ISSUE_URL), "{message}");
+        assert!(!message.contains(BUG_URL));
+        // Both forms exist in the repository.
+        let forms = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/ISSUE_TEMPLATE");
+        for url in [ISSUE_URL, BUG_URL] {
+            let file = url.rsplit("template=").next().unwrap();
+            assert!(forms.join(file).is_file(), "{file}");
+        }
     }
 
     #[test]

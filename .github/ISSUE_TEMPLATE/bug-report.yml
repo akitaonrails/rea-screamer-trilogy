@@ -1,0 +1,73 @@
+name: Bug report
+description: "ScreamerLauncher does not run Screamer, Screamer 2 or Screamer Rally as it should."
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. Never attach executables, `.OVL` drivers, CD images, saves or any
+        other game files. Remove usernames and personal paths from settings and logs.
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game
+      options: [Screamer (1995), Screamer 2 (1996), Screamer Rally (1997)]
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: Where did you play?
+      options:
+        - Windows 11
+        - Windows 10
+        - Steam Deck (Game Mode)
+        - Steam Deck (Desktop Mode)
+        - Linux with the AppImage
+        - Linux with the zip (screamer-play)
+        - Linux, added to Steam as a non-Steam game
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Launcher version
+      description: The first line of `ScreamerLauncher --help`, e.g. "ScreamerLauncher 0.6.0".
+    validations:
+      required: true
+  - type: input
+    id: edition
+    attributes:
+      label: Where is your copy from?
+      description: |
+        GOG, the original CD (which country), a budget re-release… launcher.log names each
+        executable's edition and SHA-256 (`ScreamerLauncher --check --game <folder>` writes it).
+  - type: input
+    id: hardware
+    attributes:
+      label: CPU, graphics card, controller and screen
+      description: e.g. "Ryzen 7 7800X3D, RTX 3060, 8BitDo Ultimate 2, 2560x1440 at 144 Hz".
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings used
+      description: The look and anything you changed, or launcher.cfg without personal paths.
+  - type: textarea
+    id: log
+    attributes:
+      label: launcher.log
+      description: |
+        Next to launcher.cfg. Windows: `%APPDATA%\ScreamerLauncher\launcher.log`.
+        Linux: `~/.config/screamer-launcher/launcher.log`. A launcher.cfg next to ScreamerLauncher
+        means the log is there too. Remove personal paths before posting.
+      render: text
+    validations:
+      required: true
