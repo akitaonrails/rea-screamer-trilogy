@@ -1,0 +1,26 @@
+name: sdk-update
+
+# Weekly: when rea-launcher-sdk has a newer tag than sdk/VERSION, opens (or
+# updates) a pull request on sdk-update/vX.Y.Z with the bump and that
+# range's Migration items. It never merges. See the SDK's
+# packaging/README.md, "Staying current", and sdk/docs/playbooks/sdk-change.md.
+#
+# Needs "Allow GitHub Actions to create and approve pull requests"
+# (Settings > Actions > General). A PR opened with the default token runs
+# no CI; set the SDK_UPDATE_TOKEN secret (fine-grained: contents and pull
+# requests write) and uncomment `secrets` to get CI on it.
+
+on:
+  schedule: [{cron: "17 5 * * 1"}]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: akitaonrails/rea-launcher-sdk/.github/workflows/sdk-update.yml@v0.3.0
+    # secrets: {token: ${{ secrets.SDK_UPDATE_TOKEN }}}

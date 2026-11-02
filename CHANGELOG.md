@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- CI: a weekly `sdk-update` workflow opens a pull request when rea-launcher-sdk has a new tag (the bump and its Migration items; it never merges).
 - Updated rea-launcher-sdk to v0.3.0. The game and saves folder fields are now named "Game folder" and "Saves folder" for screen readers (the hint text is their description).
 - Window: with the gamepad off, the Buttons tab's layout cards are dimmed and tell screen readers why ("Turn on Gamepad in the Controls tab first."), like the button chips below them.
 - Linux: `--scaler` lasts one run again instead of being saved into `launcher.cfg`; `screamer-play --play --scaler pixel --resolution 1280x720` gives gamescope those values for that run (the SDK's `REA_HELPER_KEYS`), and the next plain run uses `launcher.cfg` again. `--resolution` used to reach the game but not gamescope's size. Set `scaler` in the window or `launcher.cfg` to keep it.
