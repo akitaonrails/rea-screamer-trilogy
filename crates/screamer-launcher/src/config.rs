@@ -315,21 +315,31 @@ fn parse_resolution(v: &str) -> Option<(u32, u32)> {
 
 /// The race size to give DOSBox on a screen of `screen` pixels. DOSBox
 /// cannot open a window larger than the screen (it rejects the setting), so
-/// such a size becomes fullscreen, with a warning saying so.
+/// a size above 1920x1080 that does not fit becomes fullscreen, with a
+/// warning saying so. Sizes up to 1080p are passed on as before (e.g.
+/// 1920x1080 on a Steam Deck, scaled by gamescope).
 pub fn fit_to_screen(
     race: Option<(u32, u32)>,
     screen: (u32, u32),
 ) -> (Option<(u32, u32)>, Option<String>) {
     match race {
-        Some((w, h)) if (w, h) != FULLSCREEN && (w > screen.0 || h > screen.1) => (
-            Some(FULLSCREEN),
-            Some(format!(
-                "resolution {w}x{h} is larger than the {}x{} screen; playing fullscreen instead",
-                screen.0, screen.1
-            )),
-        ),
+        Some((w, h))
+            if (w, h) != FULLSCREEN && above_1080p((w, h)) && (w > screen.0 || h > screen.1) =>
+        {
+            (
+                Some(FULLSCREEN),
+                Some(format!(
+                    "resolution {w}x{h} is larger than the {}x{} screen; playing fullscreen instead",
+                    screen.0, screen.1
+                )),
+            )
+        }
         other => (other, None),
     }
+}
+
+fn above_1080p((w, h): (u32, u32)) -> bool {
+    w > 1920 || h > 1080
 }
 
 fn parse_percent(v: &str) -> Option<u32> {
@@ -740,6 +750,15 @@ mod tests {
         assert_eq!(
             fit_to_screen(Some((1920, 1440)), (1920, 1080)).0,
             Some(FULLSCREEN)
+        );
+        // Up to 1080p nothing changes, even on a smaller screen.
+        assert_eq!(
+            fit_to_screen(Some((1920, 1080)), (1280, 800)),
+            (Some((1920, 1080)), None)
+        );
+        assert_eq!(
+            fit_to_screen(Some((1600, 900)), (1280, 800)),
+            (Some((1600, 900)), None)
         );
     }
 }
