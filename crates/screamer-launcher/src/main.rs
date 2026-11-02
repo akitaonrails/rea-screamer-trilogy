@@ -138,12 +138,13 @@ fn run() -> Result<ExitCode, String> {
         Mode::SettingsOnly { linux } => match ui::show(&cfg_path, &cfg_text, linux) {
             Ok(ui::Outcome::Play) => Ok(ExitCode::SUCCESS),
             Ok(ui::Outcome::Closed) => Ok(ExitCode::from(WINDOW_CLOSED)),
-            Err(e) => {
+            Err(ui::ShowError::NoWindow(e)) => {
                 warn(&format!(
                     "settings window unavailable ({e}); playing with saved settings"
                 ));
                 Ok(ExitCode::from(WINDOW_UNAVAILABLE))
             }
+            Err(ui::ShowError::Failed(e)) => Err(format!("settings window: {e}")),
         },
         Mode::Play { show_window } => {
             let final_settings = if show_window {
@@ -156,11 +157,16 @@ fn run() -> Result<ExitCode, String> {
                     Ok(ui::Outcome::Closed) => return Ok(ExitCode::from(WINDOW_CLOSED)),
                     // No window possible (no display or OpenGL): play with
                     // the saved settings, like the sibling launchers.
-                    Err(e) => {
+                    Err(ui::ShowError::NoWindow(e)) => {
                         warn(&format!(
                             "settings window unavailable ({e}); playing with saved settings"
                         ));
                         settings
+                    }
+                    // The window opened and then failed: never start the
+                    // game with settings the player may have changed.
+                    Err(ui::ShowError::Failed(e)) => {
+                        return Err(format!("settings window: {e}"));
                     }
                 }
             } else {

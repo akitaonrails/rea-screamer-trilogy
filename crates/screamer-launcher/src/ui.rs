@@ -40,8 +40,33 @@ pub enum Outcome {
     Closed,
 }
 
-pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, String> {
+/// Why the settings window did not finish normally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShowError {
+    /// No window could be made (no display, no OpenGL): the caller may play
+    /// with the saved settings.
+    NoWindow(String),
+    /// The window opened, then failed: the player's choices may be lost, so
+    /// the game must not start with stale settings.
+    Failed(String),
+}
+
+/// Sorts `run_native`'s result by whether the window ever opened.
+fn finish(
+    opened: bool,
+    result: Result<(), String>,
+    outcome: Outcome,
+) -> Result<Outcome, ShowError> {
+    match result {
+        Ok(()) => Ok(outcome),
+        Err(e) if opened => Err(ShowError::Failed(e)),
+        Err(e) => Err(ShowError::NoWindow(e)),
+    }
+}
+
+pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, ShowError> {
     let mut outcome = Outcome::Closed;
+    let mut opened = false;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Screamer Trilogy")
@@ -55,10 +80,11 @@ pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, St
     };
     let path = settings_path.to_path_buf();
     let text = text.to_string();
-    eframe::run_native(
+    let result = eframe::run_native(
         "Screamer Trilogy",
         options,
         Box::new(|cc| {
+            opened = true;
             set_style(&cc.egui_ctx);
             Ok(Box::new(Window::new(
                 &cc.egui_ctx,
@@ -69,8 +95,8 @@ pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, St
             )))
         }),
     )
-    .map_err(|e| e.to_string())?;
-    Ok(outcome)
+    .map_err(|e| e.to_string());
+    finish(opened, result, outcome)
 }
 
 fn set_style(ctx: &egui::Context) {
@@ -1786,4 +1812,24 @@ fn look_card(
     p.galley(rect.left_top() + vec2(pad, pad + 28.0), galley, MUTED);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_window_that_never_opened_falls_back_to_saved_settings() {
+        assert_eq!(finish(true, Ok(()), Outcome::Play), Ok(Outcome::Play));
+        assert_eq!(finish(false, Ok(()), Outcome::Closed), Ok(Outcome::Closed));
+        assert_eq!(
+            finish(false, Err("no display".into()), Outcome::Closed),
+            Err(ShowError::NoWindow("no display".into()))
+        );
+        // Failing after the player pressed Play or Close is not "no window".
+        assert_eq!(
+            finish(true, Err("lost context".into()), Outcome::Play),
+            Err(ShowError::Failed("lost context".into()))
+        );
+    }
 }
