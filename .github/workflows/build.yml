@@ -16,78 +16,56 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.95.0
 
 jobs:
   linux-packages:
     name: Linux x86_64
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          submodules: recursive
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            curl file libasound2-dev libgl1-mesa-dev libopusfile-dev libpng-dev \
-            libsdl2-dev libspeexdsp-dev libwayland-dev libxkbcommon-dev \
-            meson ninja-build patchelf pkg-config xz-utils zip zlib1g-dev
-      - name: Install Rust
-        run: |
-          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rustfmt
-          rustup default "$RUST_VERSION"
-      - name: Test and lint
-        run: |
-          cargo fmt --all -- --check
-          cargo test --workspace --locked
-          cargo clippy --workspace --all-targets --locked -- -D warnings
-          sh linux/tests/gpu-env.sh
-          sh linux/tests/scaler.sh
-          sh linux/tests/supervision.sh
-      - name: Dependency advisories, licenses, and sources
-        run: |
-          cargo install --locked cargo-audit@0.22.1 cargo-deny@0.19.8
-          cargo audit
-          cargo deny check
-      - name: Build launcher and bundled DOSBox
-        run: |
-          ./scripts/build-dosbox.sh
-          cargo build --release --workspace --locked
-      - name: Package Linux zip and AppImage
-        shell: bash
-        run: |
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/screamer-launcher/Cargo.toml | head -1)"
-          name="ScreamerLauncher-v${version}"
-          package="dist/${name}-linux-x86_64"
-          mkdir -p "$package/lib"
-          cp target/release/ScreamerLauncher target/release/dosbox \
-             README.md CHANGELOG.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "$package/"
-          cp -r target/release/resources "$package/resources"
-          cp -r linux "$package/linux"
-          cp sdk/rea-play.sh "$package/linux/rea-play.sh"
-          for binary in "$package/ScreamerLauncher" "$package/dosbox"; do
-            while read -r libpath; do
-              case "$(basename "$libpath")" in
-                libSDL2*|libopus*|libogg*|libspeexdsp*|libpng*|libz-ng*)
-                  cp -L "$libpath" "$package/lib/"
-                  ;;
-              esac
-            done < <(ldd "$binary" | awk '/=> \// {print $3}')
-            patchelf --set-rpath '$ORIGIN/lib' "$binary"
-          done
-          (cd dist && zip -r "${name}-linux-x86_64.zip" "${name}-linux-x86_64")
-          packaging/appimage/build.sh "$package" dist/appimage
-          mv dist/appimage/ScreamerLauncher-x86_64.AppImage "dist/${name}-x86_64.AppImage"
-          echo "LINUX_ZIP=dist/${name}-linux-x86_64.zip" >> "$GITHUB_ENV"
-          echo "APPIMAGE=dist/${name}-x86_64.AppImage" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: ScreamerLauncher-linux
-          path: |
-            ${{ env.LINUX_ZIP }}
-            ${{ env.APPIMAGE }}
-          if-no-files-found: error
+    uses: akitaonrails/rea-launcher-sdk/.github/workflows/launcher-ci.yml@v0.1.0
+    with:
+      # The older glibc keeps the native binaries running on older distros.
+      runs-on: ubuntu-22.04
+      rust-toolchain: 1.95.0
+      # Native Linux build (no cross target); the Windows build is below.
+      rust-target: ""
+      submodules: recursive
+      apt-packages: >-
+        curl file libasound2-dev libgl1-mesa-dev libopusfile-dev libpng-dev
+        libsdl2-dev libspeexdsp-dev libwayland-dev libxkbcommon-dev
+        meson ninja-build patchelf pkg-config xz-utils zip unzip zlib1g-dev
+      package-command: |
+        ./scripts/build-dosbox.sh
+        version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/screamer-launcher/Cargo.toml | head -1)"
+        name="ScreamerLauncher-v${version}"
+        package="dist/${name}-linux-x86_64"
+        mkdir -p "$package/lib"
+        cp target/release/ScreamerLauncher target/release/dosbox \
+           README.md CHANGELOG.md THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE "$package/"
+        cp -r target/release/resources "$package/resources"
+        cp -r linux "$package/linux"
+        cp "$REA_SDK/rea-play.sh" "$package/linux/rea-play.sh"
+        for binary in "$package/ScreamerLauncher" "$package/dosbox"; do
+          while read -r libpath; do
+            case "$(basename "$libpath")" in
+              libSDL2*|libopus*|libogg*|libspeexdsp*|libpng*|libz-ng*)
+                cp -L "$libpath" "$package/lib/"
+                ;;
+            esac
+          done < <(ldd "$binary" | awk '/=> \// {print $3}')
+          patchelf --set-rpath '$ORIGIN/lib' "$binary"
+        done
+        (cd dist && zip -r "${name}-linux-x86_64.zip" "${name}-linux-x86_64")
+        "$REA_SDK/packaging/appimage-wine.sh" --native --app screamer --exe ScreamerLauncher \
+          --icon packaging/appimage/screamer-launcher.png \
+          --desktop packaging/appimage/screamer-launcher.desktop \
+          --payload dosbox --payload lib --optional-payload resources \
+          --env-path SCREAMER_DOSBOX=dosbox --cache "$REA_CACHE" \
+          --name "$name" "$package" dist
+      package-dir: dist/ScreamerLauncher-*-linux-x86_64.zip
+      package-allowlist: packaging/package.allow
+      artifact-name: ScreamerLauncher-linux
+      artifact-paths: |
+        dist/*.zip
+        dist/*.AppImage
 
   windows-packages:
     name: Windows x86_64
@@ -192,36 +170,16 @@ jobs:
     name: Publish tagged release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [linux-packages, windows-packages, source-archive]
-    runs-on: ubuntu-22.04
+    # Granted even when unused: GitHub checks a called workflow's job
+    # permissions before its `if:`.
     permissions:
       contents: write
       id-token: write
       attestations: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Verify tag matches package version
-        run: |
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/screamer-launcher/Cargo.toml | head -1)"
-          test "$GITHUB_REF_NAME" = "v${version}"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          pattern: ScreamerLauncher-*
-          merge-multiple: true
-          path: dist
-      - name: Create checksums
-        run: (cd dist && sha256sum *.zip *.AppImage *.tar.xz > SHA256SUMS)
-      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
-        with:
-          subject-path: |
-            dist/*.zip
-            dist/*.AppImage
-            dist/*.tar.xz
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" dist/*
-          --repo "$GITHUB_REPOSITORY"
-          --title "$GITHUB_REF_NAME"
-          --verify-tag
-          --generate-notes
+    uses: akitaonrails/rea-launcher-sdk/.github/workflows/launcher-release.yml@v0.1.0
+    with:
+      package: screamer-launcher
+      artifact-pattern: ScreamerLauncher-*
+      # GitHub's generated notes, as before.
+      notes: generate
+      runs-on: ubuntu-22.04

@@ -1,0 +1,17 @@
+# The Linux zip (checked by sdk/packaging/smoke-package.sh in CI). Anything
+# not listed fails the build, so game files can never ship.
+ScreamerLauncher x
+dosbox x
+README.md
+CHANGELOG.md
+THIRD_PARTY.md
+LICENSE-MIT
+LICENSE-APACHE
+# Shared libraries bundled for the launcher and DOSBox (SDL2, opus, ...).
+lib/*.so*
+# DOSBox Staging's own resources (shaders, fonts, mapping data).
+resources/* optional
+linux/screamer-play x
+linux/rea-play.sh
+linux/README.md
+linux/tests/*.sh
