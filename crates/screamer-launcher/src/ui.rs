@@ -477,11 +477,18 @@ impl Window {
             CHASSIS,
             Fade::Right,
         );
+        // The credits below sit on solid navy, never on the picture.
+        let solid = rect.bottom() - 72.0;
         widgets::gradient(
             &p,
-            Rect::from_min_max(pos2(rect.left(), rect.bottom() - 190.0), rect.max),
+            Rect::from_min_max(pos2(rect.left(), solid - 150.0), pos2(rect.right(), solid)),
             CHASSIS,
             Fade::Down,
+        );
+        p.rect_filled(
+            Rect::from_min_max(pos2(rect.left(), solid), rect.max),
+            0.0,
+            CHASSIS,
         );
         let x = rect.left() + 20.0;
         let y = rect.bottom() - 20.0;
@@ -525,7 +532,7 @@ impl Window {
         } else {
             (
                 format!(
-                    "{} was not found in this folder.",
+                    "{} was not found in this folder. Choose the folder that holds it, or another game.",
                     self.form.which.display_name()
                 ),
                 ERROR,
