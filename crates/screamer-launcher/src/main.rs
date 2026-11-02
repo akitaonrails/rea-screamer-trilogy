@@ -54,10 +54,10 @@ const INSTANCE: &str = "rea-screamer";
 /// brought forward; an error when no window was found (the game runs).
 #[cfg(windows)]
 fn single_instance() -> Result<Option<rea_launcher_win32::instance::Guard>, String> {
-    use rea_launcher_win32::instance::{self, Window};
+    use rea_launcher_win32::instance;
     match instance::single(INSTANCE) {
         Ok(guard) => Ok(Some(guard)),
-        Err(running) if running.bring_to_front(Window::Title(ui::TITLE)) => {
+        Err(_) if win32::bring_to_front(ui::TITLE) => {
             log().info("another launcher is open: brought its window forward");
             Ok(None)
         }
