@@ -51,6 +51,10 @@ REA_FULLSCREEN_SIZE=screen
 REA_SCREEN=${SCREAMER_SCREEN:-}
 # DOSBox finds the pads itself; no SDL variables are added.
 REA_SDL_ENV=
+# `--play --scaler pixel --resolution 1280x720`: gamescope uses them for
+# that run only (launcher.cfg is not changed); the launcher gets them too.
+REA_HELPER_KEYS="scaler resolution"
+REA_FLAG_SWITCHES="--no-window --settings --linux --check --controllers --help"
 
 rea_hook_command() {
   case "${1:-}" in

@@ -38,6 +38,24 @@ case "$(cat "$T/ran")" in *"-F fsr --"*) echo "ok   default is fsr" ;; *) echo "
 printf 'resolution = 1920x1080\nscaler = sharpest\n' > "$CFGDIR/launcher.cfg"
 rea_start > /dev/null
 case "$(cat "$T/ran")" in *"-F fsr --"*) echo "ok   an unknown scaler is fsr" ;; *) echo "FAIL unknown scaler"; fails=$((fails + 1)) ;; esac
+# One-run flags: --scaler and --resolution win over launcher.cfg for that
+# run (both spellings), reach the launcher too, and launcher.cfg is unchanged;
+# the next plain run is back to launcher.cfg.
+printf 'resolution = 1920x1080\nscaler = fsr\n' > "$CFGDIR/launcher.cfg"
+cp "$CFGDIR/launcher.cfg" "$T/cfg.before"
+rea_start --scaler pixel --resolution=1280x720 > /dev/null
+case "$(cat "$T/ran")" in
+  *"gamescope -w 1280 -h 720 -f -S fit -F pixel --"*"--no-window --scaler pixel --resolution=1280x720"*)
+    echo "ok   one-run --scaler and --resolution" ;;
+  *) echo "FAIL one-run flags: $(cat "$T/ran")"; fails=$((fails + 1)) ;;
+esac
+cmp -s "$CFGDIR/launcher.cfg" "$T/cfg.before" && echo "ok   launcher.cfg unchanged by one-run flags" \
+  || { echo "FAIL launcher.cfg changed"; fails=$((fails + 1)); }
+rea_start > /dev/null
+case "$(cat "$T/ran")" in
+  *"-w 1920 -h 1080 -f -S fit -F fsr --"*) echo "ok   a plain run reads launcher.cfg again" ;;
+  *) echo "FAIL after one-run: $(cat "$T/ran")"; fails=$((fails + 1)) ;;
+esac
 # The race size: WIDTHxHEIGHT as written (any case/spacing); fullscreen is
 # the screen's size; original and anything else keep 1920x1080.
 size_case() {  # resolution, screen, expected "-w W -h H"

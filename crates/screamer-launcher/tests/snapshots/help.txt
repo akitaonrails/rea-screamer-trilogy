@@ -3,7 +3,7 @@ ScreamerLauncher <version>
 ScreamerLauncher [1|2|rally] [options]
 
 Options (the same keys in launcher.cfg; they override it for one run,
---game, --which and --scaler are remembered):
+--game and --which are remembered):
   --which screamer|screamer2|screamer-rally   Game
   --game <folder>                             Game folder
   --saves <folder>                            Saves folder

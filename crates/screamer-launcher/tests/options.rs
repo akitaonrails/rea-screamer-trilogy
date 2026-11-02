@@ -275,12 +275,15 @@ fn gamepad_options_reach_the_hooks() {
 }
 
 #[test]
-fn scaler_is_remembered_for_the_linux_helper() {
+fn scaler_is_a_key_and_a_one_run_flag() {
     both("scaler", "pixel", |s, _| {
         assert_eq!(config::cfg_value(s, "scaler").as_deref(), Some("pixel"));
         let saved = config::save_keys("", s, &["scaler"]);
         assert_eq!(saved, "scaler = pixel\n");
     });
+    // --scaler lasts one run: screamer-play reads it (REA_HELPER_KEYS),
+    // the launcher never writes it into launcher.cfg.
+    assert_eq!(config::REMEMBERED, ["game", "which"]);
 }
 
 #[test]

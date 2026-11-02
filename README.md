@@ -216,7 +216,7 @@ Every option is one `launcher.cfg` key, one command-line flag (same name, `_` as
 | `renderer` / `--renderer` | `auto`, `3dfx`, `svga16`, `svga8`, `vga` | Picture: Renderer |
 | `resolution` / `--resolution` | `WIDTHxHEIGHT`, `fullscreen`, `original` | Picture: Display |
 | `texture_filter` / `--texture-filter` | `original` (CRT), `fsr`, `sharp`, `smooth` | Picture: Shader / Upscaler |
-| `scaler` / `--scaler` | `nearest`, `pixel`, `fsr`, `linear` (Linux, gamescope; remembered) | Picture: Scaler (Linux) |
+| `scaler` / `--scaler` | `nearest`, `pixel`, `fsr`, `linear` (Linux, gamescope; a flag lasts one run) | Picture: Scaler (Linux) |
 | `widescreen` / `--widescreen` | `on`, `off` | Picture: Widescreen |
 | `extended_draw_distance` / `--extended-draw-distance` | `on`, `off` | Picture: Extended draw distance |
 | `vsync` / `--vsync` | `on`, `off` | Picture: Vsync |

@@ -113,14 +113,15 @@ fn run() -> Result<ExitCode, String> {
         }
     };
 
-    // Remember --game, --which and --scaler passed on the command line in
-    // launcher.cfg (not for --check, which only looks).
+    // Remember --game and --which passed on the command line in launcher.cfg
+    // (not for --check, which only looks).
     if mode != Mode::Check {
         let remembered = config::save_keys(
             &cfg_text,
             &cli_settings,
-            &["game", "which", "scaler"]
-                .into_iter()
+            &config::REMEMBERED
+                .iter()
+                .copied()
                 .filter(|k| config::cfg_value(&cli_settings, k).is_some())
                 .collect::<Vec<_>>(),
         );

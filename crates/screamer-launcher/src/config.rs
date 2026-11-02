@@ -358,11 +358,16 @@ pub const OPTIONS: &[OptionSpec] = &[
         "scaler",
         Kind::Choice(SCALERS),
         "Scaler",
-        "Linux: how gamescope enlarges the game to the screen (remembered, read by screamer-play).",
+        "Linux: how gamescope enlarges the game to the screen (read by screamer-play).",
     )
     .helper_owned()
     .with_example("fsr"),
 ];
+
+/// The keys a command-line flag also saves in `launcher.cfg` (every other
+/// flag lasts one run; `screamer-play` reads a one-run `--scaler` and
+/// `--resolution` itself through `REA_HELPER_KEYS`).
+pub const REMEMBERED: &[&str] = &["game", "which"];
 
 /// The row of `key` (canonical key or alias).
 pub fn option(key: &str) -> &'static OptionSpec {
@@ -375,7 +380,7 @@ pub fn template() -> String {
          One setting per line as key = value; lines starting with # are comments. \
          A setting left out uses the launcher's default. Command-line flags \
          (--game, --which, --resolution, ...) override this file for one run; \
-         --game, --which and --scaler are remembered.",
+         --game and --which are remembered.",
         OPTIONS,
     )
 }
@@ -416,7 +421,7 @@ pub fn usage() -> String {
     format!(
         "ScreamerLauncher {}\n\nScreamerLauncher [1|2|rally] [options]\n\n\
          Options (the same keys in launcher.cfg; they override it for one run,\n\
-         --game, --which and --scaler are remembered):\n{}\n{}",
+         --game and --which are remembered):\n{}\n{}",
         env!("CARGO_PKG_VERSION"),
         spec::usage(OPTIONS, KeyStyle::Underscore),
         lines.join("\n")
