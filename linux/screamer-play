@@ -4,13 +4,17 @@
 #
 #   screamer-play [1|2|rally]          show the settings window, then start the game
 #   screamer-play --play [1|2|rally]   start the game with saved settings (no window)
-#   screamer-play stop                 end the game
+#   screamer-play stop                 end the game this script started
 #   screamer-play status               running or idle
+#
+# Every launch waits for the game to end; the game runs in its own session,
+# recorded in running.pid with its start time, so "stop" ends exactly that
+# session (gamescope, the launcher, DOSBox) and never a stale or reused pid.
 #
 # Optional environment:
 #   SCREAMER_LAUNCHER   path to ScreamerLauncher binary
 #   SCREAMER_DOSBOX     path to bundled dosbox binary
-#   SCREAMER_WAIT       set: wait for the game to end (used by AppImage)
+#   SCREAMER_WAIT       accepted for AppImage compatibility; every launch waits
 #   SCREAMER_SCREEN     WIDTHxHEIGHT for "resolution = fullscreen" (default:
 #                       the current mode from xrandr, else 1920x1080)
 set -u
@@ -33,9 +37,34 @@ LOCK=$STATE/running.pid
 
 get_key() { [ -f "$CFG" ] && sed -n "s|^$1 *= *||p" "$CFG" | tail -1; }
 
-running() {
-  [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK")" 2>/dev/null
+# Print session id and process start time from /proc. Text after the final
+# ") " avoids comm fields that contain spaces or parentheses.
+proc_stat() {
+  [ -r "/proc/$1/stat" ] || return 1
+  stat=$(cat "/proc/$1/stat") || return 1
+  rest=${stat##*) }
+  # shellcheck disable=SC2086
+  set -- $rest
+  [ "$#" -ge 20 ] || return 1
+  printf '%s %s\n' "$4" "${20}"
 }
+
+read_lock() {
+  [ -r "$LOCK" ] || return 1
+  IFS=' ' read -r LOCK_PID LOCK_START < "$LOCK" || return 1
+  case "$LOCK_PID" in ''|*[!0-9]*) return 1 ;; esac
+  case "$LOCK_START" in ''|*[!0-9]*) return 1 ;; esac
+}
+
+# A lock alone proves nothing: the pid must still be the same setsid session
+# leader with the same start time recorded when we spawned it.
+session_valid() {
+  read_lock || return 1
+  stats=$(proc_stat "$LOCK_PID") || return 1
+  [ "$stats" = "$LOCK_PID $LOCK_START" ]
+}
+
+running() { session_valid; }
 
 has_nv_lib() {
   if [ -n "${SCREAMER_NV_LIB_CHECK:-}" ]; then
@@ -86,15 +115,46 @@ screen_size() {
   fi
 }
 
+launch_interrupted() {
+  trap - EXIT HUP INT TERM
+  if session_valid; then
+    kill -TERM "-$LOCK_PID" 2>/dev/null || true
+  fi
+  rm -f "$LOCK"
+  exit 143
+}
+
+# The game gets its own session so stop can address only this launch. Every
+# launch waits and removes the lock on a natural exit or an interruption.
+# SCREAMER_LAUNCH_CMD replaces the whole launch (tests).
 launch() {
   if [ -n "${SCREAMER_LAUNCH_CMD:-}" ]; then
     "$SCREAMER_LAUNCH_CMD" "$@"
-  elif [ -n "${SCREAMER_WAIT:-}" ]; then
-    env $GPU "$@" > "$STATE/play.log" 2>&1
-  else
-    setsid env $GPU "$@" > "$STATE/play.log" 2>&1 < /dev/null &
-    echo $! > "$LOCK"
+    return
   fi
+  setsid env $GPU "$@" > "$STATE/play.log" 2>&1 < /dev/null &
+  pid=$!
+  stats=$(proc_stat "$pid") || {
+    wait "$pid"
+    return "$?"
+  }
+  printf '%s %s\n' "$pid" "${stats#* }" > "$LOCK"
+  trap 'rm -f "$LOCK"' EXIT
+  trap 'launch_interrupted' HUP INT TERM
+  wait "$pid"
+  rc=$?
+  rm -f "$LOCK"
+  trap - EXIT HUP INT TERM
+  return "$rc"
+}
+
+stop_session() {
+  # Revalidate right before signalling: stale or reused pids are never
+  # targets, and the whole session (gamescope, launcher, DOSBox) ends.
+  if session_valid; then
+    kill -TERM "-$LOCK_PID" 2>/dev/null || true
+  fi
+  rm -f "$LOCK"
 }
 
 start() {
@@ -147,9 +207,12 @@ case "${1:-}" in
   status)
     if running; then echo running; else echo idle; fi ;;
   stop)
-    [ -f "$LOCK" ] && kill "$(cat "$LOCK")" 2>/dev/null
-    rm -f "$LOCK"
+    stop_session
     echo stopped ;;
   *)
+    # Anything else goes to the launcher itself (--check, --controllers, ...).
+    if [ -z "$LAUNCHER" ] || [ ! -x "$LAUNCHER" ]; then
+      echo "ScreamerLauncher not found next to screamer-play (or set SCREAMER_LAUNCHER)" >&2; exit 1
+    fi
     exec "$LAUNCHER" "$@" ;;
 esac

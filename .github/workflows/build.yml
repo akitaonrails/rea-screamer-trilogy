@@ -44,6 +44,7 @@ jobs:
           cargo clippy --workspace --all-targets --locked -- -D warnings
           sh linux/tests/gpu-env.sh
           sh linux/tests/scaler.sh
+          sh linux/tests/supervision.sh
       - name: Build launcher and bundled DOSBox
         run: |
           ./scripts/build-dosbox.sh
