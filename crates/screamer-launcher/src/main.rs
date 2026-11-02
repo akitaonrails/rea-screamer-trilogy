@@ -38,6 +38,36 @@ fn is_interactive(mode: &Mode) -> bool {
     *mode == Mode::Play { show_window: true }
 }
 
+/// The modes that open the window or play take the one-launcher instance
+/// (Windows; on Linux screamer-play's session lock and the runtime lock do
+/// it). `--check`, `--controllers` and `--help` only look.
+fn takes_instance(mode: &Mode) -> bool {
+    matches!(mode, Mode::Play { .. } | Mode::SettingsOnly { .. })
+}
+
+/// The instance name (`Local\rea-launcher-rea-screamer`).
+#[cfg(windows)]
+const INSTANCE: &str = "rea-screamer";
+
+/// One launcher per user session (STANDARDS "Clean exit, single
+/// instance"): `None` when another one was open and its window was
+/// brought forward; an error when no window was found (the game runs).
+#[cfg(windows)]
+fn single_instance() -> Result<Option<rea_launcher_win32::instance::Guard>, String> {
+    use rea_launcher_win32::instance::{self, Window};
+    match instance::single(INSTANCE) {
+        Ok(guard) => Ok(Some(guard)),
+        Err(running) if running.bring_to_front(Window::Title(ui::TITLE)) => {
+            log().info("another launcher is open: brought its window forward");
+            Ok(None)
+        }
+        Err(_) => Err(
+            "Screamer is already running. Quit the game first, then start the launcher again."
+                .to_string(),
+        ),
+    }
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
@@ -88,6 +118,18 @@ fn run() -> Result<ExitCode, String> {
             return Err(format!("{message}\n\n{}", config::usage()));
         }
     };
+
+    #[cfg(windows)]
+    let _instance = if takes_instance(&mode) {
+        match single_instance()? {
+            Some(guard) => Some(guard),
+            None => return Ok(ExitCode::SUCCESS),
+        }
+    } else {
+        None
+    };
+    #[cfg(not(windows))]
+    let _ = takes_instance(&mode);
 
     let cfg_path = locate_config_file();
     // Only a missing file is a first run; one that cannot be read is never
@@ -441,6 +483,15 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
     // The launcher writes into both folders; neither may overlap the
     // read-only game folder.
     runtime::check_folders(&disc.root_dir, &runtime_dir, &saves_dir)?;
+    // Held until DOSBox ends and the saves are copied back.
+    let _run_lock = match runtime::lock_runtime(&runtime_dir) {
+        Ok(lock) => Some(lock),
+        Err(busy @ runtime::RunLockError::Busy(_)) => return Err(busy.to_string()),
+        Err(e) => {
+            warn(&format!("{e}; playing without the running-game check"));
+            None
+        }
+    };
 
     let machine = MachineCapabilities::detect();
     let mut settings = settings.clone();
@@ -550,5 +601,34 @@ mod tests {
         ] {
             assert!(!is_interactive(&mode(scripted)), "{scripted:?}");
         }
+    }
+
+    #[test]
+    fn only_the_window_and_play_take_the_instance() {
+        let mode = |args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+            extract_mode(&args).unwrap().0
+        };
+        for one in [
+            &[][..],
+            &["rally"],
+            &["--no-window"],
+            &["--settings", "--linux"],
+        ] {
+            assert!(takes_instance(&mode(one)), "{one:?}");
+        }
+        for looks in [&["--check"][..], &["--controllers"]] {
+            assert!(!takes_instance(&mode(looks)), "{looks:?}");
+        }
+    }
+
+    /// Windows (Wine): a second launcher finds the first one's instance.
+    #[cfg(windows)]
+    #[test]
+    fn a_second_launcher_finds_the_first() {
+        let first = rea_launcher_win32::instance::single(INSTANCE).expect("first");
+        assert!(rea_launcher_win32::instance::single(INSTANCE).is_err());
+        drop(first);
+        assert!(rea_launcher_win32::instance::single(INSTANCE).is_ok());
     }
 }

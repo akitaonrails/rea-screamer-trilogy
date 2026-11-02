@@ -87,6 +87,9 @@ const SIZE: Vec2 = vec2(form::WINDOW.0, form::WINDOW.1);
 const PHOTO_W: f32 = 284.0;
 
 /// The credit under the box art (owner decision 2026-11-02; THIRD_PARTY.md).
+/// The settings window's title (a second launcher finds the window by it).
+pub const TITLE: &str = "Screamer Trilogy";
+
 const ART_CREDIT: &str = "Box art: Virgin Interactive. Scans: MobyGames";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,12 +128,12 @@ pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, Sh
     // Native on Linux and Windows (never Wine): created at 1x, fitted to
     // the screen and its scale on the first frame.
     let fit = WindowFit::new(SIZE, false, None, 1.0).with_native_fit(true);
-    let options = fit.native_options("Screamer Trilogy");
+    let options = fit.native_options(TITLE);
     let path = settings_path.to_path_buf();
     let text = text.to_string();
     let shared = outcome.clone();
     let result = eframe::run_native(
-        "Screamer Trilogy",
+        TITLE,
         options,
         Box::new(|cc| {
             opened = true;

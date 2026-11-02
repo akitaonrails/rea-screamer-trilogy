@@ -922,6 +922,57 @@ fn is_save_file(name: &str) -> bool {
 /// Name of the save-sync state inside the runtime folder.
 pub const SAVE_STATE: &str = ".screamer-saves";
 
+/// The lock file inside a runtime folder while the game plays from it.
+pub const RUN_LOCK: &str = ".screamer-running";
+
+/// Held while the game plays from a runtime folder, so a second launcher
+/// never rewrites the runtime under a running game (STANDARDS "Clean exit,
+/// single instance": Play is refused while the game from this runtime
+/// runs). The system releases it when the launcher ends, however it ends.
+#[derive(Debug)]
+pub struct RunLock {
+    _file: fs::File,
+}
+
+/// Why [`lock_runtime`] gave no lock.
+#[derive(Debug)]
+pub enum RunLockError {
+    /// Another launcher plays from this runtime folder.
+    Busy(PathBuf),
+    /// The lock file can't be made or locked (a file system without
+    /// locks): the launcher plays without the check.
+    Unavailable(std::io::Error),
+}
+
+impl std::fmt::Display for RunLockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunLockError::Busy(runtime) => write!(
+                f,
+                "The game is already running from {}. Quit it first, then press Play again.",
+                runtime.display()
+            ),
+            RunLockError::Unavailable(e) => write!(f, "cannot lock the runtime folder: {e}"),
+        }
+    }
+}
+
+/// Takes the runtime folder's [`RUN_LOCK`] (creating the folder).
+pub fn lock_runtime(runtime: &Path) -> Result<RunLock, RunLockError> {
+    fs::create_dir_all(runtime).map_err(RunLockError::Unavailable)?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(runtime.join(RUN_LOCK))
+        .map_err(RunLockError::Unavailable)?;
+    match file.try_lock() {
+        Ok(()) => Ok(RunLock { _file: file }),
+        Err(fs::TryLockError::WouldBlock) => Err(RunLockError::Busy(runtime.to_path_buf())),
+        Err(fs::TryLockError::Error(e)) => Err(RunLockError::Unavailable(e)),
+    }
+}
+
 /// The folders holding persistent saves (only the files directly in them).
 const SAVE_FOLDERS: &[&str] = &["", "CONFIG", "REPLAYS"];
 
@@ -1065,6 +1116,27 @@ mod tests {
 
     fn listing(items: &[(&str, Stamp)]) -> Listing {
         items.iter().map(|(r, s)| (r.to_string(), *s)).collect()
+    }
+
+    #[test]
+    fn a_second_play_from_the_same_runtime_is_refused() {
+        let rt = temp("run lock José d'Ação");
+        let first = lock_runtime(&rt).expect("first lock");
+        let second = lock_runtime(&rt).unwrap_err();
+        assert!(matches!(second, RunLockError::Busy(_)), "{second:?}");
+        let message = second.to_string();
+        assert!(message.contains("already running"), "{message}");
+        assert!(message.contains("d'Ação"), "{message}");
+        // Another runtime (another game) is free.
+        let other = lock_runtime(&temp("run lock other")).expect("other runtime");
+        drop(other);
+        // The lock goes with the launcher that held it.
+        drop(first);
+        let again = lock_runtime(&rt).expect("free after the first launcher ended");
+        drop(again);
+        // The lock file is runtime-only: never a save, never synced.
+        assert!(!is_save(RUN_LOCK));
+        let _ = fs::remove_dir_all(&rt);
     }
 
     fn temp(name: &str) -> PathBuf {
