@@ -569,6 +569,7 @@ impl Window {
                     subtitle: &subtitle,
                     selected: self.form.which == game,
                     installed,
+                    disabled: None,
                 };
                 if widgets::game_card(ui, vec2(card_w, 64.0), &card).clicked() {
                     chosen_game = Some(game);
@@ -585,7 +586,7 @@ impl Window {
         let row = config::option("game");
         widgets::heading(ui, row.label);
         let hint = "Folder with Screamer, Screamer 2, Screamer Rally, or all three";
-        if widgets::folder_field(ui, &mut self.form.game, hint, || {
+        if widgets::folder_field(ui, &mut self.form.game, row.label, hint, || {
             pick_folder_dialog("Choose your Screamer or trilogy folder")
         }) {
             self.error = None;
@@ -657,6 +658,7 @@ impl Window {
         widgets::folder_field(
             ui,
             &mut self.form.saves,
+            row.label,
             "Default: the launcher's own saves folder",
             || pick_folder_dialog("Choose where your saves are kept"),
         );
