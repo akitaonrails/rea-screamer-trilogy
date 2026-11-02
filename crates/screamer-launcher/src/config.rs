@@ -464,28 +464,34 @@ fn above_1080p((w, h): (u32, u32)) -> bool {
 /// Older spellings, read as today's: a game number (`which = 2`), a
 /// renderer's executable name, `deadzone`/`rumble` `off`, and the old
 /// `fps_limit` (30, 50 or 100 frames per second; only 60 and above ever
-/// changed anything: frame generation) as `frame_generation`.
-pub fn normalize<'a>(key: &str, value: &'a str) -> Cow<'a, str> {
-    let owned = |s: &str| Cow::Owned(s.to_string());
+/// changed anything: frame generation) as `frame_generation`. An
+/// `fps_limit` that version never took (a number below 10 or above 1000)
+/// is refused, as it was then, instead of read as a switch (`1` = on).
+/// The error is what the key takes, for the message.
+pub fn normalize<'a>(key: &str, value: &'a str) -> Result<Cow<'a, str>, &'static str> {
+    let owned = |s: &str| Ok(Cow::Owned(s.to_string()));
     match key {
-        "which" | "play" => Game::parse(value).map_or(Cow::Borrowed(value), |g| owned(g.slug())),
-        "renderer" => RendererChoice::parse(value).map_or(Cow::Borrowed(value), |r| owned(r.key())),
+        "which" | "play" => {
+            Game::parse(value).map_or(Ok(Cow::Borrowed(value)), |g| owned(g.slug()))
+        }
+        "renderer" => {
+            RendererChoice::parse(value).map_or(Ok(Cow::Borrowed(value)), |r| owned(r.key()))
+        }
         "deadzone" | "rumble" if value.trim().eq_ignore_ascii_case("off") => owned("0"),
         "fps_limit" => {
             let v = value.trim();
             let fps = if v.eq_ignore_ascii_case("off") {
                 Some(0)
             } else {
-                v.parse::<u32>()
-                    .ok()
-                    .filter(|f| *f == 0 || (10..=1000).contains(f))
+                v.parse::<u32>().ok()
             };
             match fps {
-                Some(f) => owned(cfg::on_off(f >= 60)),
-                None => Cow::Borrowed(value),
+                Some(f) if f == 0 || (10..=1000).contains(&f) => owned(cfg::on_off(f >= 60)),
+                Some(_) => Err("a number from 10 to 1000 or off"),
+                None => Ok(Cow::Borrowed(value)),
             }
         }
-        _ => Cow::Borrowed(value),
+        _ => Ok(Cow::Borrowed(value)),
     }
 }
 
@@ -502,7 +508,7 @@ impl Settings {
     pub fn parse_file(text: &str) -> (Settings, Vec<String>) {
         let mut s = Settings::default();
         let warnings = cfg::parse(text, FILE_NAME, |key, value| {
-            let value = normalize(key, value);
+            let value = normalize(key, value).map_err(Rejected::needs)?;
             spec::dispatch(OPTIONS, key, &value, &mut |key, value| s.apply(key, value))
         });
         (s, warnings)
@@ -629,21 +635,38 @@ impl Settings {
         skip
     }
 
-    /// The command line's settings: `--key value` pairs and a bare game
-    /// name (`1`, `2`, `rally`, ...), which selects the game as `--which`.
+    /// The command line's settings: `--key value` (or `--key=value`) pairs
+    /// and a bare game name (`1`, `2`, `rally`, ...), which selects the game
+    /// as `--which`.
     pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Settings, ArgsError> {
         let mut words = Vec::new();
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
+            // `--key=value` is read as `--key value`, so old spellings
+            // (`--which=2`, `--fps-limit=100`) are normalized either way.
+            let (arg, inline) = match arg.split_once('=') {
+                Some((flag, value)) if flag.starts_with("--") => {
+                    (flag.to_string(), Some(value.to_string()))
+                }
+                _ => (arg, None),
+            };
             let row =
                 cfg::flag_key(&arg).and_then(|key| spec::find(OPTIONS, &key).map(|r| (key, r)));
             if let Some((key, _)) = row {
-                words.push(arg);
-                words.extend(args.next().map(|v| normalize(&key, &v).into_owned()));
+                if let Some(v) = inline.or_else(|| args.next()) {
+                    let value = normalize(&key, &v)
+                        .map_err(|what| ArgsError::Bad(format!("{arg} needs {what}, not {v}")))?;
+                    words.extend([arg, value.into_owned()]);
+                } else {
+                    words.push(arg);
+                }
             } else if let Some(game) = Game::parse(&arg) {
                 words.extend(["--which".to_string(), game.slug().to_string()]);
             } else {
-                words.push(arg);
+                words.push(match inline {
+                    Some(value) => format!("{arg}={value}"),
+                    None => arg,
+                });
             }
         }
         let mut s = Settings::default();

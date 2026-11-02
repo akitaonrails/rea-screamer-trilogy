@@ -410,6 +410,38 @@ fn a_0_6_launcher_cfg_still_reads_without_warnings() {
 }
 
 #[test]
+fn an_fps_limit_0_6_never_took_is_still_ignored() {
+    // 0.6.0 took 0, off and 10 to 1000; `fps_limit = 1` was refused, not
+    // read as the switch's `1` (on).
+    for bad in ["1", "5", "9", "1001"] {
+        let (s, warnings) = Settings::parse_file(&format!("fps_limit = {bad}\n"));
+        assert_eq!(s.frame_generation, None, "fps_limit = {bad}");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("a number from 10 to 1000 or off"),
+            "{warnings:?}"
+        );
+        let joined = format!("--fps-limit={bad}");
+        for flag in [&["--fps-limit", bad][..], &[joined.as_str()]] {
+            match args(flag) {
+                Err(ArgsError::Bad(msg)) => assert_eq!(
+                    msg,
+                    format!("--fps-limit needs a number from 10 to 1000 or off, not {bad}")
+                ),
+                other => panic!("{flag:?}: {other:?}"),
+            }
+        }
+    }
+    // The old spellings read the same as `--key=value`.
+    let s = args(&["--fps-limit=100", "--which=2", "--rumble=off"]).unwrap();
+    assert_eq!(s.frame_generation, Some(true));
+    assert_eq!(s.which, Some(Game::Screamer2));
+    assert_eq!(s.rumble, Some(0));
+    assert_eq!(file("fps_limit = 10\n").frame_generation, Some(false));
+    assert_eq!(file("fps_limit = 0\n").frame_generation, Some(false));
+}
+
+#[test]
 fn a_0_6_original_look_is_still_the_original_look() {
     // What 0.6.0's window saved for the Original look (vsync "as the game"
     // left unset, which DOSBox ran with vsync on).
