@@ -1,0 +1,40 @@
+ScreamerLauncher <version>
+
+ScreamerLauncher [1|2|rally] [options]
+
+Options (the same keys in launcher.cfg; they override it for one run,
+--game, --which and --scaler are remembered):
+  --which screamer|screamer2|screamer-rally   Game
+  --game <folder>                             Game folder
+  --saves <folder>                            Saves folder
+  --runtime <folder>                          Runtime folder
+  --dosbox <folder>                           DOSBox
+  --renderer auto|3dfx|svga16|svga8|vga       Renderer
+  --resolution <WxH>                          Display
+  --widescreen on|off                         Widescreen
+  --extended-draw-distance on|off             Extended draw distance
+  --frame-generation on|off                   Frame generation (100 FPS)
+  --vsync on|off                              Vsync
+  --texture-filter original|fsr|sharp|smooth  Shader / Upscaler
+  --gamepad-axes on|off                       Gamepad
+  --deadzone <0-30>                           Deadzone
+  --rumble <0-100>                            Rumble
+  --buttons <text>                            Buttons
+  --scaler nearest|pixel|fsr|linear           Scaler (Linux helper)
+
+Without options the settings window opens first.
+
+  --no-window              play with the saved settings, no window
+  --settings [--linux]     only the settings window; exit 0: Play pressed,
+                           3: closed without Play, 4: no window possible
+                           (play with the saved settings)
+  --check [--game <folder>] [--which <1|2|rally>]
+                           check every game found in the folder and every
+                           binary fix, without playing
+  --controllers            list the connected gamepads
+  --help                   this text
+
+resolution takes WIDTHxHEIGHT, fullscreen (the screen's size) or original;
+--dosbox takes a dosbox-staging program, not a folder.
+Exit codes: 0 played or checked, 2 an error (see launcher.log next to
+launcher.cfg), otherwise the game's own.
