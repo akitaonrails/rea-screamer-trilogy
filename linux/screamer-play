@@ -113,7 +113,7 @@ start() {
     *[!0-9x]*|x*|*x|*x*x*|"") ;;
     *x*) W=${res%x*}; H=${res#*x} ;;
   esac
-  F=$(get_key scaler); F=${F:-nearest}
+  F=$(get_key scaler); F=${F:-fsr}  # the template and the settings window default
   if [ -n "${GAMESCOPE_WAYLAND_DISPLAY:-}" ] || ! has_gamescope; then
     launch "$LAUNCHER" --no-window "$@"
   else

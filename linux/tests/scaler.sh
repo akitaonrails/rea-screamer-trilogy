@@ -29,7 +29,7 @@ for scaler in nearest pixel fsr linear; do
 done
 printf 'resolution = 1920x1080\n' > "$CFGDIR/launcher.cfg"
 start > /dev/null
-case "$(cat "$T/ran")" in *"-F nearest --"*) echo "ok   default is nearest" ;; *) echo "FAIL default"; fails=$((fails + 1)) ;; esac
+case "$(cat "$T/ran")" in *"-F fsr --"*) echo "ok   default is fsr" ;; *) echo "FAIL default"; fails=$((fails + 1)) ;; esac
 # The race size: WIDTHxHEIGHT as written (any case/spacing); fullscreen is
 # the screen's size; original and anything else keep 1920x1080.
 size_case() {  # resolution, screen, expected "-w W -h H"
