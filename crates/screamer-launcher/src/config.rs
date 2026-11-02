@@ -395,27 +395,31 @@ pub fn first_run(screen: Option<(u32, u32)>) -> String {
 
 /// The `--help` text.
 pub fn usage() -> String {
+    let lines = [
+        "Without options the settings window opens first.",
+        "",
+        "  --no-window              play with the saved settings, no window",
+        "  --settings [--linux]     only the settings window; exit 0: Play pressed,",
+        "                           3: closed without Play, 4: no window possible",
+        "                           (play with the saved settings)",
+        "  --check [--game <folder>] [--which <1|2|rally>]",
+        "                           check every game found in the folder and every",
+        "                           binary fix, without playing",
+        "  --controllers            list the connected gamepads",
+        "  --help                   this text",
+        "",
+        "resolution takes WIDTHxHEIGHT, fullscreen (the screen's size) or original;",
+        "--dosbox takes a dosbox-staging program, not a folder.",
+        "Exit codes: 0 played or checked, 2 an error (see launcher.log next to",
+        "launcher.cfg), otherwise the game's own.",
+    ];
     format!(
-        "ScreamerLauncher {}\n\n\
-ScreamerLauncher [1|2|rally] [options]\n\n\
-Options (the same keys in launcher.cfg; they override it for one run,\n\
---game, --which and --scaler are remembered):\n\
-{}\n\
-Without options the settings window opens first.\n\n\
-  --no-window              play with the saved settings, no window\n\
-  --settings [--linux]     only the settings window; exit 0: Play pressed,\n\
-                           3: closed without Play, 4: no window possible\n\
-                           (play with the saved settings)\n\
-  --check [--game <folder>] [--which <1|2|rally>]\n\
-                           check every game found in the folder and every\n\
-                           binary fix, without playing\n\
-  --controllers            list the connected gamepads\n\
-  --help                   this text\n\n\
-resolution takes WIDTHxHEIGHT, fullscreen (the screen's size) or original.\n\
-Exit codes: 0 played or checked, 2 an error (see launcher.log next to\n\
-launcher.cfg), otherwise the game's own.",
+        "ScreamerLauncher {}\n\nScreamerLauncher [1|2|rally] [options]\n\n\
+         Options (the same keys in launcher.cfg; they override it for one run,\n\
+         --game, --which and --scaler are remembered):\n{}\n{}",
         env!("CARGO_PKG_VERSION"),
-        spec::usage(OPTIONS, KeyStyle::Underscore)
+        spec::usage(OPTIONS, KeyStyle::Underscore),
+        lines.join("\n")
     )
 }
 
