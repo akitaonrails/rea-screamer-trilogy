@@ -768,7 +768,12 @@ fn bring_over(from: &Path, to: &Path, rel: &str, stamp: Stamp) -> io::Result<boo
     // attribute to be replaced later, so such files are copied instead.
     let linkable = is_static(rel)
         && !(cfg!(windows) && fs::metadata(from).is_ok_and(|m| m.permissions().readonly()));
-    if linkable && fs::hard_link(from, to).is_ok() {
+    // A hard link to a symbolic link would be the link itself (dangling
+    // when relative); link the file it points to.
+    if linkable
+        && let Ok(target) = fs::canonicalize(from)
+        && fs::hard_link(&target, to).is_ok()
+    {
         return Ok(true);
     }
     install_copy(from, to)?;
@@ -1448,6 +1453,44 @@ mod tests {
         );
 
         for d in [saves, rt] {
+            fs::remove_dir_all(d).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_source_files_are_staged_as_their_targets() {
+        let game = temp("symlink-game");
+        let rt = temp("symlink-rt");
+        let outside = temp("symlink-outside");
+        make_game(&game);
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("REAL.OVL"), vec![7u8; 200_000]).unwrap();
+        // A relative link, an absolute link, and a linked code file.
+        std::os::unix::fs::symlink("track.dat", game.join("DATA/rel.dat")).unwrap();
+        std::os::unix::fs::symlink(game.join("DATA/track.dat"), game.join("DATA/abs.dat")).unwrap();
+        std::os::unix::fs::symlink(outside.join("REAL.OVL"), game.join("GLIDE2X.OVL")).unwrap();
+
+        stage_source_tree(&game, &rt, None).unwrap();
+        for rel in ["DATA/REL.DAT", "DATA/ABS.DAT", "GLIDE2X.OVL"] {
+            let meta = fs::symlink_metadata(rt.join(rel)).unwrap();
+            assert!(meta.is_file(), "{rel} must be a real file");
+        }
+        assert_eq!(fs::read(rt.join("DATA/REL.DAT")).unwrap(), b"track");
+        assert_eq!(fs::read(rt.join("DATA/ABS.DAT")).unwrap(), b"track");
+        assert_eq!(fs::read(rt.join("GLIDE2X.OVL")).unwrap().len(), 200_000);
+        // Unchanged on the next launch.
+        assert_eq!(stage_source_tree(&game, &rt, None).unwrap().0, 0);
+
+        // The fallback GLIDE2X.OVL (e.g. SCREAMER_GLIDE2X_OVL) may be a link too.
+        let ovl_link = outside.join("link.ovl");
+        std::os::unix::fs::symlink("REAL.OVL", &ovl_link).unwrap();
+        let dst = rt.join("FALLBACK.OVL");
+        bring_over(&ovl_link, &dst, "GLIDE2X.OVL", stamp(200_000, 1)).unwrap();
+        assert!(fs::symlink_metadata(&dst).unwrap().is_file());
+        assert_eq!(fs::read(&dst).unwrap().len(), 200_000);
+
+        for d in [game, rt, outside] {
             fs::remove_dir_all(d).unwrap();
         }
     }
