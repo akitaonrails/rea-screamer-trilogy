@@ -257,12 +257,19 @@ of it too.
 
 - The games run at 50 frames per second. Every attempt to raise it broke
   their physics, so it stays. Frame generation shows 100 frames per second
-  on top of that, but no recorded run has confirmed it yet.
-- Widescreen has been seen in Screamer only; Screamer 2 and Screamer
-  Rally have not been checked by eye.
-- The games' control setup (`CONFIG/CONTROLS.CFG`) is rewritten at every
-  start. If you change keys in the game's own menu, they may not survive
-  the next start (not checked yet).
+  on top of that (measured in a Screamer race).
+- At the Enhanced and Steam Deck sizes, Screamer 2 and Screamer Rally
+  draw their 3D at twice the original resolution in software and can
+  show fewer frames: about 40 in Screamer 2 and 30 in Rally in a
+  headless test on a machine that was also running other tests. The
+  race itself keeps its speed. The
+  Original look, or Frame generation, gives a smoother picture there.
+- Widescreen in Screamer 2 and Screamer Rally was checked in screenshots
+  only: the 3D view is wider without stretching, but the dashboard
+  (speedometer, lap panel) is stretched to 16:9.
+- The games' control setup (`CONFIG/CONTROLS.CFG`) is written at every
+  start. The games themselves never save it (only their setup program
+  does, which the launcher never runs), so nothing is lost.
 - Not yet tested with the real games: native Windows 10/11, the Steam
   Deck, 1440p and 4K screens, ultrawide screens. What was checked is in
   [`docs/RUNTIME_NOTES.md`](docs/RUNTIME_NOTES.md).
