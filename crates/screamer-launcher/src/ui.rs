@@ -1211,17 +1211,13 @@ fn pick_folder_dialog(title: &str) -> Option<PathBuf> {
     }
 }
 
-/// The pad, read as XInput button bits ([`rea_launcher::pad`]): the
-/// joystick device on Linux, WinMM on Windows.
+/// The pad, read as XInput button bits ([`rea_launcher::pad`]): every
+/// joystick device on Linux (the SDK's `pad::joystick`), WinMM on Windows.
 #[derive(Default)]
 struct PadPoller {
     nav: PadNav,
     #[cfg(target_os = "linux")]
-    js_file: Option<std::fs::File>,
-    #[cfg(target_os = "linux")]
-    buttons: [bool; 16],
-    #[cfg(target_os = "linux")]
-    axes: [i16; 8],
+    joysticks: rea_launcher_ui::pad::joystick::Joysticks,
 }
 
 impl PadPoller {
@@ -1232,51 +1228,7 @@ impl PadPoller {
 
     #[cfg(target_os = "linux")]
     fn read_mask(&mut self) -> u16 {
-        use std::io::Read;
-        use std::os::unix::fs::OpenOptionsExt;
-
-        if self.js_file.is_none() {
-            for idx in 0..4 {
-                let path = format!("/dev/input/js{idx}");
-                if let Ok(f) = std::fs::OpenOptions::new()
-                    .read(true)
-                    .custom_flags(0o4000) // O_NONBLOCK
-                    .open(&path)
-                {
-                    self.buttons = [false; 16];
-                    self.axes = [0; 8];
-                    self.js_file = Some(f);
-                    break;
-                }
-            }
-        }
-
-        if let Some(f) = &mut self.js_file {
-            let mut buf = [0u8; 8];
-            loop {
-                match f.read_exact(&mut buf) {
-                    Ok(()) => {
-                        let value = i16::from_le_bytes([buf[4], buf[5]]);
-                        let ev_type = buf[6] & !0x80; // strip JS_EVENT_INIT
-                        let number = buf[7] as usize;
-                        if ev_type == 0x01 && number < self.buttons.len() {
-                            self.buttons[number] = value != 0;
-                        } else if ev_type == 0x02 && number < self.axes.len() {
-                            self.axes[number] = value;
-                        }
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                    Err(_) => {
-                        self.js_file = None;
-                        self.buttons = [false; 16];
-                        self.axes = [0; 8];
-                        break;
-                    }
-                }
-            }
-        }
-
-        js_mask(&self.buttons, &self.axes)
+        self.joysticks.buttons()
     }
 
     #[cfg(target_os = "windows")]
@@ -1327,8 +1279,8 @@ fn joy_mask(buttons: u32, x: u32, y: u32, pov: u32) -> u16 {
     m
 }
 
-/// Joystick buttons (Linux `js` numbers, WinMM bits: an Xbox-style pad's
-/// A, B, LB, RB, Start) and the XInput bits they stand for.
+/// WinMM joystick buttons (an Xbox-style pad's A, B, LB, RB, Start) and
+/// the XInput bits they stand for.
 const PAD_BUTTON_BITS: [(usize, u16); 5] = [
     (0, bits::A),
     (1, bits::B),
@@ -1336,30 +1288,6 @@ const PAD_BUTTON_BITS: [(usize, u16); 5] = [
     (5, bits::RIGHT_SHOULDER),
     (7, bits::START),
 ];
-
-/// A Linux joystick's state as XInput bits: the buttons above, and the
-/// left stick (axes 0/1) or d-pad hat (axes 6/7) past half way as d-pad.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn js_mask(buttons: &[bool; 16], axes: &[i16; 8]) -> u16 {
-    let lean = bits::STICK_THRESHOLD;
-    let mut m = 0u16;
-    for (button, bit) in PAD_BUTTON_BITS {
-        if buttons[button] {
-            m |= bit;
-        }
-    }
-    for (pressed, bit) in [
-        (axes[1] < -lean || axes[7] < -lean, bits::DPAD_UP),
-        (axes[1] > lean || axes[7] > lean, bits::DPAD_DOWN),
-        (axes[0] < -lean || axes[6] < -lean, bits::DPAD_LEFT),
-        (axes[0] > lean || axes[6] > lean, bits::DPAD_RIGHT),
-    ] {
-        if pressed {
-            m |= bit;
-        }
-    }
-    m
-}
 
 trait RoleLabel {
     fn role_label(&self) -> &'static str;
@@ -1740,24 +1668,29 @@ mod tests {
         );
     }
 
+    /// Linux: the window reads every pad through the SDK; Start plays
+    /// and a held button does nothing more.
+    #[cfg(target_os = "linux")]
     #[test]
-    fn a_linux_joystick_becomes_xinput_bits() {
-        let mut buttons = [false; 16];
-        let mut axes = [0i16; 8];
-        assert_eq!(js_mask(&buttons, &axes), 0);
-        buttons[0] = true;
-        buttons[7] = true;
-        axes[1] = -20_000; // stick up
-        axes[6] = 32_767; // hat right
-        axes[0] = 15_000; // not past half way
-        assert_eq!(
-            js_mask(&buttons, &axes),
-            bits::A | bits::START | bits::DPAD_UP | bits::DPAD_RIGHT
-        );
-        // Start plays first; held buttons do nothing more.
-        let mut nav = PadNav::default();
-        assert_eq!(nav.update(js_mask(&buttons, &axes))[0], Nav::Play);
-        assert!(nav.update(js_mask(&buttons, &axes)).is_empty());
+    fn a_linux_pad_drives_the_window() {
+        use rea_launcher_ui::pad::joystick::{Device, EVENT_BUTTON, Joysticks};
+        let event = |kind: u8, number: u8, value: i16| {
+            let mut e = [0u8; 8];
+            e[4..6].copy_from_slice(&value.to_le_bytes());
+            e[6] = kind;
+            e[7] = number;
+            e
+        };
+        // Start (button 7) pressed and held.
+        let press = event(EVENT_BUTTON, 7, 1).to_vec();
+        let mut poller = PadPoller {
+            nav: PadNav::default(),
+            joysticks: Joysticks::with_scan(std::time::Duration::ZERO, move || {
+                vec![Box::new(std::io::Cursor::new(press.clone())) as Device]
+            }),
+        };
+        assert_eq!(poller.poll(), vec![Nav::Play]);
+        assert!(poller.poll().is_empty());
     }
 
     #[test]
