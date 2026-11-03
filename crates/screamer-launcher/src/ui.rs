@@ -738,23 +738,22 @@ impl Window {
         let mut help = toggle_cell(ui, "gamepad_axes", &mut self.form.gamepad_axes, focused);
         ui.add_space(6.0);
 
-        let pad_off_reason = (!self.form.gamepad_axes)
-            .then_some("Turn on Gamepad above to change the deadzone and rumble.");
+        // The SDK writes each disabled row's reason under it.
+        let pad_off = !self.form.gamepad_axes;
         let deadzones = form::with_saved(&form::DEADZONES, self.form.deadzone);
         let focused = self.focused(Row::Deadzone);
         let deadzone = &mut self.form.deadzone;
         help = help.or(chip_row(ui, config::option("deadzone"), focused, |ui| {
-            widgets::chips(ui, &deadzones, deadzone, pad_off_reason)
+            let why = pad_off.then_some("Turn on Gamepad above to change the deadzone.");
+            widgets::chips(ui, &deadzones, deadzone, why)
         }));
         let rumbles = form::with_saved(&form::RUMBLES, self.form.rumble);
         let focused = self.focused(Row::Rumble);
         let rumble = &mut self.form.rumble;
         help = help.or(chip_row(ui, config::option("rumble"), focused, |ui| {
-            widgets::chips(ui, &rumbles, rumble, pad_off_reason)
+            let why = pad_off.then_some("Turn on Gamepad above to change the rumble.");
+            widgets::chips(ui, &rumbles, rumble, why)
         }));
-        if let Some(reason) = pad_off_reason {
-            widgets::note(ui, reason);
-        }
 
         ui.add_space(8.0);
         let pad_status = if self.controllers.is_empty() {
@@ -798,11 +797,11 @@ impl Window {
             ),
             (Layout::Custom, "Custom", "Your own button choices.", false),
         ];
+        // The cards write the reason in place of their notes (the SDK's
+        // look cards); the button rows below are disabled without
+        // repeating it under each row.
         let pad_off_reason =
             (!self.form.gamepad_axes).then_some("Turn on Gamepad in the Controls tab first.");
-        if let Some(reason) = pad_off_reason {
-            ui.label(egui::RichText::new(reason).font(body(13.0)).color(ERROR));
-        }
         let gap = 12.0;
         let w = (ui.available_width() - 2.0 * gap) / 3.0;
         ui.add_space(8.0);
@@ -831,19 +830,19 @@ impl Window {
         ui.spacing_mut().item_spacing.y = 4.0;
         let options: Vec<Chip<'_, u8>> = form::PAD_BUTTONS
             .iter()
-            .map(|&(b, l)| Chip::new(b, l).disabled(pad_off_reason))
+            .map(|&(b, l)| Chip::new(b, l).disabled(pad_off_reason.map(|_| "")))
             .collect();
+        let row_description = match pad_off_reason {
+            Some(why) => format!("The gamepad button for this action. {why}"),
+            None => "The gamepad button for this action.".to_string(),
+        };
         for (row_idx, (k, name)) in form::ACTIONS.into_iter().enumerate() {
             let row_focused = self.focused(Row::Action(row_idx));
             let r = ui.horizontal_top(|ui| {
                 widgets::field_focused(ui, name, row_focused);
                 let mut button = self.form.pad_button(k);
                 let resp = widgets::chips_sized(ui, &options, &mut button, ChipSize::Compact);
-                widgets::name_control(
-                    &resp,
-                    Some(name),
-                    Some("The gamepad button for this action."),
-                );
+                widgets::name_control(&resp, Some(name), Some(&row_description));
                 if pad_off_reason.is_none() {
                     self.form.set_pad_button(k, button);
                 }
@@ -1563,15 +1562,25 @@ mod tests {
         ui.run();
         let strong = ui.get_by_label("Strong");
         assert!(testing::disabled(&strong));
-        assert!(
-            ui.query_by_label_contains("Turn on Gamepad above")
-                .is_some()
-        );
+        // Each disabled row says why once, on the window (a pad never
+        // hovers); nothing repeats it.
+        for row in ["deadzone", "rumble"] {
+            let reason = format!("Turn on Gamepad above to change the {row}.");
+            assert_eq!(ui.query_all_by_label(&reason).count(), 1, "{reason}");
+        }
+        assert_eq!(ui.query_all_by_label_contains("Turn on Gamepad").count(), 2);
         tab(&mut ui, "Buttons");
-        assert!(
-            ui.query_by_label_contains("Turn on Gamepad in the Controls tab")
-                .is_some()
+        // The three cards say it in place of their notes; the button rows
+        // carry it for screen readers without writing it six more times.
+        assert_eq!(
+            ui.query_all_by_label_contains("Turn on Gamepad in the Controls tab")
+                .count(),
+            0
         );
+        assert!(ui.query_all_by_label("Accelerate").any(|node| {
+            testing::description(&node)
+                .is_some_and(|d| d.ends_with("Turn on Gamepad in the Controls tab first."))
+        }));
         let modern = ui.get_by_label("Modern");
         assert!(testing::disabled(&modern));
         assert!(
