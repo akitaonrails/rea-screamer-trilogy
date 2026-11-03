@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-11-03
+
 - Updated rea-launcher-sdk to v0.4.1.
 - New `look` option: `look = original`, `enhanced` or `steam_deck` in `launcher.cfg`, or `--look` for one run, sets every picture option at once, like the look cards in the window. Picture options set after it still win. The window saves the look you pick, and the first run saves the recommended one. On Linux, `screamer-play` sizes gamescope from the look (Steam Deck 1280×800, the others 1920×1080) unless `resolution` says otherwise.
 - Linux: when the launcher stops on an error before the game starts (no game folder, a build it doesn't know, the game already running), it now shows the message in a window with a button to the matching issue form, also when started from `screamer-play`. Before, a double-clicked AppImage just closed and the message only reached `launcher.log`.
