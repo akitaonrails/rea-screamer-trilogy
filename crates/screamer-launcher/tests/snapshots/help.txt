@@ -9,6 +9,7 @@ Options (the same keys in launcher.cfg; they override it for one run,
   --saves <folder>                            Saves folder
   --runtime <folder>                          Runtime folder
   --dosbox <program>                          DOSBox
+  --look original|enhanced|steam_deck         Look
   --renderer auto|3dfx|svga16|svga8|vga       Renderer
   --resolution <WxH>                          Display
   --widescreen on|off                         Widescreen

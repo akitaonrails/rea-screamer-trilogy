@@ -683,6 +683,7 @@ impl Window {
                 }
             }
         });
+        spec_ui::mark_rendered(ui.ctx(), "look");
         widgets::focus_bar(ui, r1.response.rect, self.focused(Row::Look));
         ui.add_space(8.0);
 
@@ -1511,6 +1512,7 @@ mod tests {
         ui.run();
         play(&mut ui);
         let s = saved(&ui);
+        assert_eq!(s.look, Some(Look::Original));
         assert_eq!(s.resolution, Some(config::ORIGINAL));
         assert_eq!(
             (s.widescreen, s.frame_generation),

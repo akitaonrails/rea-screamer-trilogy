@@ -78,5 +78,22 @@ size_case 0x0 "" "-w 1920 -h 1080"
 size_case 0x1080 "" "-w 1920 -h 1080"
 size_case 01280x0800 "" "-w 1280 -h 800"
 size_case fullscreen 0x0 "-w 1920 -h 1080"
+# Looks (REA_LOOK_SIZES): the file's resolution wins over its look; a
+# one-run --look wins over the file's resolution; --resolution over both.
+look_case() {  # launcher.cfg text, run flags, expected "-w W -h H"
+  printf "$1" > "$CFGDIR/launcher.cfg"
+  # shellcheck disable=SC2086
+  rea_start $2 > /dev/null
+  case "$(cat "$T/ran")" in
+    *"gamescope $3 -f "*"--no-window --linux${2:+ $2}") echo "ok   look: '$1' $2" ;;
+    *) echo "FAIL look '$1' $2: $(cat "$T/ran")"; fails=$((fails + 1)) ;;
+  esac
+}
+look_case 'look = steam_deck\n' "" "-w 1280 -h 800"
+look_case 'look = enhanced\n' "" "-w 1920 -h 1080"
+look_case 'look = original\n' "" "-w 1920 -h 1080"
+look_case 'look = steam_deck\nresolution = 2560x1440\n' "" "-w 2560 -h 1440"
+look_case 'look = enhanced\nresolution = 1920x1080\n' "--look steam_deck" "-w 1280 -h 800"
+look_case 'look = enhanced\n' "--look steam_deck --resolution 1280x720" "-w 1280 -h 720"
 real_dirs_untouched || fails=$((fails + 1))
 [ "$fails" = 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

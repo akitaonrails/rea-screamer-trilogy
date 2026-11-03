@@ -103,6 +103,35 @@ pub enum Look {
     Custom,
 }
 
+impl Look {
+    /// The looks `look =` / `--look` names (Custom is any other mix).
+    pub const NAMED: [Look; 3] = [Look::Original, Look::Enhanced, Look::SteamDeck];
+
+    /// The `launcher.cfg` value (`config::LOOKS`); `None` for Custom.
+    pub fn key(self) -> Option<&'static str> {
+        match self {
+            Look::Original => Some("original"),
+            Look::Enhanced => Some("enhanced"),
+            Look::SteamDeck => Some("steam_deck"),
+            Look::Custom => None,
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Look> {
+        Look::NAMED.into_iter().find(|look| look.key() == Some(key))
+    }
+
+    /// The look's picture values; `None` for Custom.
+    pub fn picture(self) -> Option<Picture> {
+        match self {
+            Look::Original => Some(Picture::ORIGINAL),
+            Look::Enhanced => Some(Picture::enhanced(None)),
+            Look::SteamDeck => Some(Picture::STEAM_DECK),
+            Look::Custom => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Form {
     pub which: Game,
@@ -200,6 +229,8 @@ pub fn resolutions(
 
 impl Form {
     pub fn new(s: &Settings, screen: Option<(u32, u32)>) -> Form {
+        // `look =` sets the picture values the file doesn't set after it.
+        let s = &s.clone().with_look();
         let path = |p: &Option<PathBuf>| {
             p.as_ref()
                 .map(|p| p.display().to_string())
@@ -311,6 +342,7 @@ impl Form {
         let path = |s: &str| Some(PathBuf::from(s.trim())).filter(|p| !p.as_os_str().is_empty());
         Settings {
             which: Some(self.which),
+            look: self.look.key().and(Some(self.look)),
             game: path(&self.game),
             saves: path(&self.saves),
             runtime: None,
@@ -343,6 +375,7 @@ pub const WINDOW_KEYS: &[&str] = &[
     "which",
     "game",
     "saves",
+    "look",
     "renderer",
     "resolution",
     "widescreen",

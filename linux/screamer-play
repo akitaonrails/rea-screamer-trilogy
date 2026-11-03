@@ -54,6 +54,11 @@ REA_SDL_ENV=
 # `--play --scaler pixel --resolution 1280x720`: gamescope uses them for
 # that run only (launcher.cfg is not changed); the launcher gets them too.
 REA_HELPER_KEYS="scaler resolution"
+# The gamescope size each look gives (`--look` / `look =`), as the launcher
+# resolves it: the run's --resolution, its --look, the file's resolution,
+# its look. Original's 4:3 window runs in 1920x1080, like resolution =
+# original.
+REA_LOOK_SIZES="original=original enhanced=1920x1080 steam_deck=1280x800"
 REA_FLAG_SWITCHES="--no-window --settings --linux --check --controllers --help"
 # The game run says it was started here (--linux), so the launcher shows a
 # Play-time error in a window: the player is watching, not a script.

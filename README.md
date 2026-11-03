@@ -182,6 +182,7 @@ option, commented out.
 | `saves` / `--saves` | Play: Saves folder | a folder | the launcher's saves folder | Where your saves, choices and replays are kept between sessions. |
 | `runtime` / `--runtime` | (file and flag only) | a folder | the launcher's runtime folder | Where the launcher keeps its private copy of the game. |
 | `dosbox` / `--dosbox` | (file and flag only) | a dosbox-staging program | the bundled one | Runs the game with another DOSBox. |
+| `look` / `--look` | Play: Look | `original`, `enhanced`, `steam_deck` | none (the first run saves the recommended one) | Sets every picture option below at once, as the look cards do. Picture options set after it win; `--look` replaces the saved picture for one run. |
 | `renderer` / `--renderer` | Picture: Renderer | `auto`, `3dfx`, `svga16`, `svga8`, `vga` | `auto` | Which of the game's graphics programs runs; Auto picks the best one the game has. |
 | `resolution` / `--resolution` | Picture: Display | `WIDTHxHEIGHT`, `fullscreen`, `original` (4:3, 1280×960) | 1920×1080 | The window size. |
 | `texture_filter` / `--texture-filter` | Picture: Shader / Upscaler | `original` (CRT), `fsr`, `sharp`, `smooth` | `sharp` | How the picture is enlarged: CRT look, FSR, crisp pixels or smooth. |
@@ -212,7 +213,8 @@ only `--game` and `--which` are saved. The launcher's own switches:
 - `--help`: every option and switch.
 
 Exit codes for scripts: 0 played or checked, 2 an error (see
-`launcher.log`), otherwise the game's own.
+`launcher.log`), 5 the launcher or its game is already running (nothing
+started), otherwise the game's own.
 
 ## Where things live
 

@@ -253,7 +253,7 @@ fn run(mode: Mode, cli_settings: Settings, says: Audience) -> Result<ExitCode, S
     for w in warnings {
         warn(&w);
     }
-    let mut settings = file_settings.merged(cli_settings.clone());
+    let mut settings = file_settings.merged(cli_settings.clone()).with_look();
     if settings.game.is_none()
         && let Ok(env_dir) = std::env::var("SCREAMER_GAME_DIR")
         && !env_dir.trim().is_empty()
@@ -283,7 +283,10 @@ fn run(mode: Mode, cli_settings: Settings, says: Audience) -> Result<ExitCode, S
                             .ok()
                             .flatten()
                             .unwrap_or_else(|| cfg_text.clone());
-                        Settings::parse_file(&reloaded).0.merged(cli_settings)
+                        Settings::parse_file(&reloaded)
+                            .0
+                            .merged(cli_settings)
+                            .with_look()
                     }
                     Ok(ui::Outcome::Closed) => return Ok(ExitCode::from(WINDOW_CLOSED)),
                     // No window possible (no display or OpenGL): play with

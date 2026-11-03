@@ -93,6 +93,79 @@ fn which_selects_the_game() {
 }
 
 #[test]
+fn look_sets_every_picture_option() {
+    for look in Look::NAMED {
+        let key = look.key().unwrap();
+        let from_file = file(&format!("look = {key}\n"));
+        let from_flag = args(&["--look", key]).unwrap();
+        assert_eq!(from_file, from_flag, "look = {key}");
+        let s = from_file.with_look();
+        let f = Form::new(&s, Some((2560, 1440)));
+        assert_eq!(f.look, look, "{key}");
+        assert_eq!(Some(f.picture), look.picture(), "{key}");
+    }
+    // Original reaches the run as the game shipped: no Hor+ (E2) or longer
+    // view (E6), the CRT shader, 50 FPS.
+    let p = plan(&file("look = original\n").with_look());
+    assert!(p.skipped_fixes.contains(&"E2") && p.skipped_fixes.contains(&"E6"));
+    assert_eq!(env(&p, "SCREAMER_FRAME_GEN"), "0");
+    let enhanced = plan(&file("look = enhanced\n").with_look());
+    assert!(!enhanced.skipped_fixes.contains(&"E2"));
+    assert!(!enhanced.skipped_fixes.contains(&"E6"));
+    let deck = file("look = steam_deck\n").with_look();
+    assert_eq!(deck.resolution, Some(form::STEAM_DECK_SCREEN));
+}
+
+#[test]
+fn options_after_a_look_win_and_a_look_flag_replaces_the_file() {
+    let s = file("look = original\nwidescreen = on\n").with_look();
+    assert_eq!(
+        (s.widescreen, s.texture_filter.map(|f| f.key())),
+        (Some(true), Some("original"))
+    );
+    // Set before the look, an option is the look's again.
+    let s = file("widescreen = on\nlook = original\n").with_look();
+    assert_eq!(s.widescreen, Some(false));
+    // --look for one run replaces the file's picture; flags after it win.
+    let saved = file("resolution = 2560x1440\nwidescreen = off\ntexture_filter = fsr\n");
+    let run = saved
+        .clone()
+        .merged(args(&["--look", "steam_deck"]).unwrap())
+        .with_look();
+    assert_eq!(
+        Some(Form::new(&run, None).picture),
+        Look::SteamDeck.picture()
+    );
+    let run = saved
+        .merged(args(&["--look", "original", "--widescreen", "on"]).unwrap())
+        .with_look();
+    assert_eq!(
+        (run.resolution, run.widescreen),
+        (Some(config::ORIGINAL), Some(true))
+    );
+    // No look: nothing changes.
+    assert_eq!(file("vsync = off\n").with_look(), file("vsync = off\n"));
+}
+
+#[test]
+fn the_window_saves_its_look_and_clears_it_for_a_custom_mix() {
+    let screen = Some((1920, 1080));
+    let mut f = Form::new(&Settings::default(), screen);
+    f.set_look(Look::Original, screen);
+    let text = f.save(&config::template());
+    assert!(text.contains("\nlook = original\n"), "{text}");
+    assert_eq!(Form::new(&file(&text), screen).look, Look::Original);
+    // One picture option changed: a custom mix, with no look saved.
+    f.picture.widescreen = true;
+    f.look = Form::look_of(&f.picture, screen);
+    assert_eq!(f.look, Look::Custom);
+    let text = f.save(&text);
+    assert!(!text.contains("\nlook ="), "{text}");
+    let reread = file(&text).with_look();
+    assert_eq!(Form::new(&reread, screen).picture, f.picture);
+}
+
+#[test]
 fn folders_are_taken_as_written() {
     for key in ["game", "saves", "runtime", "dosbox"] {
         both(key, "/games/Jogos d'Ação/José", |s, _| {
@@ -347,6 +420,10 @@ fn bad_values_say_what_they_need() {
     assert_eq!(
         bad(&["--which", "4"]),
         "--which needs screamer, screamer2 or screamer-rally, not 4"
+    );
+    assert_eq!(
+        bad(&["--look", "fancy"]),
+        "--look needs original, enhanced or steam_deck, not fancy"
     );
     assert_eq!(bad(&["--game"]), "--game needs a value");
     assert_eq!(bad(&["--bogus", "1"]), "unknown argument --bogus");

@@ -16,10 +16,14 @@ use rea_launcher::cfg::spec::{self, Kind, OptionSpec, Value};
 use rea_launcher::cfg::{self, ArgError, KeyStyle, Rejected, Resolution};
 
 use crate::edition::Game;
+use crate::form::Look;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Settings {
     pub which: Option<Game>,
+    /// `look`: the picture values below that are unset come from it
+    /// ([`Settings::with_look`]).
+    pub look: Option<Look>,
     pub game: Option<PathBuf>,
     pub runtime: Option<PathBuf>,
     pub saves: Option<PathBuf>,
@@ -213,6 +217,12 @@ pub const GAMES: &[(&str, &str)] = &[
     ("screamer2", "Screamer 2"),
     ("screamer-rally", "Screamer Rally"),
 ];
+/// `look`: a named set of every picture option (the window's cards).
+pub const LOOKS: &[(&str, &str)] = &[
+    ("original", "Original"),
+    ("enhanced", "Enhanced"),
+    ("steam_deck", "Steam Deck"),
+];
 pub const RENDERERS: &[(&str, &str)] = &[
     ("auto", "Auto"),
     ("3dfx", "3dfx Voodoo"),
@@ -278,6 +288,13 @@ pub const OPTIONS: &[OptionSpec] = &[
     .with_placeholder("<program>")
     .with_needs("a dosbox-staging program")
     .launcher_only(),
+    OptionSpec::new(
+        "look",
+        Kind::Choice(LOOKS),
+        "Look",
+        "Sets every picture option at once: Original (as the game shipped), Enhanced (1080p widescreen, longer view, crisp pixels; recommended) or Steam Deck. Picture options set after it win.",
+    )
+    .with_example("enhanced"),
     OptionSpec::new(
         "renderer",
         Kind::Choice(RENDERERS),
@@ -520,6 +537,11 @@ impl Settings {
         let path = |t: &str| Some(PathBuf::from(t));
         match (key, value) {
             ("which", Value::Choice(v)) => self.which = Game::parse(v),
+            ("look", Value::Choice(v)) => {
+                // A look sets all of its values; options after it win.
+                self.look = Some(Look::from_key(v).ok_or(Rejected::Unknown)?);
+                self.clear_picture();
+            }
             ("game", Value::Text(t)) => self.game = path(t),
             ("saves", Value::Text(t)) => self.saves = path(t),
             ("runtime", Value::Text(t)) => self.runtime = path(t),
@@ -551,9 +573,26 @@ impl Settings {
         Ok(())
     }
 
-    pub fn merged(self, over: Settings) -> Settings {
+    /// The picture options a look sets, unset.
+    fn clear_picture(&mut self) {
+        self.renderer = None;
+        self.resolution = None;
+        self.widescreen = None;
+        self.extended_draw_distance = None;
+        self.frame_generation = None;
+        self.vsync = None;
+        self.texture_filter = None;
+    }
+
+    /// These settings with `over` (the command line) on top: a flag wins
+    /// over the file, and `--look` replaces the file's picture options.
+    pub fn merged(mut self, over: Settings) -> Settings {
+        if over.look.is_some() {
+            self.clear_picture();
+        }
         Settings {
             which: over.which.or(self.which),
+            look: over.look.or(self.look),
             game: over.game.or(self.game),
             runtime: over.runtime.or(self.runtime),
             saves: over.saves.or(self.saves),
@@ -571,6 +610,26 @@ impl Settings {
             buttons: over.buttons.or(self.buttons),
             scaler: over.scaler.or(self.scaler),
         }
+    }
+
+    /// The settings for a run: the picture options left unset take the
+    /// look's values (`look =`, `--look`); without a look, unchanged.
+    pub fn with_look(mut self) -> Settings {
+        let Some(picture) = self.look.and_then(Look::picture) else {
+            return self;
+        };
+        self.renderer = self.renderer.or(Some(picture.renderer));
+        self.resolution = self
+            .resolution
+            .or(Some(picture.resolution.unwrap_or(ORIGINAL)));
+        self.widescreen = self.widescreen.or(Some(picture.widescreen));
+        self.extended_draw_distance = self
+            .extended_draw_distance
+            .or(Some(picture.extended_draw_distance));
+        self.frame_generation = self.frame_generation.or(Some(picture.frame_generation));
+        self.vsync = self.vsync.or(Some(picture.vsync));
+        self.texture_filter = self.texture_filter.or(Some(picture.texture_filter));
+        self
     }
 
     pub fn which_game(&self) -> Game {
@@ -693,6 +752,7 @@ pub fn cfg_value(s: &Settings, key: &str) -> Option<String> {
     let toggle = |b: Option<bool>| b.map(|b| cfg::on_off(b).to_string());
     match key {
         "which" => s.which.map(|g| g.slug().to_string()),
+        "look" => s.look.and_then(Look::key).map(str::to_string),
         "game" => path(&s.game),
         "saves" => path(&s.saves),
         "runtime" => path(&s.runtime),

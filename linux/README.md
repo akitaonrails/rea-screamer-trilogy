@@ -71,8 +71,10 @@ real games yet.
 - `scaler`: gamescope's filter: `fsr` (default), `nearest`, `pixel` or
   `linear` (anything else is `fsr`).
 
-`--resolution` and `--scaler` after `--play` override them for that run
-only; `launcher.cfg` is not changed.
+`--resolution`, `--look` and `--scaler` after `--play` override them for
+that run only; `launcher.cfg` is not changed. gamescope's size follows the
+look as the launcher reads it (`REA_LOOK_SIZES`): Steam Deck is 1280×800,
+Enhanced and Original 1920×1080, unless a `resolution` says otherwise.
 
 | Variable | What it does |
 | --- | --- |
