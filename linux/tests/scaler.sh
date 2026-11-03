@@ -28,7 +28,7 @@ for scaler in nearest pixel fsr linear; do
   printf 'resolution = 1920x1080\nscaler = %s\n' "$scaler" > "$CFGDIR/launcher.cfg"
   rea_start > /dev/null
   case "$(cat "$T/ran")" in
-    *"gamescope -w 1920 -h 1080 -f -S fit -F $scaler -- sh $REA_INNER $T/ScreamerLauncher --no-window"*) echo "ok   $scaler" ;;
+    *"gamescope -w 1920 -h 1080 -f -S fit -F $scaler -- sh $REA_INNER $T/ScreamerLauncher --no-window --linux"*) echo "ok   $scaler" ;;
     *) echo "FAIL $scaler: $(cat "$T/ran")"; fails=$((fails + 1)) ;;
   esac
 done
@@ -46,7 +46,7 @@ printf 'resolution = 1920x1080\nscaler = fsr\n' > "$CFGDIR/launcher.cfg"
 cp "$CFGDIR/launcher.cfg" "$T/cfg.before"
 rea_start --scaler pixel --resolution=1280x720 > /dev/null
 case "$(cat "$T/ran")" in
-  *"gamescope -w 1280 -h 720 -f -S fit -F pixel --"*"--no-window --scaler pixel --resolution 1280x720"*)
+  *"gamescope -w 1280 -h 720 -f -S fit -F pixel --"*"--no-window --linux --scaler pixel --resolution 1280x720"*)
     echo "ok   one-run --scaler and --resolution" ;;
   *) echo "FAIL one-run flags: $(cat "$T/ran")"; fails=$((fails + 1)) ;;
 esac

@@ -9,6 +9,7 @@ use std::process::{Command, ExitCode};
 use rea_launcher::cfg;
 use rea_launcher::fsx;
 use rea_launcher::log::Log;
+use rea_launcher_win32::report::{Audience, Run};
 
 use screamer_launcher::config::{self, ArgsError, MachineCapabilities, Settings};
 use screamer_launcher::edition::Game;
@@ -28,51 +29,144 @@ const WINDOW_CLOSED: u8 = 3;
 /// settings (screamer-play treats it like Play).
 const WINDOW_UNAVAILABLE: u8 = 4;
 
-/// Set once the launcher runs the way a player starts it (double-click or
-/// a shortcut: the settings window, then the game). Only then are fatal
-/// errors also shown in a message box; scripts (`--check`, `--no-window`,
-/// `--settings`, `--controllers`, bad arguments) get stderr and the log.
-static INTERACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-fn is_interactive(mode: &Mode) -> bool {
-    *mode == Mode::Play { show_window: true }
+/// The command line's family flags (`--linux`, `--no-window`) beside its
+/// mode, for who sees this run's messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Invocation {
+    mode: Mode,
+    linux: bool,
+    no_window: bool,
 }
 
-/// The modes that open the window or play take the one-launcher instance
-/// (Windows; on Linux screamer-play's session lock and the runtime lock do
-/// it). `--check`, `--controllers` and `--help` only look.
+impl Invocation {
+    /// The run, for the SDK's audience rule (`report::Audience`).
+    fn run(&self) -> Run {
+        Run {
+            command: matches!(self.mode, Mode::Check | Mode::Controllers { .. }),
+            no_window: self.no_window,
+            settings_only: matches!(self.mode, Mode::SettingsOnly { .. }),
+            linux: self.linux,
+        }
+    }
+}
+
+/// Who may see this run's messages, decided by the SDK (never by hand:
+/// `screamer-play` starts the game run with `--no-window --linux` for a
+/// player in front of the screen). Under Wine (the Windows tests) a run
+/// counts as watched like the family's.
+fn audience(run: Run) -> Audience {
+    #[cfg(windows)]
+    {
+        rea_launcher_win32::report::audience(run)
+    }
+    #[cfg(not(windows))]
+    {
+        Audience::of(run, false)
+    }
+}
+
+/// A bad command line (or `--help`) answers like a command.
+fn command_audience(args: &[String]) -> Audience {
+    audience(Run {
+        command: true,
+        ..Run::from_args(args, &["--controllers"])
+    })
+}
+
+/// The modes that open the window or play take the one-launcher instance;
+/// `--check`, `--controllers` and `--help` only look.
 fn takes_instance(mode: &Mode) -> bool {
     matches!(mode, Mode::Play { .. } | Mode::SettingsOnly { .. })
 }
 
-/// The instance name (`Local\rea-launcher-rea-screamer`).
-#[cfg(windows)]
+/// The instance name (`Local\rea-launcher-rea-screamer` on Windows, a
+/// `rea-launcher-rea-screamer.lock` file in `$XDG_RUNTIME_DIR` on Linux).
 const INSTANCE: &str = "rea-screamer";
 
+/// What a refused second start says (both systems).
+fn already_running_message() -> String {
+    format!(
+        "The {} launcher or its game is already running. Quit the game or close that window first, then start the launcher again.",
+        ui::TITLE
+    )
+}
+
 /// One launcher per user session (STANDARDS "Clean exit, single
-/// instance"): `None` when another one was open and its window was
-/// brought forward; an error when no window was found (the game runs).
+/// instance"): a second start brings the open settings window forward
+/// (exit 0) or says the game is running (exit 5). Keep the guard for the
+/// launcher's lifetime.
 #[cfg(windows)]
-fn single_instance() -> Result<Option<rea_launcher_win32::instance::Guard>, String> {
-    use rea_launcher_win32::instance;
+fn single_instance(says: Audience) -> Result<rea_launcher_win32::instance::Guard, ExitCode> {
+    use rea_launcher_win32::instance::{self, SecondStart, Window};
     match instance::single(INSTANCE) {
-        Ok(guard) => Ok(Some(guard)),
-        Err(_) if win32::bring_to_front(ui::TITLE) => {
-            log().info("another launcher is open: brought its window forward");
-            Ok(None)
+        Ok(guard) => Ok(guard),
+        Err(running) => {
+            let second = running.second_start(false, Window::Own(ui::TITLE));
+            log().info(second.log_line());
+            if second != SecondStart::Focused {
+                report_error(&already_running_message(), says);
+            }
+            Err(exit_code(second.exit_code()))
         }
-        Err(_) => Err(
-            "Screamer is already running. Quit the game first, then start the launcher again."
-                .to_string(),
-        ),
     }
 }
 
+/// The native Linux build's lock: the helper's session lock doesn't cover
+/// a launcher started straight from a menu or the AppImage. A native
+/// window can't be brought forward from here, so a second start says so
+/// and exits 5.
+#[cfg(not(windows))]
+fn single_instance(says: Audience) -> Result<rea_launcher::instance::Guard, ExitCode> {
+    match rea_launcher::instance::single(INSTANCE) {
+        Ok(guard) => Ok(guard),
+        Err(running) => {
+            log().info("second start: another launcher holds the instance; refused");
+            report_error(&already_running_message(), says);
+            Err(exit_code(running.exit_code()))
+        }
+    }
+}
+
+fn exit_code(code: i32) -> ExitCode {
+    ExitCode::from(u8::try_from(code).unwrap_or(1))
+}
+
 fn main() -> ExitCode {
-    match run() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (invocation, rest) = match extract_mode(&args) {
+        Ok(parsed) => parsed,
+        Err(msg) => {
+            report_error(&msg, command_audience(&args));
+            return ExitCode::from(2);
+        }
+    };
+    let cli_settings = match Settings::parse_args(rest) {
+        Ok(s) => s,
+        Err(ArgsError::Help) => {
+            println!("{}", config::usage());
+            return ExitCode::SUCCESS;
+        }
+        Err(ArgsError::Bad(message)) => {
+            report_error(
+                &format!("{message}\n\n{}", config::usage()),
+                command_audience(&args),
+            );
+            return ExitCode::from(2);
+        }
+    };
+    let says = audience(invocation.run());
+    let _instance = if takes_instance(&invocation.mode) {
+        match single_instance(says) {
+            Ok(guard) => Some(guard),
+            Err(code) => return code,
+        }
+    } else {
+        None
+    };
+    match run(invocation.mode, cli_settings, says) {
         Ok(code) => code,
         Err(msg) => {
-            report_error(&msg, INTERACTIVE.load(std::sync::atomic::Ordering::Relaxed));
+            report_error(&msg, says);
             ExitCode::from(2)
         }
     }
@@ -89,53 +183,30 @@ fn warn(message: &str) {
     log().warn(message);
 }
 
-/// A fatal error: always in `launcher.log`; on Windows through the SDK's
-/// `report` (printed when there is a console or a redirect, and a message
-/// box when a person started the launcher the interactive way); on Linux
-/// on stderr, which is the terminal or `screamer-play`'s log.
-fn report_error(msg: &str, interactive: bool) {
+/// A fatal error: always in `launcher.log`, then through the SDK's report
+/// for this run's audience: on Windows printed and/or a message box; on
+/// Linux printed to stderr (the terminal or `screamer-play`'s log) and a
+/// message window whenever a person may be watching on a desktop.
+fn report_error(msg: &str, says: Audience) {
     let log = log();
     log.line(&format!("error: {msg}"));
     #[cfg(windows)]
     {
-        use rea_launcher_win32::report::{self, Mode};
         let text = format!("{msg}\n\nDetails: {}", log.path().display());
-        report::fatal(ui::TITLE, &text, Mode::Play { interactive });
+        rea_launcher_win32::report::fatal(ui::TITLE, &text, says.mode());
     }
     #[cfg(not(windows))]
     {
-        let _ = interactive;
-        eprintln!("{msg}");
+        let details = format!(
+            "ScreamerLauncher {}\nlauncher.log: {}",
+            env!("CARGO_PKG_VERSION"),
+            log.path().display()
+        );
+        ui::fatal(msg, &details, says);
     }
 }
 
-fn run() -> Result<ExitCode, String> {
-    let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    let (mode, filtered_args) = extract_mode(&raw_args)?;
-    INTERACTIVE.store(is_interactive(&mode), std::sync::atomic::Ordering::Relaxed);
-    let cli_settings = match Settings::parse_args(filtered_args) {
-        Ok(s) => s,
-        Err(ArgsError::Help) => {
-            println!("{}", config::usage());
-            return Ok(ExitCode::SUCCESS);
-        }
-        Err(ArgsError::Bad(message)) => {
-            return Err(format!("{message}\n\n{}", config::usage()));
-        }
-    };
-
-    #[cfg(windows)]
-    let _instance = if takes_instance(&mode) {
-        match single_instance()? {
-            Some(guard) => Some(guard),
-            None => return Ok(ExitCode::SUCCESS),
-        }
-    } else {
-        None
-    };
-    #[cfg(not(windows))]
-    let _ = takes_instance(&mode);
-
+fn run(mode: Mode, cli_settings: Settings, says: Audience) -> Result<ExitCode, String> {
     let cfg_path = locate_config_file();
     // Only a missing file is a first run; one that cannot be read is never
     // replaced. The first run saves the recommended look for this screen.
@@ -232,12 +303,12 @@ fn run() -> Result<ExitCode, String> {
             } else {
                 settings
             };
-            launch_game(&final_settings)
+            launch_game(&final_settings, says)
         }
     }
 }
 
-fn extract_mode(args: &[String]) -> Result<(Mode, Vec<String>), String> {
+fn extract_mode(args: &[String]) -> Result<(Invocation, Vec<String>), String> {
     let mut mode = None;
     let mut linux = false;
     let mut no_window = false;
@@ -273,7 +344,12 @@ fn extract_mode(args: &[String]) -> Result<(Mode, Vec<String>), String> {
             show_window: !no_window,
         },
     };
-    Ok((resolved, out))
+    let invocation = Invocation {
+        mode: resolved,
+        linux,
+        no_window,
+    };
+    Ok((invocation, out))
 }
 
 fn locate_config_file() -> PathBuf {
@@ -465,7 +541,7 @@ fn run_controllers(_seconds: u32) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
+fn launch_game(settings: &Settings, says: Audience) -> Result<ExitCode, String> {
     let log = log();
     let game_dir = settings
         .game
@@ -491,7 +567,10 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
     // Held until DOSBox ends and the saves are copied back.
     let _run_lock = match runtime::lock_runtime(&runtime_dir) {
         Ok(lock) => Some(lock),
-        Err(busy @ runtime::RunLockError::Busy(_)) => return Err(busy.to_string()),
+        Err(busy @ runtime::RunLockError::Busy(_)) => {
+            report_error(&busy.to_string(), says);
+            return Ok(exit_code(rea_launcher::instance::ALREADY_RUNNING));
+        }
         Err(e) => {
             warn(&format!("{e}; playing without the running-game check"));
             None
@@ -507,6 +586,27 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
     }
     let settings = &settings;
 
+    let dosbox =
+        runtime::find_dosbox_with_hint(settings.dosbox.as_deref(), Some(game_dir)).ok_or_else(
+            || {
+                "Could not find bundled dosbox (or dosbox-staging). Run ./scripts/build-dosbox.sh or pass --dosbox <path>."
+                    .to_string()
+            },
+        )?;
+    // A launcher that was killed released the instance and the runtime
+    // lock, but its DOSBox may still run the game: never copy under it.
+    #[cfg(windows)]
+    {
+        use rea_launcher_win32::instance::SecondStart;
+        let image = fs::canonicalize(&dosbox).unwrap_or_else(|_| dosbox.clone());
+        if !rea_launcher_win32::process::find_running(&image).is_empty() {
+            let busy = SecondStart::Busy;
+            log.info(busy.log_line());
+            report_error(&already_running_message(), says);
+            return Ok(exit_code(busy.exit_code()));
+        }
+    }
+
     let prepared = runtime::prepare_runtime(
         &disc,
         settings,
@@ -517,13 +617,6 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
     for warning in &prepared.warnings {
         warn(warning);
     }
-    let dosbox =
-        runtime::find_dosbox_with_hint(settings.dosbox.as_deref(), Some(game_dir)).ok_or_else(
-            || {
-                "Could not find bundled dosbox (or dosbox-staging). Run ./scripts/build-dosbox.sh or pass --dosbox <path>."
-                    .to_string()
-            },
-        )?;
 
     let plan = &prepared.plan;
     log.info(&format!(
@@ -590,30 +683,51 @@ fn launch_game(settings: &Settings) -> Result<ExitCode, String> {
 mod tests {
     use super::*;
 
+    fn invocation(args: &[&str]) -> Invocation {
+        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        extract_mode(&args).unwrap().0
+    }
+
+    /// Who sees a message, for every way the launcher is started: the
+    /// SDK's rule from the parsed flags (native Linux and Windows: no Wine).
     #[test]
-    fn only_the_double_click_path_is_interactive() {
-        let mode = |args: &[&str]| {
-            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-            extract_mode(&args).unwrap().0
-        };
-        assert!(is_interactive(&mode(&[])));
-        assert!(is_interactive(&mode(&["rally"])));
-        for scripted in [
-            &["--check"][..],
-            &["--no-window"],
-            &["--settings", "--linux"],
-            &["--controllers"],
-        ] {
-            assert!(!is_interactive(&mode(scripted)), "{scripted:?}");
+    fn messages_reach_whoever_started_the_run() {
+        let says = |args: &[&str]| Audience::of(invocation(args).run(), false);
+        // A double-click, or a game name: a person is watching.
+        for watched in [&[][..], &["rally"]] {
+            assert_eq!(
+                says(watched),
+                Audience {
+                    command: false,
+                    interactive: true
+                },
+                "{watched:?}"
+            );
         }
+        // screamer-play's game run (--no-window --linux): the player is
+        // in front of the screen, so a Play-time error shows a window.
+        assert!(says(&["--no-window", "--linux"]).interactive);
+        // screamer-play's settings window reports its own messages; when
+        // it can't open, the helper starts the game run, which reports.
+        assert!(!says(&["--settings", "--linux"]).interactive);
+        // A script's --no-window: stderr and the log only.
+        assert!(!says(&["--no-window"]).interactive);
+        // Commands answer on the terminal.
+        for command in [
+            &["--check"][..],
+            &["--controllers"],
+            &["--check", "--linux"],
+        ] {
+            assert!(says(command).command, "{command:?}");
+        }
+        assert!(!says(&["--check", "--linux"]).interactive);
+        let help = command_audience(&["--help".to_string()]);
+        assert!(help.command);
     }
 
     #[test]
     fn only_the_window_and_play_take_the_instance() {
-        let mode = |args: &[&str]| {
-            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-            extract_mode(&args).unwrap().0
-        };
+        let mode = |args: &[&str]| invocation(args).mode;
         for one in [
             &[][..],
             &["rally"],
@@ -625,6 +739,27 @@ mod tests {
         for looks in [&["--check"][..], &["--controllers"]] {
             assert!(!takes_instance(&mode(looks)), "{looks:?}");
         }
+    }
+
+    /// Native Linux: a second launcher can't take the first one's lock
+    /// and exits 5, the family's "already running".
+    #[cfg(not(windows))]
+    #[test]
+    fn a_second_native_launcher_is_refused_with_5() {
+        let dir = std::env::temp_dir().join(format!("screamer-instance-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let lock = dir.join("rea-launcher-rea-screamer.lock");
+        let first = rea_launcher::instance::single_at(&lock).expect("first");
+        let second = rea_launcher::instance::single_at(&lock).unwrap_err();
+        assert_eq!(second.exit_code(), 5);
+        drop(first);
+        assert!(rea_launcher::instance::single_at(&lock).is_ok());
+        assert!(
+            rea_launcher::instance::lock_path(INSTANCE)
+                .to_string_lossy()
+                .ends_with("rea-launcher-rea-screamer.lock")
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// Windows (Wine): a second launcher finds the first one's instance.

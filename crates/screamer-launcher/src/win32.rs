@@ -1,13 +1,11 @@
-//! The Win32 calls the launcher makes itself:
+//! The Win32 call the launcher makes itself: WinMM's `joyGetPosEx`, for
+//! gamepad navigation in the settings window. The SDK has XInput only
+//! (`rea_launcher_win32::xinput`), which misses DirectInput/HID pads that
+//! DOSBox drives in the game.
 //!
-//! - WinMM's `joyGetPosEx`, for gamepad navigation in the settings window.
-//!   The SDK has XInput only (`rea_launcher_win32::xinput`), which misses
-//!   DirectInput/HID pads that DOSBox drives in the game.
-//! - Finding the open settings window by its class *and* title, for the
-//!   second start. The SDK's `instance::Window` matches one or the other:
-//!   the title alone also matches an Explorer window on a folder named
-//!   "Screamer Trilogy", and the class alone (winit's, the same for every
-//!   eframe program) any other eframe window, such as another rea launcher.
+//! The second start finds the open settings window with the SDK's
+//! `instance::Window::Own` (a visible window with the title in a process
+//! running this exe), which replaced the class-and-title lookup here.
 
 #[repr(C)]
 struct JoyInfoEx {
@@ -71,55 +69,15 @@ pub fn joystick(idx: u32) -> Option<Joystick> {
     })
 }
 
-/// The class winit 0.30 (eframe's windowing) registers every window under;
-/// eframe offers no way to change it.
-pub const LAUNCHER_CLASS: &str = "Window Class";
-
-type Hwnd = *mut core::ffi::c_void;
-
-#[link(name = "user32")]
-unsafe extern "system" {
-    fn FindWindowW(class: *const u16, title: *const u16) -> Hwnd;
-    fn IsIconic(hwnd: Hwnd) -> i32;
-    fn ShowWindow(hwnd: Hwnd, cmd: i32) -> i32;
-    fn SetForegroundWindow(hwnd: Hwnd) -> i32;
-}
-
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-/// The open settings window titled `title`, if any.
-fn launcher_window(title: &str) -> Option<Hwnd> {
-    let (class, title) = (wide(LAUNCHER_CLASS), wide(title));
-    // SAFETY: both arguments are NUL-terminated UTF-16 strings that
-    // outlive the call.
-    let hwnd = unsafe { FindWindowW(class.as_ptr(), title.as_ptr()) };
-    (!hwnd.is_null()).then_some(hwnd)
-}
-
-/// Restores and focuses the open settings window titled `title`; false
-/// when there is none (the instance is held by a launcher playing).
-pub fn bring_to_front(title: &str) -> bool {
-    const SW_RESTORE: i32 = 9;
-    let Some(hwnd) = launcher_window(title) else {
-        return false;
-    };
-    // SAFETY: window calls on the handle FindWindowW returned.
-    unsafe {
-        if IsIconic(hwnd) != 0 {
-            ShowWindow(hwnd, SW_RESTORE);
-        }
-        SetForegroundWindow(hwnd);
-    }
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use std::ptr::null_mut;
 
-    use super::*;
+    type Hwnd = *mut core::ffi::c_void;
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
 
     #[repr(C)]
     struct WndClassW {
@@ -195,22 +153,19 @@ mod tests {
         }
     }
 
-    /// Windows (Wine): an Explorer window on a "Screamer Trilogy" folder is
-    /// not the launcher; the title-only match took it for one.
+    /// Windows (Wine): an Explorer window on a "Screamer Trilogy" folder,
+    /// or another eframe program's window with the title, is not the
+    /// launcher; the title-only match took the first for one.
     #[test]
     fn a_folder_window_with_the_title_is_not_the_launcher() {
         use rea_launcher_win32::instance::{AlreadyRunning, Window};
         let title = "Screamer Trilogy (win32 test)";
         let folder = window("CabinetWClass", title);
+        let other_eframe = window("Window Class", title);
         assert!(AlreadyRunning.is_window_found(Window::Title(title)));
-        assert_eq!(launcher_window(title), None);
-        let other_eframe = window(LAUNCHER_CLASS, "Another launcher (win32 test)");
-        assert_eq!(launcher_window(title), None);
-        let launcher = window(LAUNCHER_CLASS, title);
-        assert_eq!(launcher_window(title), Some(launcher));
+        assert!(!AlreadyRunning.is_window_found(Window::Own(title)));
         // SAFETY: windows this test created.
         unsafe {
-            DestroyWindow(launcher);
             DestroyWindow(other_eframe);
             DestroyWindow(folder);
         }

@@ -55,6 +55,9 @@ REA_SDL_ENV=
 # that run only (launcher.cfg is not changed); the launcher gets them too.
 REA_HELPER_KEYS="scaler resolution"
 REA_FLAG_SWITCHES="--no-window --settings --linux --check --controllers --help"
+# The game run says it was started here (--linux), so the launcher shows a
+# Play-time error in a window: the player is watching, not a script.
+REA_PLAY_ARGS="--no-window --linux"
 
 rea_hook_command() {
   case "${1:-}" in

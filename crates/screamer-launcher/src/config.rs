@@ -417,7 +417,8 @@ pub fn usage() -> String {
         "",
         "resolution takes WIDTHxHEIGHT, fullscreen (the screen's size) or original.",
         "Exit codes: 0 played or checked, 2 an error (see launcher.log next to",
-        "launcher.cfg), otherwise the game's own.",
+        "launcher.cfg), 5 the launcher or its game is already running (nothing",
+        "started), otherwise the game's own.",
     ];
     format!(
         "ScreamerLauncher {}\n\nScreamerLauncher [1|2|rally] [options]\n\n\

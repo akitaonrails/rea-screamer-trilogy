@@ -13,8 +13,9 @@ path = "src/main.rs"
 [dependencies]
 rea-launcher.workspace = true
 rea-launcher-ui.workspace = true
-
-[target.'cfg(windows)'.dependencies]
+# Everywhere: its `report::Audience` (who sees a message) is pure and
+# decides the native Linux build's messages too; the Win32 calls are
+# Windows-only inside it.
 rea-launcher-win32.workspace = true
 
 [dev-dependencies]

@@ -155,6 +155,50 @@ pub fn show(settings_path: &Path, text: &str, linux: bool) -> Result<Outcome, Sh
     finish(opened, result, outcome.get())
 }
 
+/// A fatal error from the native build (Linux): printed to stderr and,
+/// when a person may be watching on a desktop (`says`, the SDK's audience
+/// rule), shown in the SDK's message window with the issue form the text
+/// names as its button and `details` for Copy details.
+#[cfg_attr(windows, allow(dead_code))]
+pub fn fatal(text: &str, details: &str, says: rea_launcher_win32::report::Audience) {
+    use rea_launcher_ui::report::{self, Message, Mode};
+    let (text, link) = report_parts(text);
+    let message = Message {
+        title: TITLE,
+        text: &text,
+        link,
+        details: Some(details),
+    };
+    let mode = if says.command {
+        Mode::Command {
+            interactive: says.interactive,
+        }
+    } else {
+        Mode::Play {
+            interactive: says.interactive,
+        }
+    };
+    report::fatal(&PALETTE, &METRICS, &message, mode);
+}
+
+/// The message's text without the issue form's address it ends a
+/// sentence with, and that form as the window's button (the
+/// unknown-edition form, or the bug report a failed check links).
+fn report_parts(text: &str) -> (String, Option<rea_launcher_ui::report::Link<'static>>) {
+    use rea_launcher_ui::report::Link;
+    let forms = [
+        (runtime::ISSUE_URL, "Report the edition"),
+        (runtime::BUG_URL, "Open a bug report"),
+    ];
+    for (url, label) in forms {
+        if text.contains(url) {
+            let text = text.replace(&format!(": {url}"), ".").replace(url, "");
+            return (text.trim_end().to_string(), Some(Link { label, url }));
+        }
+    }
+    (text.to_string(), None)
+}
+
 /// `SCREAMER_TAB` (picture, controls, buttons) opens that tab first (for
 /// screenshots).
 fn initial_tab() -> Tab {
@@ -1647,6 +1691,28 @@ mod tests {
         assert!(
             ui.query_by_role_and_label(Role::RadioGroup, "Scaler")
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn an_error_window_turns_the_form_address_into_its_button() {
+        let unknown = format!(
+            "STARTH.EXE (/g/STARTH.EXE) is a build this launcher does not know, SHA-256 ab. It is not used. Please report it with launcher.log: {}",
+            runtime::ISSUE_URL
+        );
+        let (text, link) = report_parts(&unknown);
+        assert!(
+            text.ends_with("Please report it with launcher.log."),
+            "{text}"
+        );
+        assert_eq!(link.map(|l| l.url), Some(runtime::ISSUE_URL));
+        let failed = runtime::with_bug_link("No game folder set.".to_string());
+        let (text, link) = report_parts(&failed);
+        assert!(!text.contains("https://"), "{text}");
+        assert_eq!(link.map(|l| l.url), Some(runtime::BUG_URL));
+        assert_eq!(
+            report_parts("No game folder set."),
+            ("No game folder set.".to_string(), None)
         );
     }
 

@@ -134,7 +134,7 @@ rm -f "$T/calls"
 ( REA_LAUNCH_CMD=fake_launch; rea_main rally > /dev/null )
 case "$(cat "$T/calls")" in
   "--settings --linux rally
-launch "*" sh $REA_INNER $T/ScreamerLauncher --no-window") ok "a game name: window, then play" ;;
+launch "*" sh $REA_INNER $T/ScreamerLauncher --no-window --linux") ok "a game name: window, then play" ;;
   *) fail "game name dispatch: $(cat "$T/calls")" ;;
 esac
 rm -f "$T/calls"
@@ -143,7 +143,7 @@ if [ "$(cat "$T/calls")" = "--check --game x" ]; then ok "other words go to the 
 rm -f "$T/calls"
 ( REA_LAUNCH_CMD=fake_launch; rea_main --play 2 > /dev/null )
 case "$(cat "$T/calls")" in
-  "launch "*" sh $REA_INNER $T/ScreamerLauncher --no-window 2") ok "--play passes its game on" ;;
+  "launch "*" sh $REA_INNER $T/ScreamerLauncher --no-window --linux 2") ok "--play passes its game on" ;;
   *) fail "--play: $(cat "$T/calls")" ;;
 esac
 if [ "$(rea_main status)" = idle ]; then ok "status"; else fail "status"; fi
