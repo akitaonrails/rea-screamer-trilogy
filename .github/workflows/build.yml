@@ -206,6 +206,4 @@ jobs:
     with:
       package: screamer-launcher
       artifact-pattern: ScreamerLauncher-*
-      # GitHub's generated notes, as before.
-      notes: generate
       runs-on: ubuntu-22.04
