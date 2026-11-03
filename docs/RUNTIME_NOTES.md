@@ -240,3 +240,28 @@ Covered by unit, headless-window and shell tests; each needs one headless run wi
 - **Play-time errors under the Linux helper.** `screamer-play` now starts the game run with `--no-window --linux`, so an error before the game (no game folder, an unknown build, a busy runtime folder) opens the SDK's message window on a desktop (and is still printed to `play.log` and `launcher.log`). Headless, the window opens on gamescope's display.
 - **Second start exits 5.** During a race, `ScreamerLauncher --no-window` and a direct second `ScreamerLauncher` (not through the helper) are refused with exit 5 (they exited 2, or opened a second window on Linux); `screamer-play --play` says `already running` and exits 5 (the SDK helper's code since v0.4.0; it was 0).
 - **Quit paths again** (§14's table: the game's own menu, window close, `screamer-play stop`, SIGINT/SIGTERM, gamescope closed): nothing left behind, now also no `rea-launcher-rea-screamer.lock` holder (the lock file stays; the kernel releases it).
+
+### Results, 2026-11-03 (Linux, headless)
+
+**Setup.** As §14: the owner's three installs (read-only), the Linux release build of `ScreamerLauncher` and `scripts/build-dosbox.sh`'s DOSBox, run through `linux/screamer-play` in the `gaming` distrobox with a `gamescope` shim that adds `--backend headless`, a private HOME/XDG tree and `XDG_RUNTIME_DIR` per run, `env -i` with a minimal environment, and audio to SDL's `disk` driver (no device). A new supervisor (`.work/rg041/bin/run.sh`, not committed) found our processes by name (`pgrep -x`, pids only) and kept those whose executable is in this repository or whose command line names the harness folder (compared, never printed); it only signalled those, wrote only pid, state and command name, and counted zombies as leftovers. Keys and window closes went through XTEST/X11 on gamescope's Xwayland; screenshots with `gamescopectl`.
+
+| Check | Result |
+|---|---|
+| `--play --look original` (Screamer, over an Enhanced `launcher.cfg`) | VERIFIED: 1280x960 window, `crt-auto` shader, E2/E6 left out; `launcher.cfg` unchanged |
+| `--play --look steam_deck` (Screamer) | VERIFIED: gamescope started at 1280x800, DOSBox window 1280x800, `sharp`, E2/E6 applied; `launcher.cfg` unchanged |
+| `look = enhanced` alone in `launcher.cfg` (Screamer) | VERIFIED: gamescope and DOSBox 1920x1080, `sharp`, no fix left out |
+| `look = steam_deck` alone (Rally) | VERIFIED: gamescope 1280x800, DOSBox 1280x800, 3dfx at 2× (`SCREAMER_VOODOO_SCALE=2`); the attract screen showed |
+| `look = original` alone (Screamer 2) | VERIFIED: 1280x960, `crt-auto`, E2/E6 left out; gamescope 1920x1080 as for `resolution = original` |
+| Play-time error under the helper: game folder missing | VERIFIED: the launcher's message window ("Screamer Trilogy", the error, Copy details, OK) opened on gamescope's display; closing it ended the run; also in `play.log` and `launcher.log` |
+| Play-time error: unknown build (a synthetic `STARTH.EXE` in a scratch folder) | VERIFIED: the window shows the file, its SHA-256 and a **Report the edition** button with the unknown-edition form |
+| Second start during a race | VERIFIED: `screamer-play --play` and `screamer-play` print `already running`, exit 5; `ScreamerLauncher --no-window` and a plain `ScreamerLauncher` started directly print the "already running" message, exit 5; nothing new started (same four processes) |
+| Quit: the game's own menu (Screamer) | VERIFIED: DOSBox exits 0, everything gone 0.8 s after the last key |
+| Quit: window close (`WM_DELETE_WINDOW`; Screamer, Rally) | VERIFIED: DOSBox exits 0, everything gone in 0.7–0.8 s |
+| Quit: `screamer-play stop` | VERIFIED: everything gone in 0.36 s (helper exit 0) |
+| Quit: SIGINT / SIGTERM to the helper | VERIFIED: 0.35 s / 0.74 s (exit 143) |
+| Quit: gamescope closed (SIGTERM) | VERIFIED: everything gone in 0.74 s |
+| Quit: Alt+F4 as a key press (XTEST) | NOT APPLICABLE headless: gamescope has no window manager to turn Alt+F4 into a close request, and DOSBox ignores the key itself; the run ended at the supervisor's deadline (helper SIGTERM) with nothing left. On a desktop Alt+F4 is the window manager's `WM_DELETE_WINDOW`, verified above |
+| Nothing left behind, zombies included | VERIFIED after every run: no process of ours, no zombie child of the supervisor; the instance lock is free (the next run always started) |
+| gamescope's own exit | As §14: gamescope 3.17.0's headless backend crashes on shutdown after its child ended (helper exit 139); not the launcher's |
+
+The settings window looks the same as in the README screenshots (the changes only show with the gamepad off), so they were not retaken. Not checked here: Windows 10/11, the Steam Deck, the native message window on a real desktop (only on gamescope's display), and controllers.
