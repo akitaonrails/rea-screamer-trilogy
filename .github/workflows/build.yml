@@ -85,6 +85,8 @@ jobs:
       # The Linux job runs these.
       audit: false
       sdk-check: false
+      conformance: false
+      secret-scan: false
       shell-tests: ""
 
   windows-packages:
