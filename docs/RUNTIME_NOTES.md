@@ -231,3 +231,12 @@ The Steam Deck look is made only of individually verified values and ships befor
 | Game folder untouched | VERIFIED: same names, sizes, modification times and modes for all 1,042 entries | `out/gamefolder-{before,after}.tsv` |
 
 Not checked here: Windows 10/11 and Wine, the Steam Deck, real 1440p/4K and ultrawide screens, `fullscreen`, controllers, focus loss.
+
+## 15. Pending Real-Game Checks (rea-launcher-sdk v0.4.1, Unreleased)
+
+Covered by unit, headless-window and shell tests; each needs one headless run with the real games (as in §14) before a release.
+
+- **`--look` / `look =`.** Each look (`--play --look original|enhanced|steam_deck`) reaches the game with that look's window size, shader and fixes, and gamescope starts at the look's size (`REA_LOOK_SIZES`: Steam Deck 1280x800, Enhanced and Original 1920x1080) unless a `resolution` says otherwise. `launcher.cfg` is unchanged by a one-run `--look`.
+- **Play-time errors under the Linux helper.** `screamer-play` now starts the game run with `--no-window --linux`, so an error before the game (no game folder, an unknown build, a busy runtime folder) opens the SDK's message window on a desktop (and is still printed to `play.log` and `launcher.log`). Headless, the window opens on gamescope's display.
+- **Second start exits 5.** During a race, `ScreamerLauncher --no-window` and a direct second `ScreamerLauncher` (not through the helper) are refused with exit 5 (they exited 2, or opened a second window on Linux); `screamer-play --play` says `already running` and exits 5 (the SDK helper's code since v0.4.0; it was 0).
+- **Quit paths again** (§14's table: the game's own menu, window close, `screamer-play stop`, SIGINT/SIGTERM, gamescope closed): nothing left behind, now also no `rea-launcher-rea-screamer.lock` holder (the lock file stays; the kernel releases it).
