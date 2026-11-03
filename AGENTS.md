@@ -54,6 +54,7 @@ cargo clippy --target x86_64-pc-windows-gnu --workspace --all-targets --locked -
 cargo deny check
 for t in linux/tests/*.sh; do sh "$t"; done
 ../rea-launcher-sdk/scripts/sdk-sync --check .
+sdk/scripts/launcher-check
 cargo build --release --locked --target x86_64-pc-windows-gnu
 sh sdk/packaging/check-imports.sh target/x86_64-pc-windows-gnu/release/*.exe
 sdk/scripts/wine-test --locked --workspace --target x86_64-pc-windows-gnu

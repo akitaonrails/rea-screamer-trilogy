@@ -140,8 +140,8 @@ the game at its own 50 frames per second.
 The window works with the keyboard alone (Tab moves, arrows change a row,
 Space switches, Ctrl+Tab changes tab, Enter plays) and with a pad (d-pad
 moves and changes, A switches, LB/RB change tab, Start plays). A greyed-out
-choice says why when you point at it, for example a renderer the chosen
-game doesn't have.
+choice says why on the window, under its row (and when you point at it),
+for example a renderer the chosen game doesn't have.
 
 ## Gamepad
 

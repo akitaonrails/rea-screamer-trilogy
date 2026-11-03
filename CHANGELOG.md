@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Updated rea-launcher-sdk to v0.4.1.
+- New `look` option: `look = original`, `enhanced` or `steam_deck` in `launcher.cfg`, or `--look` for one run, sets every picture option at once, like the look cards in the window. Picture options set after it still win. The window saves the look you pick, and the first run saves the recommended one. On Linux, `screamer-play` sizes gamescope from the look (Steam Deck 1280×800, the others 1920×1080) unless `resolution` says otherwise.
+- Linux: when the launcher stops on an error before the game starts (no game folder, a build it doesn't know, the game already running), it now shows the message in a window with a button to the matching issue form, also when started from `screamer-play`. Before, a double-clicked AppImage just closed and the message only reached `launcher.log`.
+- Linux: a second `ScreamerLauncher` started directly (from a menu or the AppImage, not through `screamer-play`) is refused while the first one is open, instead of opening a second window.
+- Windows: a second start brings the open settings window forward through the SDK's lookup (a visible window of this launcher's own program). If DOSBox is still running from an earlier launcher that was ended, Play is refused instead of copying files under the running game.
+- Starting the launcher while it or its game is already running now exits with code 5, as across the rea launchers (it was 2; `screamer-play --play` returned 0). `--help` lists it.
+- Window: with the gamepad off, each disabled row says why once, right under it: "Turn on Gamepad above to change the deadzone." (and the rumble). In the Buttons tab the layout cards say "Turn on Gamepad in the Controls tab first." in place of their notes; the red line above them is gone.
+- Linux: the settings window reads every connected pad, not only the first one, and Back (View) also goes back.
+- Bug report form: a "What worked?" checklist (window, game start, a full race, gamepad, sound and CD music, Alt+Tab, each way of quitting).
+
 ## 0.7.0 - 2026-11-02
 
 - CI: the Windows zip's `ScreamerLauncher.exe`, DOSBox and DLLs are import-checked (`sdk/packaging/check-imports.sh`) where they are packaged (MSYS2), not only the Ubuntu cross-build; `packaging/tests/workflow.sh` keeps that step in place.
