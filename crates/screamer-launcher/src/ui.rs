@@ -873,9 +873,15 @@ impl Window {
             "RT/LT and A/X both drive the pedals in Modern. The d-pad and left stick move through menus.",
         );
         ui.spacing_mut().item_spacing.y = 4.0;
+        // With the pad off the rows are drawn in a disabled Ui instead of
+        // as disabled chips: an SDK chip's disabled reason is both a note
+        // under its row (seven times here) and its hover text (empty when
+        // the note is left out). Disabled this way the chips ignore clicks,
+        // are dimmed and marked disabled for screen readers, and show no
+        // tooltip; the row's description and the cards above say why.
         let options: Vec<Chip<'_, u8>> = form::PAD_BUTTONS
             .iter()
-            .map(|&(b, l)| Chip::new(b, l).disabled(pad_off_reason.map(|_| "")))
+            .map(|&(b, l)| Chip::new(b, l))
             .collect();
         let row_description = match pad_off_reason {
             Some(why) => format!("The gamepad button for this action. {why}"),
@@ -885,6 +891,9 @@ impl Window {
             let row_focused = self.focused(Row::Action(row_idx));
             let r = ui.horizontal_top(|ui| {
                 widgets::field_focused(ui, name, row_focused);
+                if pad_off_reason.is_some() {
+                    ui.disable();
+                }
                 let mut button = self.form.pad_button(k);
                 let resp = widgets::chips_sized(ui, &options, &mut button, ChipSize::Compact);
                 widgets::name_control(&resp, Some(name), Some(&row_description));
@@ -1555,6 +1564,40 @@ mod tests {
             testing::description(&node)
                 .is_some_and(|d| d.ends_with("Turn on Gamepad in the Controls tab first."))
         }));
+        // Every button chip is disabled for screen readers, ignores clicks
+        // and shows no tooltip at all (never an empty one).
+        let rt: Vec<_> = ui
+            .query_all_by_role_and_label(Role::RadioButton, "RT")
+            .collect();
+        assert_eq!(rt.len(), form::ACTIONS.len());
+        assert!(rt.iter().all(testing::disabled));
+        drop(rt);
+        let before = ui.state().form.buttons;
+        ui.query_all_by_role_and_label(Role::RadioButton, "RT")
+            .next()
+            .unwrap()
+            .hover();
+        ui.run();
+        let labels: Vec<String> = ui
+            .query_all_by_role(Role::Label)
+            .map(|l| {
+                let node = testing::NodeT::accesskit_node(&l);
+                node.label().or(node.value()).unwrap_or_default()
+            })
+            .collect();
+        assert!(labels.iter().all(|t| !t.trim().is_empty()), "{labels:?}");
+        let rt = ui
+            .query_all_by_role_and_label(Role::RadioButton, "RT")
+            .next()
+            .unwrap();
+        assert!(testing::description(&rt).is_none(), "no hover text");
+        rt.click();
+        ui.run();
+        assert_eq!(
+            ui.state().form.buttons,
+            before,
+            "a disabled chip ignores clicks"
+        );
         let modern = ui.get_by_label("Modern");
         assert!(testing::disabled(&modern));
         assert!(
