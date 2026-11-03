@@ -10,31 +10,21 @@
 //! `UPDATE_SNAPSHOTS=1 cargo test --test snapshots` and review the diff.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use screamer_launcher::config::{self, Settings};
 use screamer_launcher::edition::{EDITIONS, Game};
 use screamer_launcher::form::{self, Form, Look};
 use screamer_launcher::runtime::{self, Gpu};
 
-fn snapshot_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots")
-}
-
+/// Compares with `tests/snapshots/<name>` through the SDK's helper (the
+/// crate version stored as `<version>`, CRLF read as LF, the first
+/// differing line named). `UPDATE_SNAPSHOTS=1` (or `REA_UPDATE_SNAPSHOTS=1`)
+/// writes them.
 fn check(name: &str, actual: &str) {
-    let path = snapshot_dir().join(name);
-    if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
-        std::fs::create_dir_all(snapshot_dir()).unwrap();
-        std::fs::write(&path, actual).unwrap();
-        return;
-    }
-    let expected = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("{}: {e} (UPDATE_SNAPSHOTS=1 creates it)", path.display()));
-    // Line endings as checked out (Git may turn them into CRLF on Windows).
-    assert!(
-        expected.replace("\r\n", "\n") == actual,
-        "{name} differs from its snapshot; review, then UPDATE_SNAPSHOTS=1 to accept"
-    );
+    rea_launcher::snapshots!()
+        .update_var("UPDATE_SNAPSHOTS")
+        .assert(name, actual);
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -114,8 +104,7 @@ fn file(text: &str) -> Settings {
 
 #[test]
 fn help_and_template() {
-    let help = config::usage().replace(env!("CARGO_PKG_VERSION"), "<version>");
-    check("help.txt", &help);
+    check("help.txt", &config::usage());
     check("template.cfg", &config::template());
     check(
         "first-run-desktop.cfg",
