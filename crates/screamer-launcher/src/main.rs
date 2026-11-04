@@ -97,10 +97,33 @@ fn bad_command_line_audience(args: &[String]) -> Audience {
     audience(Run::bad_command_line(args))
 }
 
-/// The modes that open the window or play take the one-launcher instance;
-/// `--check`, `--controllers` and `--help` only look.
+/// The modes that open the window or play take the one-launcher instance,
+/// and so does `--check`, an action (STANDARDS "Action flags and one
+/// instance"): with the window open it is refused with exit 5 instead of
+/// checking alongside. `--controllers` and `--help` only list.
 fn takes_instance(mode: &Mode) -> bool {
-    matches!(mode, Mode::Play { .. } | Mode::SettingsOnly { .. })
+    matches!(
+        mode,
+        Mode::Play { .. } | Mode::SettingsOnly { .. } | Mode::Check
+    )
+}
+
+/// Whether this second start is an action (`--check`): it never brings
+/// the open window forward, it is refused.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_action(args: &[String]) -> bool {
+    rea_launcher_win32::instance::is_action(args, &[])
+}
+
+/// What a refused second start says: the window is open (an action), or
+/// the launcher or its game is running.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn refusal_message(second: rea_launcher_win32::instance::SecondStart) -> String {
+    use rea_launcher_win32::instance::SecondStart;
+    match second {
+        SecondStart::WindowOpen => second.message(ui::TITLE).unwrap_or_default(),
+        _ => already_running_message(),
+    }
 }
 
 /// The instance name (`Local\rea-launcher-rea-screamer` on Windows, a
@@ -116,19 +139,23 @@ fn already_running_message() -> String {
 }
 
 /// One launcher per user session (STANDARDS "Clean exit, single
-/// instance"): a second start brings the open settings window forward
-/// (exit 0) or says the game is running (exit 5). Keep the guard for the
-/// launcher's lifetime.
+/// instance"): a second plain start brings the open settings window
+/// forward (exit 0); an action (`--check`) is refused while the window is
+/// open, and any start while the game runs (exit 5). Keep the guard for
+/// the launcher's lifetime.
 #[cfg(windows)]
-fn single_instance(says: Audience) -> Result<rea_launcher_win32::instance::Guard, ExitCode> {
+fn single_instance(
+    args: &[String],
+    says: Audience,
+) -> Result<rea_launcher_win32::instance::Guard, ExitCode> {
     use rea_launcher_win32::instance::{self, SecondStart, Window};
     match instance::single(INSTANCE) {
         Ok(guard) => Ok(guard),
         Err(running) => {
-            let second = running.second_start(false, Window::Own(ui::TITLE));
+            let second = running.second_start(is_action(args), Window::Own(ui::TITLE));
             log().info(second.log_line());
             if second != SecondStart::Focused {
-                report_error(&already_running_message(), says);
+                report_error(&refusal_message(second), says);
             }
             Err(exit_code(second.exit_code()))
         }
@@ -140,7 +167,10 @@ fn single_instance(says: Audience) -> Result<rea_launcher_win32::instance::Guard
 /// window can't be brought forward from here, so a second start says so
 /// and exits 5.
 #[cfg(not(windows))]
-fn single_instance(says: Audience) -> Result<rea_launcher::instance::Guard, ExitCode> {
+fn single_instance(
+    _args: &[String],
+    says: Audience,
+) -> Result<rea_launcher::instance::Guard, ExitCode> {
     match rea_launcher::instance::single(INSTANCE) {
         Ok(guard) => Ok(guard),
         Err(running) => {
@@ -170,7 +200,7 @@ fn main() -> ExitCode {
     };
     let says = audience(invocation.run());
     let _instance = if takes_instance(&invocation.mode) {
-        match single_instance(says) {
+        match single_instance(&args, says) {
             Ok(guard) => Some(guard),
             Err(code) => return code,
         }
@@ -796,18 +826,51 @@ mod tests {
     }
 
     #[test]
-    fn only_the_window_and_play_take_the_instance() {
+    fn the_window_play_and_check_take_the_instance() {
         let mode = |args: &[&str]| invocation(args).mode;
         for one in [
             &[][..],
             &["rally"],
             &["--no-window"],
             &["--settings", "--linux"],
+            &["--check"],
+            &["--check", "--game", "C:\\Games\\Screamer"],
         ] {
             assert!(takes_instance(&mode(one)), "{one:?}");
         }
-        for looks in [&["--check"][..], &["--controllers"]] {
-            assert!(!takes_instance(&mode(looks)), "{looks:?}");
+        assert!(!takes_instance(&mode(&["--controllers"])));
+    }
+
+    /// A second start with `--check` while the window is open is refused
+    /// with exit 5 and says so; a plain second start brings the window
+    /// forward (rea-launcher-sdk#1, finding 5).
+    #[test]
+    fn check_with_the_window_open_is_refused_with_5() {
+        use rea_launcher_win32::instance::SecondStart;
+        for check in [&["--check"][..], &["--check", "--which", "rally"]] {
+            let args = strings(check);
+            assert!(takes_instance(&invocation(check).mode), "{check:?}");
+            let second = SecondStart::decide(
+                is_action(&args),
+                || true,
+                || panic!("an action never brings the window forward"),
+            );
+            assert_eq!(second, SecondStart::WindowOpen, "{check:?}");
+            assert_eq!(second.exit_code(), 5);
+            assert!(
+                refusal_message(second).contains("launcher window is open"),
+                "{}",
+                refusal_message(second)
+            );
+            // The game (no window) holds the instance: refused too.
+            let busy = SecondStart::decide(is_action(&args), || false, || false);
+            assert_eq!(busy.exit_code(), 5);
+            assert!(refusal_message(busy).contains("already running"));
+        }
+        for plain in [&[][..], &["rally"], &["--no-window"]] {
+            let second = SecondStart::decide(is_action(&strings(plain)), || true, || true);
+            assert_eq!(second, SecondStart::Focused, "{plain:?}");
+            assert_eq!(second.exit_code(), 0);
         }
     }
 
