@@ -1,3 +1,8 @@
+// A GUI program on Windows: no console window beside the settings window
+// on a double click. Commands reach the terminal they were started from
+// through the SDK's console attach (`report::route_here`).
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod ui;
 #[cfg(windows)]
 mod win32;
@@ -190,7 +195,11 @@ fn main() -> ExitCode {
     let (invocation, cli_settings) = match parse_command_line(&args) {
         Start::Run(invocation, settings) => (invocation, settings),
         Start::Help => {
-            println!("{}", config::usage());
+            command_output(
+                &config::usage(),
+                audience(Run::from_args(&args, &["--controllers"])),
+                true,
+            );
             return ExitCode::SUCCESS;
         }
         Start::BadCommandLine(message) => {
@@ -220,6 +229,40 @@ fn main() -> ExitCode {
 /// afresh); logging never fails the launch.
 fn log() -> Log {
     Log::new(locate_config_file().with_file_name("launcher.log"))
+}
+
+/// A command's output (`--help`, `--check`, `--controllers`): printed to
+/// the terminal the launcher was started from or to a redirect (on
+/// Windows the SDK attaches to the parent console first), and in a
+/// message box when nobody sees it and a person started it (a
+/// double-clicked shortcut), when `dialog` allows.
+fn command_output(text: &str, says: Audience, dialog: bool) {
+    #[cfg(windows)]
+    {
+        let route = report::route_here(says.mode());
+        if route.print {
+            println!("{text}");
+        }
+        if dialog && route.dialog {
+            use rea_launcher_win32::dialog::{self, Icon};
+            dialog::message(ui::TITLE, text, Icon::Info);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (says, dialog);
+        println!("{text}");
+    }
+}
+
+/// What the game run returns when the player closes the settings window
+/// without Play: 3 for the Linux helper's `--settings`, 0 for a plain
+/// window close (STANDARDS "Family consistency").
+fn window_closed_code(mode: &Mode) -> u8 {
+    match mode {
+        Mode::SettingsOnly { .. } => WINDOW_CLOSED,
+        _ => 0,
+    }
 }
 
 /// Logs and prints a warning.
@@ -306,11 +349,21 @@ fn run(mode: Mode, cli_settings: Settings, says: Audience) -> Result<ExitCode, S
     }
 
     match mode {
-        Mode::Check => run_check(&settings, cli_settings.which).map_err(runtime::with_bug_link),
-        Mode::Controllers { seconds } => run_controllers(seconds),
+        Mode::Check => {
+            let mut report = Vec::new();
+            let checked = run_check(&settings, cli_settings.which, &mut report);
+            // A failed check's error goes through report_error; the lines
+            // before it are only printed, never a second dialog.
+            command_output(&report.join("\n"), says, checked.is_ok());
+            checked.map_err(runtime::with_bug_link)
+        }
+        Mode::Controllers { seconds } => {
+            command_output(&run_controllers(seconds), says, true);
+            Ok(ExitCode::SUCCESS)
+        }
         Mode::SettingsOnly { linux } => match ui::show(&cfg_path, &cfg_text, linux) {
             Ok(ui::Outcome::Play) => Ok(ExitCode::SUCCESS),
-            Ok(ui::Outcome::Closed) => Ok(ExitCode::from(WINDOW_CLOSED)),
+            Ok(ui::Outcome::Closed) => Ok(ExitCode::from(window_closed_code(&mode))),
             Err(ui::ShowError::NoWindow(e)) => {
                 warn(&format!(
                     "settings window unavailable ({e}); playing with saved settings"
@@ -332,7 +385,9 @@ fn run(mode: Mode, cli_settings: Settings, says: Audience) -> Result<ExitCode, S
                             .merged(cli_settings)
                             .with_look()
                     }
-                    Ok(ui::Outcome::Closed) => return Ok(ExitCode::from(WINDOW_CLOSED)),
+                    Ok(ui::Outcome::Closed) => {
+                        return Ok(ExitCode::from(window_closed_code(&mode)));
+                    }
                     // No window possible (no display or OpenGL): play with
                     // the saved settings, like the sibling launchers.
                     Err(ui::ShowError::NoWindow(e)) => {
@@ -485,12 +540,19 @@ fn default_saves_dir(game_slug: &str) -> PathBuf {
         .join(game_slug)
 }
 
-fn run_check(settings: &Settings, filter_game: Option<Game>) -> Result<ExitCode, String> {
+/// `--check`: the report's lines go into `out` (and `launcher.log`).
+fn run_check(
+    settings: &Settings,
+    filter_game: Option<Game>,
+    out: &mut Vec<String>,
+) -> Result<ExitCode, String> {
     let log = log();
     let machine = MachineCapabilities::detect();
-    let say = |line: String| {
-        println!("{line}");
-        log.line(&line);
+    let mut say = |line: String| {
+        if !line.is_empty() {
+            log.line(&line);
+        }
+        out.push(line);
     };
     say(format!(
         "Hardware:   {} · Display {}×{} @ {} Hz",
@@ -531,7 +593,7 @@ fn run_check(settings: &Settings, filter_game: Option<Game>) -> Result<ExitCode,
         let Some(disc) = trilogy.get(g) else {
             continue;
         };
-        println!();
+        say(String::new());
         checked_any = true;
         say(format!("Game:       {}", disc.game.title()));
         say(format!("Source dir: {}", disc.exe_dir.display()));
@@ -575,17 +637,18 @@ fn run_check(settings: &Settings, filter_game: Option<Game>) -> Result<ExitCode,
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_controllers(_seconds: u32) -> Result<ExitCode, String> {
-    println!("Scanning connected controllers...");
+/// `--controllers`: the connected pads, as text.
+fn run_controllers(_seconds: u32) -> String {
+    let mut text = String::from("Scanning connected controllers...");
     let controllers = ui::detect_controllers();
     if controllers.is_empty() {
-        println!("  No controllers currently connected.");
+        text.push_str("\n  No controllers currently connected.");
     } else {
         for (idx, name) in controllers.iter().enumerate() {
-            println!("  Controller #{}: {name}", idx + 1);
+            text.push_str(&format!("\n  Controller #{}: {name}", idx + 1));
         }
     }
-    Ok(ExitCode::SUCCESS)
+    text
 }
 
 fn launch_game(settings: &Settings, says: Audience) -> Result<ExitCode, String> {
@@ -710,6 +773,15 @@ fn launch_game(settings: &Settings, says: Audience) -> Result<ExitCode, String> 
         .args(&plan.dosbox_args);
     for (key, value) in &plan.env {
         cmd.env(key, value);
+    }
+    // The launcher has no console of its own (GUI subsystem): a
+    // console-subsystem DOSBox would get a new console window beside the
+    // game. Give it a hidden one instead.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
     let status = cmd
@@ -871,6 +943,23 @@ mod tests {
             let second = SecondStart::decide(is_action(&strings(plain)), || true, || true);
             assert_eq!(second, SecondStart::Focused, "{plain:?}");
             assert_eq!(second.exit_code(), 0);
+        }
+    }
+
+    /// Closing the settings window without Play: 0 for a plain start
+    /// (the console build exited 3, rea-launcher-sdk#1 finding 2), 3 only
+    /// for the Linux helper's `--settings`.
+    #[test]
+    fn a_plain_window_close_exits_0() {
+        for plain in [&[][..], &["rally"], &["--linux"]] {
+            assert_eq!(window_closed_code(&invocation(plain).mode), 0, "{plain:?}");
+        }
+        for helper in [&["--settings"][..], &["--settings", "--linux"]] {
+            assert_eq!(
+                window_closed_code(&invocation(helper).mode),
+                3,
+                "{helper:?}"
+            );
         }
     }
 
