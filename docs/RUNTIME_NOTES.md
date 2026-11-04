@@ -265,3 +265,12 @@ Covered by unit, headless-window and shell tests; each needs one headless run wi
 | gamescope's own exit | As §14: gamescope 3.17.0's headless backend crashes on shutdown after its child ended (helper exit 139); not the launcher's |
 
 The settings window looks the same as in the README screenshots (the changes only show with the gamepad off), so they were not retaken. Not checked here: Windows 10/11, the Steam Deck, the native message window on a real desktop (only on gamescope's display), and controllers.
+
+## 16. Pending Windows Checks (rea-launcher-sdk v0.4.2, Unreleased)
+
+From the native Windows 10 test of 0.8.0 (rea-launcher-sdk#1). Verified here only with unit tests, `wine-test` and the PE header of the release build (`objdump -p`: Subsystem 2, Windows GUI). Pending on real Windows 10/11:
+
+- **No console window.** A double click on `ScreamerLauncher.exe` opens only the settings window. With a game, Play shows no extra console beside DOSBox (DOSBox starts with `CREATE_NO_WINDOW`); note whether dosbox-staging still opens its own "DOSBox Status Window" (it does `AllocConsole` without `-noconsole` when it has no console).
+- **Commands from PowerShell.** `--help`, `--check` and `--controllers` print to the terminal; `--check > report.txt` writes the report; `--bogus-flag` and `--look invalid` print the error and usage and exit 2 with no dialog. A shortcut to `ScreamerLauncher.exe --check` shows the report in a message box.
+- **Window close.** Closing the settings window without Play exits 0 (`$LASTEXITCODE`); `--settings` closed exits 3.
+- **`--check` with the window open** prints "The Screamer Trilogy launcher window is open…" and exits 5; during a race it says the game is running, exit 5.

@@ -68,7 +68,9 @@ Download from the [latest release](https://github.com/akitaonrails/rea-screamer-
    `C:\Games\ScreamerLauncher`.
 2. Keep `ScreamerLauncher.exe`, `dosbox.exe`, the DLLs and the `resources`
    folder together.
-3. Run `ScreamerLauncher.exe`.
+3. Run `ScreamerLauncher.exe`. It is unsigned, so the first start from a
+   downloaded zip may show "Windows protected your PC": click **More
+   info**, then **Run anyway**.
 
 ### Steam Deck
 
@@ -208,11 +210,14 @@ only `--game` and `--which` are saved. The launcher's own switches:
   3: closed without Play; 4: no window possible (play with the saved
   settings).
 - `--check`: checks every game in the folder and every fix, without
-  playing, and writes the report to `launcher.log` too.
+  playing, and writes the report to `launcher.log` too. While the
+  launcher's window is open, or a game runs, it is refused with exit
+  code 5.
 - `--controllers`: lists the connected pads.
 - `--help`: every option and switch.
 
-Exit codes for scripts: 0 played or checked, 2 an error (see
+Closing the window without pressing Play exits 0. Exit codes for
+scripts: 0 played or checked, 2 an error (see
 `launcher.log`), 5 the launcher or its game is already running (nothing
 started), otherwise the game's own.
 
@@ -224,6 +229,8 @@ started), otherwise the game's own.
 | The launcher's copy of each game (runtime) | `%LOCALAPPDATA%\ScreamerLauncher\runtime\<game>\` | `~/.local/share/screamer-launcher/runtime/<game>/` |
 | Your saves (`CHOICE.DAT`, `*.SAV`, replays) | `%APPDATA%\ScreamerLauncher\saves\<game>\` | `~/.local/share/screamer-launcher/saves/<game>/` |
 | `screamer-play`'s logs and lock | | `~/.config/screamer-launcher/` |
+
+The launcher writes nothing to the Windows registry.
 
 A `launcher.cfg` next to `ScreamerLauncher` is used instead (a portable
 setup), and the log goes next to it. `runtime =` and `saves =` in
@@ -284,7 +291,8 @@ of it too.
 2. Delete the launcher's folder, or the AppImage.
 3. Windows: delete `%APPDATA%\ScreamerLauncher` (settings, log, saves) and
    `%LOCALAPPDATA%\ScreamerLauncher` (the private copies of the games,
-   about the size of your game folders).
+   about the size of your game folders). There are no registry entries
+   to remove.
 4. Linux: delete `~/.config/screamer-launcher` and
    `~/.local/share/screamer-launcher`, after copying the saves out. If
    you added it to Steam, remove the shortcut.
