@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.1 - 2026-11-03
+
 From a Windows 10 test of 0.8.0 by an outside tester (rea-launcher-sdk#1):
 
 - Updated rea-launcher-sdk to v0.4.2.
