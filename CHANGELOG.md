@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+From a Windows 10 test of 0.8.0 by an outside tester (rea-launcher-sdk#1):
+
+- Updated rea-launcher-sdk to v0.4.2.
+- Windows: a double click on `ScreamerLauncher.exe` no longer opens a black console window beside the settings window. `--help`, `--check` and `--controllers` still print to the terminal you start them from (and `--check > report.txt` works); from a shortcut, with no terminal, they show their text in a message box. DOSBox starts without a console window of its own.
+- Closing the settings window without pressing Play exits 0 (it was 3). `--settings`, which `screamer-play` uses, still exits 3.
+- `--check` while the launcher's window is open now says "The Screamer Trilogy launcher window is open. Use it there, or close it and try again." and exits 5, as across the rea launchers; while a game runs it says so and exits 5. Before, it ran alongside.
+- README: what to do when Windows SmartScreen says "Windows protected your PC" (the launcher is unsigned: More info, then Run anyway), and that the launcher writes nothing to the registry.
+
 ## 0.8.0 - 2026-11-03
 
 - Updated rea-launcher-sdk to v0.4.1.
