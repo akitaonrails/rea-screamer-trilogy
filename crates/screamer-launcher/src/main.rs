@@ -9,7 +9,7 @@ use std::process::{Command, ExitCode};
 use rea_launcher::cfg;
 use rea_launcher::fsx;
 use rea_launcher::log::Log;
-use rea_launcher_win32::report::{Audience, Run};
+use rea_launcher_win32::report::{self, Audience, Run};
 
 use screamer_launcher::config::{self, ArgsError, MachineCapabilities, Settings};
 use screamer_launcher::edition::Game;
@@ -65,12 +65,36 @@ fn audience(run: Run) -> Audience {
     }
 }
 
-/// A bad command line (or `--help`) answers like a command.
-fn command_audience(args: &[String]) -> Audience {
-    audience(Run {
-        command: true,
-        ..Run::from_args(args, &["--controllers"])
-    })
+/// What the command line asks for.
+#[derive(Debug)]
+enum Start {
+    /// A run: its mode and family flags, and the options for this run.
+    Run(Invocation, Settings),
+    /// `--help`, `-h` or `/?`.
+    Help,
+    /// A command line that doesn't parse: the error, then the usage.
+    BadCommandLine(String),
+}
+
+fn parse_command_line(args: &[String]) -> Start {
+    let (invocation, rest) = match extract_mode(args) {
+        Ok(parsed) => parsed,
+        Err(message) => return Start::BadCommandLine(message),
+    };
+    match Settings::parse_args(rest) {
+        Ok(settings) => Start::Run(invocation, settings),
+        Err(ArgsError::Help) => Start::Help,
+        Err(ArgsError::Bad(message)) => {
+            Start::BadCommandLine(format!("{message}\n\n{}", config::usage()))
+        }
+    }
+}
+
+/// A command line that fails to parse is reported like a command (the
+/// terminal; a dialog only when nobody sees it), never like a play run,
+/// whose dialog would hang a script with a typo: the SDK's rule.
+fn bad_command_line_audience(args: &[String]) -> Audience {
+    audience(Run::bad_command_line(args))
 }
 
 /// The modes that open the window or play take the one-launcher instance;
@@ -133,25 +157,15 @@ fn exit_code(code: i32) -> ExitCode {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (invocation, rest) = match extract_mode(&args) {
-        Ok(parsed) => parsed,
-        Err(msg) => {
-            report_error(&msg, command_audience(&args));
-            return ExitCode::from(2);
-        }
-    };
-    let cli_settings = match Settings::parse_args(rest) {
-        Ok(s) => s,
-        Err(ArgsError::Help) => {
+    let (invocation, cli_settings) = match parse_command_line(&args) {
+        Start::Run(invocation, settings) => (invocation, settings),
+        Start::Help => {
             println!("{}", config::usage());
             return ExitCode::SUCCESS;
         }
-        Err(ArgsError::Bad(message)) => {
-            report_error(
-                &format!("{message}\n\n{}", config::usage()),
-                command_audience(&args),
-            );
-            return ExitCode::from(2);
+        Start::BadCommandLine(message) => {
+            report_error(&message, bad_command_line_audience(&args));
+            return exit_code(report::BAD_COMMAND_LINE);
         }
     };
     let says = audience(invocation.run());
@@ -724,8 +738,61 @@ mod tests {
             assert!(says(command).command, "{command:?}");
         }
         assert!(!says(&["--check", "--linux"]).interactive);
-        let help = command_audience(&["--help".to_string()]);
-        assert!(help.command);
+    }
+
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|a| a.to_string()).collect()
+    }
+
+    /// An unknown flag or a bad value prints the error and the usage and
+    /// exits 2; from a terminal it never opens a (modal) dialog, also for
+    /// a run that would have opened the window (rea-launcher-sdk#1).
+    #[test]
+    fn a_bad_command_line_is_printed_and_exits_2() {
+        use rea_launcher_win32::report::{Mode, Route, Terminal, route};
+        for bad in [
+            &["--bogus-flag"][..],
+            &["--look", "invalid"],
+            &["--no-window", "--look", "invalid"],
+            &["--controllers", "soon"],
+        ] {
+            let args = strings(bad);
+            let Start::BadCommandLine(message) = parse_command_line(&args) else {
+                panic!("{bad:?} parsed");
+            };
+            if bad.contains(&"--look") {
+                assert!(
+                    message.contains("--no-window"),
+                    "{bad:?}: the usage follows"
+                );
+            }
+            let mode = Audience::of(Run::bad_command_line(&args), false).mode();
+            assert!(matches!(mode, Mode::Command { .. }), "{bad:?}: {mode:?}");
+            for wine in [false, true] {
+                let terminal = Terminal {
+                    attached: true,
+                    redirected: false,
+                    wine,
+                };
+                assert_eq!(
+                    route(mode, terminal),
+                    Route {
+                        print: true,
+                        dialog: false
+                    },
+                    "{bad:?}"
+                );
+            }
+        }
+        assert_eq!(report::BAD_COMMAND_LINE, 2);
+        assert!(matches!(
+            parse_command_line(&strings(&["--help"])),
+            Start::Help
+        ));
+        assert!(matches!(
+            parse_command_line(&strings(&["--look", "enhanced"])),
+            Start::Run(..)
+        ));
     }
 
     #[test]
