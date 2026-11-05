@@ -8,9 +8,9 @@ rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-rea-launcher = { git = "https://github.com/akitaonrails/rea-launcher-sdk", tag = "v0.4.2" }
-rea-launcher-ui = { git = "https://github.com/akitaonrails/rea-launcher-sdk", tag = "v0.4.2" }
-rea-launcher-win32 = { git = "https://github.com/akitaonrails/rea-launcher-sdk", tag = "v0.4.2" }
+rea-launcher = { git = "https://github.com/akitaonrails/rea-launcher-sdk", tag = "v0.4.3" }
+rea-launcher-ui = { git = "https://github.com/akitaonrails/rea-launcher-sdk", tag = "v0.4.3" }
+rea-launcher-win32 = { git = "https://github.com/akitaonrails/rea-launcher-sdk", tag = "v0.4.3" }
 
 [profile.release.package.screamer-hooks]
 opt-level = 3
