@@ -30,6 +30,16 @@ exact executables by SHA-256 (`edition.rs`).
   generation (100 FPS presented, game at 50 Hz) is the substitute.
 - **Voodoo memory above 4 MB** exits with `MAXCACHE` in Screamer 2/Rally
   (`RUNTIME_NOTES.md` §9): the launcher always emulates a 4 MB Voodoo 1.
+- **The Screamer 1 "3DFX Voodoo 3 Patch (2026)"** ([TgamesFR,
+  Vogons](https://www.vogons.org/viewtopic.php?t=112964), October 2026)
+  replaces `STARTH.EXE`/`STARTL.EXE` with closed-source Glide 2.x
+  renderers: Screamer 1 never shipped a 3dfx build, so this is a
+  community patch, not an edition to key. It targets a real Voodoo 3
+  (the author: Voodoo 3/4/5 yes, Voodoo 1 no), while DOSBox Staging
+  emulates a Voodoo 1 only, and its binaries sit behind a
+  members-only download, so we cannot hash or test them. Revisit if a
+  Voodoo 1-compatible version runs under DOSBox Staging: it would go
+  into `edition.rs` with reporter-supplied SHA-256s (issue #1).
 
 ## Old-game trouble spots (SDK checklist)
 
