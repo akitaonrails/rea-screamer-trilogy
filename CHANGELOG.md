@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.2 - 2026-11-05
+
 - Windows: `ScreamerLauncher.exe` now says what it is: its name, version, publisher and icon show in Explorer's Properties, and it carries a standard Windows manifest. Antivirus programs are less likely to flag it as an unknown program.
 - Updated rea-launcher-sdk to v0.4.3.
 
