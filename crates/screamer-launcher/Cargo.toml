@@ -18,6 +18,10 @@ rea-launcher-ui.workspace = true
 # Windows-only inside it.
 rea-launcher-win32.workspace = true
 
+[build-dependencies]
+# Version information, icon and manifest in ScreamerLauncher.exe (build.rs).
+rea-launcher-build.workspace = true
+
 [dev-dependencies]
 # Headless GUI tests (egui_kittest through AccessKit; no window, no GPU).
 rea-launcher-ui = { workspace = true, features = ["testing"] }

@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 rea-launcher = { git = "https://github.com/akitaonrails/rea-launcher-sdk", tag = "v0.4.3" }
+rea-launcher-build = { git = "https://github.com/akitaonrails/rea-launcher-sdk", tag = "v0.4.3" }
 rea-launcher-ui = { git = "https://github.com/akitaonrails/rea-launcher-sdk", tag = "v0.4.3" }
 rea-launcher-win32 = { git = "https://github.com/akitaonrails/rea-launcher-sdk", tag = "v0.4.3" }
 
