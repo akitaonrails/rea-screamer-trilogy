@@ -17,3 +17,13 @@ else
   echo "FAIL windows-packages must run check-imports.sh on \$package/*.exe and *.dll after the DLL copy, before the zip"
   exit 1
 fi
+# The launcher's build.rs runs MinGW's windres (version information, icon
+# and manifest, to avoid antivirus false positives): the MSYS2 job installs
+# binutils explicitly and checks the packaged exe carries the resources.
+if printf '%s\n' "$job" | grep -q 'mingw-w64-x86_64-binutils' \
+  && printf '%s\n' "$job" | grep -q 'windres -i "\$package/ScreamerLauncher.exe" -O rc'; then
+  echo "ok   windows-packages has windres and checks the exe's resources"
+else
+  echo "FAIL windows-packages must install mingw-w64-x86_64-binutils and check ScreamerLauncher.exe's resources with windres"
+  exit 1
+fi

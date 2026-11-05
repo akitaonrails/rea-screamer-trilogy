@@ -105,6 +105,7 @@ jobs:
           update: true
           install: >-
             git
+            mingw-w64-x86_64-binutils
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-lld
@@ -163,6 +164,15 @@ jobs:
           # The shipped programs, not only the cross-build: every import
           # must belong to an import descriptor (GNU ld 2.47 leaves some out).
           sh sdk/packaging/check-imports.sh "$package"/*.exe "$package"/*.dll
+          # build.rs embeds version information, icon and manifest (to avoid
+          # antivirus false positives); windres is MSYS2's resource compiler.
+          resources="$(windres -i "$package/ScreamerLauncher.exe" -O rc)"
+          for kind in RT_ICON VERSIONINFO RT_MANIFEST; do
+            case "$resources" in
+              *"$kind"*) ;;
+              *) echo "ScreamerLauncher.exe has no $kind resource" >&2; exit 1 ;;
+            esac
+          done
           (cd dist && zip -r "${name}-windows-x86_64.zip" "${name}-windows-x86_64")
           echo "WINDOWS_ZIP=dist/${name}-windows-x86_64.zip" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
