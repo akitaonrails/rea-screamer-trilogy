@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Updated rea-launcher-sdk to v0.4.4. The AppImage's portable Wine fix in
+  that release does not affect Screamer's native Linux build; the launcher
+  stays on the current SDK.
+
 ## 0.8.3 - 2026-11-07
 
 - README: Screamer (1995) has no 3dfx build of its own. The community "3DFX Voodoo 3 Patch" needs a real Voodoo 3, not the Voodoo 1 DOSBox emulates, so a folder patched that way is refused like any build the launcher does not know. Nothing changes in the launcher itself.
