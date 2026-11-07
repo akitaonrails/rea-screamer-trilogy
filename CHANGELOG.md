@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.3 - 2026-11-07
+
+- README: Screamer (1995) has no 3dfx build of its own. The community "3DFX Voodoo 3 Patch" needs a real Voodoo 3, not the Voodoo 1 DOSBox emulates, so a folder patched that way is refused like any build the launcher does not know. Nothing changes in the launcher itself.
+
 ## 0.8.2 - 2026-11-05
 
 - Windows: `ScreamerLauncher.exe` now says what it is: its name, version, publisher and icon show in Explorer's Properties, and it carries a standard Windows manifest. Antivirus programs are less likely to flag it as an unknown program.
