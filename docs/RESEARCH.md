@@ -36,7 +36,8 @@ exact executables by SHA-256 (`edition.rs`).
   renderers: Screamer 1 never shipped a 3dfx build, so this is a
   community patch, not an edition to key. It targets a real Voodoo 3
   (the author: Voodoo 3/4/5 yes, Voodoo 1 no), while DOSBox Staging
-  emulates a Voodoo 1 only, and its binaries sit behind a
+  emulates a Voodoo 1 only — `voodoo.cpp` builds either `VOODOO_1` or
+  `VOODOO_1_DTMU` and nothing newer — and its binaries sit behind a
   members-only download, so we cannot hash or test them. Revisit if a
   Voodoo 1-compatible version runs under DOSBox Staging: it would go
   into `edition.rs` with reporter-supplied SHA-256s (issue #1).

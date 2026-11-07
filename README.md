@@ -276,6 +276,11 @@ of it too.
 - Widescreen in Screamer 2 and Screamer Rally was checked in screenshots
   only: the 3D view is wider without stretching, but the dashboard
   (speedometer, lap panel) is stretched to 16:9.
+- Screamer (1995) has no 3dfx build of its own. The community "3DFX
+  Voodoo 3 Patch" replaces `STARTH.EXE`/`STARTL.EXE` with executables
+  that its author says need a real Voodoo 3 (not a Voodoo 1, the card
+  DOSBox emulates), so the launcher refuses a folder patched that way:
+  keep the game's original programs to play it here.
 - The games' control setup (`CONFIG/CONTROLS.CFG`) is written at every
   start. The games themselves never save it (only their setup program
   does, which the launcher never runs), so nothing is lost.
