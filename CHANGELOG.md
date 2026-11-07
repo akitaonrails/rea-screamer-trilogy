@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.4 - 2026-11-07
+
 - Updated rea-launcher-sdk to v0.4.4. The AppImage's portable Wine fix in
   that release does not affect Screamer's native Linux build; the launcher
   stays on the current SDK.
