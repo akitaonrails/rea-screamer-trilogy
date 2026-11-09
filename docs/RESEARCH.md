@@ -39,8 +39,18 @@ exact executables by SHA-256 (`edition.rs`).
   emulates a Voodoo 1 only — `voodoo.cpp` builds either `VOODOO_1` or
   `VOODOO_1_DTMU` and nothing newer — and its binaries sit behind a
   members-only download, so we cannot hash or test them. Revisit if a
-  Voodoo 1-compatible version runs under DOSBox Staging: it would go
-  into `edition.rs` with reporter-supplied SHA-256s (issue #1).
+  Voodoo 1-compatible version runs under DOSBox Staging (issue #1).
+  A SHA-256 alone is not enough to key such a build: `STARTH.EXE` needs
+  the required `F2` fix (DPMI memory probe), whose offset and expected
+  bytes (`fixes.rs`) must be read from the file itself, and a Glide
+  renderer would also need the Voodoo path set up for Screamer 1, which
+  today runs only its SVGA/VGA programs. On 2026-11-08 the reporter
+  posted one `STARTH.EXE` SHA-256
+  (`f5b074560c3adba70f891430717c12dea9c389d593d2aa62386ffc01e97bb380`,
+  not one of ours) and "it works with dosbox", without saying whether
+  it is the CD original or the patched file, or which DOSBox; the file
+  was offered only through a reporter-hosted download, which we do not
+  take. Not keyed.
 
 ## Old-game trouble spots (SDK checklist)
 
