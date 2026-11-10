@@ -7,8 +7,9 @@ body:
     attributes:
       value: |
         The launcher only changes builds it has identified by SHA-256, so it left yours alone and
-        did not use it. Tell us about your copy and we will add it. Never attach game files: the
-        SHA-256 is enough.
+        did not use it. Tell us about your copy: a build we can verify is added. Some builds
+        need a fix written for that exact file, so we may ask more about your copy first.
+        Never attach or link game files.
   - type: dropdown
     id: game
     attributes:
@@ -20,10 +21,17 @@ body:
     id: sha256
     attributes:
       label: The message with the file name and SHA-256
-      description: Copy it from the window or from `ScreamerLauncher --check --game <folder>` (also in launcher.log).
+      description: >-
+        Copy it from the window or from `ScreamerLauncher --check --game <folder>` (also in
+        launcher.log). A SHA-256 is 64 characters, digits 0-9 and letters a-f.
       render: text
     validations:
       required: true
+  - type: input
+    id: size
+    attributes:
+      label: File size in bytes
+      description: Properties on Windows, or `stat -c %s STARTH.EXE` (the file's name) on Linux.
   - type: dropdown
     id: source
     attributes:
@@ -40,7 +48,7 @@ body:
     id: details
     attributes:
       label: Version, language and country
-      description: e.g. "Italian CD, 1997". The file's size in bytes helps too.
+      description: e.g. "Italian CD, 1997".
   - type: input
     id: version
     attributes:

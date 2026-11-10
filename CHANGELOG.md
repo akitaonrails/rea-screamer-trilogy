@@ -12,6 +12,11 @@
   it), and says in `--check` and `launcher.log` when no image was found
   and why, instead of "directory mount fallback".
 
+- Updated rea-launcher-sdk to v0.5.0, for its Windows short-path helper
+  (below). The unknown-edition form no longer says a SHA-256 alone is
+  enough (issue #1: a build that needs a byte fix needs the file read),
+  and asks for the file's size.
+
 ## 0.8.4 - 2026-11-07
 
 - Updated rea-launcher-sdk to v0.4.4. The AppImage's portable Wine fix in
