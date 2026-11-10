@@ -643,6 +643,18 @@ impl Window {
             )
         };
         ui.label(egui::RichText::new(note).font(body(13.0)).color(color));
+        // Said here, before the game stops at "PLEASE INSERT … DISK"; the
+        // details (where the launcher looked) are in launcher.log.
+        if let Some(disc) = self.trilogy.get(self.form.which)
+            && disc.cd_warning.is_some()
+        {
+            let missing = format!(
+                "No CD image found for {}: it will ask for its CD. \
+                 Put its .cue or .iso in its folder or a folder inside it.",
+                disc.game.short_title()
+            );
+            ui.label(egui::RichText::new(missing).font(body(13.0)).color(ERROR));
+        }
         ui.add_space(8.0);
 
         widgets::heading_focused(ui, "Look", self.focused(Row::Look));
@@ -1511,6 +1523,28 @@ mod tests {
         assert_eq!(s.which, Some(Game::Screamer2));
         // Picking each setting makes the look Custom.
         assert_eq!(ui.state().form.look, Look::Custom);
+    }
+
+    /// Quiver feedback (2026-11-09): with no CD image found the game only
+    /// says "PLEASE INSERT … DISK"; the window says it first, under the
+    /// folder, for the game that is selected.
+    #[test]
+    fn the_window_says_when_the_selected_game_has_no_cd_image() {
+        let mut ui = open("", false, "no cd");
+        install_screamer2(ui.state_mut());
+        ui.run();
+        let note = "No CD image found for Screamer 2: it will ask for its CD.";
+        assert!(ui.query_by_label_contains(note).is_none());
+
+        ui.state_mut().trilogy.games[1].as_mut().unwrap().cd_warning = Some("none".into());
+        ui.run();
+        ui.get_by_label_contains(&format!(
+            "{note} Put its .cue or .iso in its folder or a folder inside it."
+        ));
+        // Another game selected, another note: Screamer isn't in this folder.
+        ui.state_mut().form.which = Game::Screamer;
+        ui.run();
+        assert!(ui.query_by_label_contains(note).is_none());
     }
 
     #[test]

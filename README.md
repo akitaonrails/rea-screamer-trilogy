@@ -255,9 +255,9 @@ of it too.
   folder, and in every folder directly inside either of them: a `.cue`
   sheet with its `.bin`, an `.iso`, GOG's `.dat` and `.gog`, or a bare
   `.bin`/`.img` (a CloneCD rip; it plays without the CD music). A cue
-  sheet whose image was renamed or left out is skipped. `--check` and
-  `launcher.log` say which folder was searched and which file a cue sheet
-  is missing. On Windows, a folder path with accented letters is handed
+  sheet whose image was renamed or left out is skipped. The window says
+  so under the game folder; `--check` and `launcher.log` also say which
+  folder was searched and which file a cue sheet is missing. On Windows, a folder path with accented letters is handed
   to DOSBox by its short (8.3) name; if `launcher.log` warns that the
   drive keeps none, move the game to a folder with plain letters.
 - **3dfx Voodoo is greyed out for Screamer 2.** GOG's Screamer 2 lacks

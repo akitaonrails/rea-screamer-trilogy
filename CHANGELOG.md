@@ -9,8 +9,10 @@
   also searches every folder directly inside the game folder (`CD`, `ISO`,
   any name), accepts a bare `.bin`/`.img` CloneCD rip when there is no cue
   sheet, skips a cue sheet whose image is missing (DOSBox could not mount
-  it), and says in `--check` and `launcher.log` when no image was found
-  and why, instead of "directory mount fallback".
+  it), and says when no image was found: under the game folder in the
+  window ("No CD image found for Screamer Rally: it will ask for its
+  CD."), and with where it looked and why in `--check` and
+  `launcher.log`, instead of "directory mount fallback".
 
 - Fix (Windows): a game folder whose path has letters outside plain ASCII
   (`D:\Jogos Ação\Screamer`) could not be mounted: DOSBox opens host paths
