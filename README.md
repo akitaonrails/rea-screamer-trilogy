@@ -257,7 +257,9 @@ of it too.
   `.bin`/`.img` (a CloneCD rip; it plays without the CD music). A cue
   sheet whose image was renamed or left out is skipped. `--check` and
   `launcher.log` say which folder was searched and which file a cue sheet
-  is missing.
+  is missing. On Windows, a folder path with accented letters is handed
+  to DOSBox by its short (8.3) name; if `launcher.log` warns that the
+  drive keeps none, move the game to a folder with plain letters.
 - **3dfx Voodoo is greyed out for Screamer 2.** GOG's Screamer 2 lacks
   the DOS 3dfx driver. Put Screamer Rally's folder next to it (in the same
   parent folder) and the launcher uses Rally's driver.

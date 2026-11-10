@@ -285,6 +285,6 @@ From a Quiver player's note on 0.8.2 (Windows): "Only game able to run is Scream
 |---|---|---|
 | Owner's layout (image next to the game; Rally's in `Screamer_Rally_ISO`) | VERIFIED: `IMGMOUNT … SCREAM.DAT found`, `CDAUDIO: Operating at 48000 Hz`, Screamer's attract mode | unchanged |
 | Image in `CDIMAGE/` | REPRODUCED: `mount d <runtime> -t cdrom` (an empty CD drive); Screamer 2 stops at "PLEASE INSERT SCREAMER 2 DISK", Rally at "PLEASE INSERT SCREAMER RALLY DISK"; Screamer's attract mode still runs (its CD check comes later) | VERIFIED: all three `IMGMOUNT … CDIMAGE\… found` with CD audio; Screamer 2 and Rally reach their attract modes |
-| Game folder with non-ASCII characters (`Jogos Ação`) | DOSBox (0.82.2, MinGW) ends at `IMGMOUNT` with `filesystem error: Cannot convert character sequence` under Wine; on Windows its narrow-path calls cannot open such a path either | see the CHANGELOG |
+| Game folder with non-ASCII characters (`Jogos Ação`) | DOSBox (0.82.2, MinGW) ends at `IMGMOUNT` with `filesystem error: Cannot convert character sequence` under Wine; on Windows its narrow-path calls cannot open such a path either | VERIFIED: DOSBox gets the short name (`IMGMOUNT: Path '…\JOGO~MVU\screamer\SCREAM.DAT' found`), CD audio, Screamer reaches its VESA attract mode |
 
 Pending on real Windows 10/11: the same three games from a folder holding the CD image in a subfolder, and from a folder with accented characters.

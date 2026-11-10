@@ -646,6 +646,45 @@ pub fn verify_discovered_game(
     Ok(results)
 }
 
+/// The path DOSBox is given for `path`: as it is when plain ASCII, else
+/// `short`, Windows' short (8.3) name for it. DOSBox Staging opens host
+/// paths through narrow (ANSI) calls on Windows, so a folder such as
+/// `Jogos Ação` could not be mounted (its MinGW build even ended at
+/// `IMGMOUNT` under Wine).
+pub fn path_for_dosbox(path: &Path, short: Option<String>) -> PathBuf {
+    let long = path.to_string_lossy();
+    paths::fit_path(&long, short.as_deref(), usize::MAX)
+        .map_or_else(|| path.to_path_buf(), PathBuf::from)
+}
+
+/// What to tell a Windows player whose game or runtime folder DOSBox
+/// cannot open: `path` (as handed to DOSBox) still has other than ASCII.
+pub fn dosbox_path_warning(path: &Path) -> Option<String> {
+    let shown = path.to_string_lossy();
+    (!shown.is_ascii()).then(|| {
+        format!(
+            "DOSBox may not open {shown}: its name has letters outside plain ASCII and this drive keeps no short (8.3) names. \
+             If the game asks for its CD or does not start, move it to a folder whose path has only plain letters."
+        )
+    })
+}
+
+/// [`path_for_dosbox`] with the short name Windows keeps for `path`.
+fn host_path_for_dosbox(path: &Path, warnings: &mut Vec<String>) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let chosen = path_for_dosbox(path, rea_launcher_win32::short_path::short_path(path));
+        warnings.extend(dosbox_path_warning(&chosen));
+        chosen
+    }
+    #[cfg(not(windows))]
+    {
+        // DOSBox's POSIX build opens UTF-8 paths as they are.
+        let _ = warnings;
+        path.to_path_buf()
+    }
+}
+
 /// Prepares `<runtime_dir>` by staging game files from `discovered.exe_dir`
 /// ([`stage_source_tree`]), writing patched executables into `<runtime_dir>`,
 /// generating `SCREAMER.CFG`, `CONFIG/SETUP.CFG`, `CONFIG/CONTROLS.CFG`, and
@@ -693,13 +732,20 @@ pub fn prepare_runtime(
     }
 
     let selected = discovered.select_executable(settings.renderer_choice())?;
+    let mut warnings: Vec<String> = discovered.cd_warning.iter().cloned().collect();
+    let dosbox_runtime = host_path_for_dosbox(runtime_dir, &mut warnings);
+    let dosbox_cd = discovered
+        .cd_image
+        .as_deref()
+        .map(|cd| host_path_for_dosbox(cd, &mut warnings));
+    warnings.extend(staged.warnings);
     let plan = plan(
         settings,
         discovered.game,
         &selected.file_name,
         selected.edition.role,
-        runtime_dir,
-        discovered.cd_image.as_deref(),
+        &dosbox_runtime,
+        dosbox_cd.as_deref(),
         gpu,
     );
 
@@ -721,12 +767,7 @@ pub fn prepare_runtime(
         selected_exe: selected.file_name.clone(),
         selected_edition: selected.edition,
         patched_exes,
-        warnings: discovered
-            .cd_warning
-            .iter()
-            .cloned()
-            .chain(staged.warnings)
-            .collect(),
+        warnings,
         plan,
     })
 }
@@ -1899,6 +1940,30 @@ mod tests {
         assert_eq!(found.image, Some(game.join("Screamer.cue")));
         assert!(found.broken.is_empty());
         fs::remove_dir_all(game).unwrap();
+    }
+
+    /// DOSBox Staging on Windows opens host paths through narrow (ANSI)
+    /// calls; under Wine its MinGW build ended at IMGMOUNT with "Cannot
+    /// convert character sequence" for a game in `Jogos Ação`. A path with
+    /// other than ASCII goes to DOSBox as Windows' short (8.3) name.
+    #[test]
+    fn dosbox_gets_a_plain_ascii_path() {
+        let ascii = Path::new(r"C:\Games\Screamer\SCREAM.DAT");
+        assert_eq!(
+            path_for_dosbox(ascii, Some(r"C:\Games\SCREAM~1\SCREAM.DAT".into())),
+            ascii
+        );
+        let accented = Path::new(r"D:\Jogos Ação\Screamer\SCREAM.DAT");
+        assert_eq!(
+            path_for_dosbox(accented, Some(r"D:\JOGOSA~1\Screamer\SCREAM.DAT".into())),
+            Path::new(r"D:\JOGOSA~1\Screamer\SCREAM.DAT")
+        );
+        // No short names on that drive: the path as it is, and a warning.
+        assert_eq!(path_for_dosbox(accented, None), accented);
+        let note = dosbox_path_warning(accented).unwrap();
+        assert!(note.contains("Jogos Ação"), "{note}");
+        assert!(note.contains("plain letters"), "{note}");
+        assert_eq!(dosbox_path_warning(ascii), None);
     }
 
     #[test]

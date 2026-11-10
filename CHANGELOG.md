@@ -12,6 +12,11 @@
   it), and says in `--check` and `launcher.log` when no image was found
   and why, instead of "directory mount fallback".
 
+- Fix (Windows): a game folder whose path has letters outside plain ASCII
+  (`D:\Jogos Ação\Screamer`) could not be mounted: DOSBox opens host paths
+  through the ANSI code page (under Wine it even ended at `IMGMOUNT`). The
+  launcher now hands DOSBox Windows' short (8.3) name for such a path, and
+  warns in `launcher.log` when the drive keeps no short names.
 - Updated rea-launcher-sdk to v0.5.0, for its Windows short-path helper
   (below). The unknown-edition form no longer says a SHA-256 alone is
   enough (issue #1: a build that needs a byte fix needs the file read),
