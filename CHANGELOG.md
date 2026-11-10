@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.0 - 2026-11-09
+
 - Fix: Screamer and Screamer Rally asked for their CD although its image
   was in the game folder (a player's report on Quiver, Windows, 0.8.2).
   The launcher looked for the image in a few fixed folders only, and
