@@ -274,3 +274,17 @@ From the native Windows 10 test of 0.8.0 (rea-launcher-sdk#1). Verified here onl
 - **Commands from PowerShell.** `--help`, `--check` and `--controllers` print to the terminal; `--check > report.txt` writes the report; `--bogus-flag` and `--look invalid` print the error and usage and exit 2 with no dialog. A shortcut to `ScreamerLauncher.exe --check` shows the report in a message box.
 - **Window close.** Closing the settings window without Play exits 0 (`$LASTEXITCODE`); `--settings` closed exits 3.
 - **`--check` with the window open** prints "The Screamer Trilogy launcher window is open…" and exits 5; during a race it says the game is running, exit 5.
+
+## 17. CD Image Search, 2026-11-09 (Windows Build Under Wine, Headless)
+
+From a Quiver player's note on 0.8.2 (Windows): "Only game able to run is Screamer 2. The other game ask for cd (which also exist in the directory)."
+
+**Setup.** The 0.8.4 Windows release zip (`ScreamerLauncher.exe` and its `dosbox.exe`) and a build of the fix, both run with `--no-window --linux --which <game>` under Wine 11.21 in a private prefix inside `gamescope --backend headless` (1920×1080) in the `gaming` distrobox, audio to SDL's `disk` driver, screenshots with `gamescopectl`. The owner's GOG Screamer and Screamer 2 and the Screamer Rally ISO install, read-only, reached through a tree of symbolic links in `.work/quiver/tree/` (none committed): as installed, and with each game's CD image moved into a subfolder named `CDIMAGE` (`SCREAM.DAT`/`SCREAM.gog`, `GAME.DAT`/`GAME.GOG`, `srally.iso`).
+
+| Case | 0.8.4 | Fix |
+|---|---|---|
+| Owner's layout (image next to the game; Rally's in `Screamer_Rally_ISO`) | VERIFIED: `IMGMOUNT … SCREAM.DAT found`, `CDAUDIO: Operating at 48000 Hz`, Screamer's attract mode | unchanged |
+| Image in `CDIMAGE/` | REPRODUCED: `mount d <runtime> -t cdrom` (an empty CD drive); Screamer 2 stops at "PLEASE INSERT SCREAMER 2 DISK", Rally at "PLEASE INSERT SCREAMER RALLY DISK"; Screamer's attract mode still runs (its CD check comes later) | VERIFIED: all three `IMGMOUNT … CDIMAGE\… found` with CD audio; Screamer 2 and Rally reach their attract modes |
+| Game folder with non-ASCII characters (`Jogos Ação`) | DOSBox (0.82.2, MinGW) ends at `IMGMOUNT` with `filesystem error: Cannot convert character sequence` under Wine; on Windows its narrow-path calls cannot open such a path either | see the CHANGELOG |
+
+Pending on real Windows 10/11: the same three games from a folder holding the CD image in a subfolder, and from a folder with accented characters.

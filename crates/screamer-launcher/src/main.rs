@@ -599,7 +599,10 @@ fn run_check(
         say(format!("Source dir: {}", disc.exe_dir.display()));
         match &disc.cd_image {
             Some(cd) => say(format!("CD image:   {}", cd.display())),
-            None => say("CD image:   none (directory mount fallback)".into()),
+            None => say("CD image:   none found".into()),
+        }
+        if let Some(note) = &disc.cd_warning {
+            warn(note);
         }
         if disc.has_genuine_dos_glide2x {
             say("Glide OVL:  Genuine DOS 3dfx GLIDE2X.OVL detected".into());

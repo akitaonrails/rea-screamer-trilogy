@@ -250,6 +250,14 @@ of it too.
 - **"No Screamer, Screamer 2 or Screamer Rally in this folder."** Pick
   the folder that holds the game's programs (`STARTH.EXE`, `S2_3DFX.EXE`,
   `STRT3FX.EXE`), or the folder above the three games' folders.
+- **The game says "PLEASE INSERT … DISK".** The launcher found no usable
+  CD image. It looks for one next to the game's programs, in the game
+  folder, and in every folder directly inside either of them: a `.cue`
+  sheet with its `.bin`, an `.iso`, GOG's `.dat` and `.gog`, or a bare
+  `.bin`/`.img` (a CloneCD rip; it plays without the CD music). A cue
+  sheet whose image was renamed or left out is skipped. `--check` and
+  `launcher.log` say which folder was searched and which file a cue sheet
+  is missing.
 - **3dfx Voodoo is greyed out for Screamer 2.** GOG's Screamer 2 lacks
   the DOS 3dfx driver. Put Screamer Rally's folder next to it (in the same
   parent folder) and the launcher uses Rally's driver.

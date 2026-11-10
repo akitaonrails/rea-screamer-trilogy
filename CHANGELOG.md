@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Fix: Screamer and Screamer Rally asked for their CD although its image
+  was in the game folder (a player's report on Quiver, Windows, 0.8.2).
+  The launcher looked for the image in a few fixed folders only, and
+  started DOSBox with an empty CD drive when it found none there. It now
+  also searches every folder directly inside the game folder (`CD`, `ISO`,
+  any name), accepts a bare `.bin`/`.img` CloneCD rip when there is no cue
+  sheet, skips a cue sheet whose image is missing (DOSBox could not mount
+  it), and says in `--check` and `launcher.log` when no image was found
+  and why, instead of "directory mount fallback".
+
 ## 0.8.4 - 2026-11-07
 
 - Updated rea-launcher-sdk to v0.4.4. The AppImage's portable Wine fix in

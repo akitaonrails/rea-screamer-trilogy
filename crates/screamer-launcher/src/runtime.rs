@@ -76,6 +76,8 @@ pub struct DiscoveredGame {
     pub game: Game,
     pub executables: Vec<DiscoveredExe>,
     pub cd_image: Option<PathBuf>,
+    /// Why no CD image will be mounted, for `launcher.log` and `--check`.
+    pub cd_warning: Option<String>,
     pub glide2x_ovl_source: Option<PathBuf>,
     pub has_genuine_dos_glide2x: bool,
     pub has_windows_stub_glide2x: bool,
@@ -156,14 +158,15 @@ pub fn scan_game_dir(dir: &Path) -> Result<DiscoveredGame, String> {
 
     let (has_genuine_dos_glide2x, has_windows_stub_glide2x, glide2x_ovl_source) =
         check_glide2x_ovl(dir, &exe_dir);
-    let cd_image = find_cd_image(dir, &exe_dir);
+    let cd = find_cd_image(dir, &exe_dir);
 
     Ok(DiscoveredGame {
         root_dir: dir.to_path_buf(),
         exe_dir,
         game,
         executables,
-        cd_image,
+        cd_image: cd.image.clone(),
+        cd_warning: cd.warning(game, dir),
         glide2x_ovl_source,
         has_genuine_dos_glide2x,
         has_windows_stub_glide2x,
@@ -262,61 +265,161 @@ fn check_glide2x_ovl(root_dir: &Path, exe_dir: &Path) -> (bool, bool, Option<Pat
     (false, has_win_stub, None)
 }
 
-fn find_cd_image(root_dir: &Path, exe_dir: &Path) -> Option<PathBuf> {
-    let mut search_dirs = vec![
-        exe_dir.to_path_buf(),
-        root_dir.to_path_buf(),
-        root_dir.join("Screamer_Rally_ISO"),
-        root_dir.join("iso"),
-    ];
+/// Raw `.bin`/`.img` files smaller than this are not CD images (a 1.44 MB
+/// floppy image, a data file); the smallest Screamer CD is hundreds of MB.
+const MIN_RAW_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// What the CD image search found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CdSearch {
+    /// The image (or cue sheet) to mount on `D:`.
+    pub image: Option<PathBuf>,
+    /// Cue sheets passed over because a file they name is missing: DOSBox
+    /// could not mount them.
+    pub broken: Vec<PathBuf>,
+}
+
+impl CdSearch {
+    /// What to tell the player when no usable image was found: the game
+    /// will stop at its "insert the CD" screen.
+    pub fn warning(&self, game: Game, root_dir: &Path) -> Option<String> {
+        if self.image.is_some() {
+            return None;
+        }
+        let mut note = format!(
+            "No CD image found for {} in {} or its subfolders, so the game will ask for its CD. \
+             Put the CD image (a .cue sheet with its .bin, an .iso, or GOG's .dat and .gog) in the game folder or a folder inside it.",
+            game.short_title(),
+            root_dir.display()
+        );
+        for cue in &self.broken {
+            let missing: Vec<String> = cd_image_files(Some(cue))
+                .into_iter()
+                .skip(1)
+                .filter(|f| find_ignoring_case(f).is_none())
+                .map(|f| {
+                    f.file_name()
+                        .map_or_else(|| f.display().to_string(), |n| n.to_string_lossy().into())
+                })
+                .collect();
+            note.push_str(&format!(
+                " {} names {}, which is not in its folder.",
+                cue.display(),
+                missing.join(", ")
+            ));
+        }
+        Some(note)
+    }
+}
+
+/// `path` itself, or the file in its folder whose name matches it ignoring
+/// case (how DOSBox finds the files a cue sheet names).
+fn find_ignoring_case(path: &Path) -> Option<PathBuf> {
+    if path.is_file() {
+        return Some(path.to_path_buf());
+    }
+    let name = path.file_name()?.to_str()?;
+    fs::read_dir(path.parent()?)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.is_file()
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })
+}
+
+/// True when `path` is a cue sheet: a `.cue`/`.ins`, or a small `.dat`
+/// starting with `FILE ` (GOG's `SCREAM.DAT`, `GAME.DAT`).
+fn is_cue_sheet(path: &Path, ext: &str) -> bool {
+    if ext == "cue" || ext == "ins" {
+        return true;
+    }
+    ext == "dat"
+        && fs::metadata(path).is_ok_and(|m| m.len() <= 16_384)
+        && fs::read_to_string(path)
+            .is_ok_and(|head| head.trim_start().to_ascii_uppercase().starts_with("FILE "))
+}
+
+/// The CD image to mount, searched nearest first: the executables' folder,
+/// the game folder, every folder directly inside either of them (`CD`,
+/// `ISO`, `Screamer_Rally_ISO`, any name), then the folder above the
+/// executables. In each folder a cue sheet (`.ins`, `.cue`, GOG's `.dat`)
+/// wins, since it carries the CD audio tracks, then `.iso`, `.gog`, and
+/// last a raw `.bin`/`.img` (a CloneCD rip without a cue sheet).
+fn find_cd_image(root_dir: &Path, exe_dir: &Path) -> CdSearch {
+    let mut search_dirs = vec![exe_dir.to_path_buf(), root_dir.to_path_buf()];
+    for base in [exe_dir, root_dir] {
+        let Ok(entries) = fs::read_dir(base) else {
+            continue;
+        };
+        let mut subdirs: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        subdirs.sort();
+        search_dirs.extend(subdirs);
+    }
     if let Some(parent) = exe_dir.parent() {
         search_dirs.push(parent.to_path_buf());
         search_dirs.push(parent.join("Screamer_Rally_ISO"));
     }
+    let mut seen = Vec::new();
+    search_dirs.retain(|d| {
+        let key = normalize(d);
+        let fresh = !seen.contains(&key);
+        seen.push(key);
+        fresh
+    });
 
-    // Priority: .ins -> .cue -> CUE-formatted .dat (e.g. SCREAM.DAT, GAME.DAT) -> .iso -> .gog
-    for ext_target in ["ins", "cue", "dat", "iso", "gog"] {
-        for d in &search_dirs {
-            let Ok(entries) = fs::read_dir(d) else {
-                continue;
-            };
-            let mut candidates: Vec<PathBuf> = entries
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| {
-                    if !p.is_file() {
-                        return false;
+    let mut out = CdSearch::default();
+    for d in &search_dirs {
+        let Ok(entries) = fs::read_dir(d) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file())
+            .collect();
+        files.sort();
+        for ext_target in ["ins", "cue", "dat", "iso", "gog", "bin", "img"] {
+            for p in &files {
+                let matches_ext = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case(ext_target));
+                if !matches_ext {
+                    continue;
+                }
+                if is_cue_sheet(p, ext_target) {
+                    let complete = cd_image_files(Some(p))
+                        .iter()
+                        .skip(1)
+                        .all(|f| find_ignoring_case(f).is_some());
+                    if complete {
+                        out.image = Some(p.clone());
+                        return out;
                     }
-                    let matches_ext = p
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .is_some_and(|e| e.eq_ignore_ascii_case(ext_target));
-                    if !matches_ext {
-                        return false;
-                    }
-                    if ext_target == "dat" {
-                        // Only treat a .DAT file as a CD image cue sheet if it starts with `FILE "`
-                        let Ok(meta) = fs::metadata(p) else {
-                            return false;
-                        };
-                        if meta.len() > 16_384 {
-                            return false;
-                        }
-                        let Ok(head) = fs::read_to_string(p) else {
-                            return false;
-                        };
-                        return head.trim_start().to_ascii_uppercase().starts_with("FILE ");
-                    }
-                    true
-                })
-                .collect();
-            candidates.sort();
-            if let Some(first) = candidates.into_iter().next() {
-                return Some(first);
+                    out.broken.push(p.clone());
+                    continue;
+                }
+                if ext_target == "dat" {
+                    continue;
+                }
+                let raw = ext_target == "bin" || ext_target == "img";
+                if raw && !fs::metadata(p).is_ok_and(|m| m.len() >= MIN_RAW_IMAGE_BYTES) {
+                    continue;
+                }
+                out.image = Some(p.clone());
+                return out;
             }
         }
     }
-    None
+    out
 }
 
 /// Result of scanning a folder (or parent trilogy folder) for all 3 Screamer games.
@@ -618,7 +721,12 @@ pub fn prepare_runtime(
         selected_exe: selected.file_name.clone(),
         selected_edition: selected.edition,
         patched_exes,
-        warnings: staged.warnings,
+        warnings: discovered
+            .cd_warning
+            .iter()
+            .cloned()
+            .chain(staged.warnings)
+            .collect(),
         plan,
     })
 }
@@ -1708,6 +1816,114 @@ mod tests {
         );
         assert!(cd_image_files(None).is_empty());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A raw CD image big enough to be one, not a floppy or a data file.
+    fn write_raw_image(path: &Path) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let f = fs::File::create(path).unwrap();
+        f.set_len(MIN_RAW_IMAGE_BYTES).unwrap();
+    }
+
+    /// Quiver feedback (2026-11-09, v0.8.2 on Windows): Screamer and
+    /// Screamer Rally asked for their CD although its image was in the game
+    /// folder. Only a few fixed folders were searched, so an image in any
+    /// other subfolder was missed and DOSBox got an empty CD drive.
+    #[test]
+    fn cd_image_in_any_subfolder_of_the_game_is_found() {
+        let game = temp("cd in subfolder");
+        fs::create_dir_all(&game).unwrap();
+        fs::write(game.join("STARTH.EXE"), b"exe").unwrap();
+        fs::create_dir_all(game.join("DATA")).unwrap();
+        fs::write(game.join("DATA/GEN.DAT"), b"\x01\x02 not a cue sheet").unwrap();
+        fs::create_dir_all(game.join("CD")).unwrap();
+        fs::write(
+            game.join("CD/Screamer.cue"),
+            "FILE \"Screamer.bin\" BINARY\r\n  TRACK 01 MODE1/2352\r\n",
+        )
+        .unwrap();
+        write_raw_image(&game.join("CD/Screamer.bin"));
+        let found = find_cd_image(&game, &game);
+        assert_eq!(found.image, Some(game.join("CD/Screamer.cue")));
+        assert!(found.broken.is_empty());
+
+        // One next to the game wins over one in a subfolder.
+        fs::write(game.join("SCREAM.DAT"), "FILE \"SCREAM.gog\" BINARY\n").unwrap();
+        write_raw_image(&game.join("SCREAM.gog"));
+        assert_eq!(
+            find_cd_image(&game, &game).image,
+            Some(game.join("SCREAM.DAT"))
+        );
+        fs::remove_dir_all(game).unwrap();
+    }
+
+    /// Screamer Rally's own install (`hdd/SR`) beside a CloneCD rip
+    /// (`.img`/`.ccd`/`.sub`, no cue sheet) in a folder of any name.
+    #[test]
+    fn a_bare_raw_image_is_mounted_when_there_is_no_cue_sheet() {
+        let root = temp("bare img");
+        let exe_dir = root.join("hdd/SR");
+        fs::create_dir_all(&exe_dir).unwrap();
+        fs::write(exe_dir.join("STRT3FX.EXE"), b"exe").unwrap();
+        write_raw_image(&root.join("Screamer Rally CD/srally.img"));
+        fs::write(root.join("Screamer Rally CD/srally.ccd"), "[CloneCD]\n").unwrap();
+        fs::write(root.join("Screamer Rally CD/srally.sub"), b"sub").unwrap();
+        assert_eq!(
+            find_cd_image(&root, &exe_dir).image,
+            Some(root.join("Screamer Rally CD/srally.img"))
+        );
+        // A small .img is a floppy or some data file, not a CD.
+        let small = temp("small img");
+        fs::create_dir_all(&small).unwrap();
+        fs::write(small.join("disk.img"), vec![0u8; 1_474_560]).unwrap();
+        assert_eq!(find_cd_image(&small, &small).image, None);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(small).unwrap();
+    }
+
+    /// A cue sheet whose image is missing (renamed, or left out of a copy)
+    /// makes DOSBox's IMGMOUNT fail: it is skipped and reported.
+    #[test]
+    fn a_cue_sheet_without_its_image_is_skipped_and_reported() {
+        let game = temp("broken cue");
+        fs::create_dir_all(&game).unwrap();
+        fs::write(game.join("Screamer.cue"), "FILE \"Track 01.bin\" BINARY\n").unwrap();
+        let found = find_cd_image(&game, &game);
+        assert_eq!(found.image, None);
+        assert_eq!(found.broken, [game.join("Screamer.cue")]);
+
+        // The cue sheet's names are matched like DOSBox matches them,
+        // ignoring case.
+        write_raw_image(&game.join("TRACK 01.BIN"));
+        let found = find_cd_image(&game, &game);
+        assert_eq!(found.image, Some(game.join("Screamer.cue")));
+        assert!(found.broken.is_empty());
+        fs::remove_dir_all(game).unwrap();
+    }
+
+    #[test]
+    fn a_missing_cd_image_is_said_before_the_game_asks_for_its_disc() {
+        let game = temp("no cd");
+        fs::create_dir_all(&game).unwrap();
+        let found = find_cd_image(&game, &game);
+        let note = found.warning(Game::ScreamerRally, &game).unwrap();
+        assert!(note.contains("Screamer Rally"), "{note}");
+        assert!(note.contains("ask for its CD"), "{note}");
+        assert!(note.contains(".cue"), "{note}");
+
+        fs::write(game.join("Rally.cue"), "FILE \"Rally.bin\" BINARY\n").unwrap();
+        let note = find_cd_image(&game, &game)
+            .warning(Game::ScreamerRally, &game)
+            .unwrap();
+        assert!(note.contains("Rally.cue"), "{note}");
+        assert!(note.contains("Rally.bin"), "{note}");
+
+        write_raw_image(&game.join("Rally.bin"));
+        assert_eq!(
+            find_cd_image(&game, &game).warning(Game::ScreamerRally, &game),
+            None
+        );
+        fs::remove_dir_all(game).unwrap();
     }
 
     #[test]

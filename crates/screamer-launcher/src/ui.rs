@@ -1395,6 +1395,7 @@ mod tests {
             game: Game::Screamer2,
             executables,
             cd_image: None,
+            cd_warning: None,
             glide2x_ovl_source: None,
             has_genuine_dos_glide2x: true,
             has_windows_stub_glide2x: false,

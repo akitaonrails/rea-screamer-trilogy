@@ -199,6 +199,7 @@ fn screamer2() -> DiscoveredGame {
         game: Game::Screamer2,
         executables: exes,
         cd_image: None,
+        cd_warning: None,
         glide2x_ovl_source: None,
         has_genuine_dos_glide2x: true,
         has_windows_stub_glide2x: false,

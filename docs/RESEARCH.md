@@ -21,6 +21,24 @@ cache fix for these games was found, so the launcher's own `E2`, `E5`,
 `E6` and `F1`–`F7` fixes (`fixes.rs`) fill those gaps; each is keyed to
 exact executables by SHA-256 (`edition.rs`).
 
+## How other packagers mount the CD
+
+GOG's own DOSBox configurations mount the cue sheet, not the raw image:
+`imgmount d "..\scream.dat" -t iso -fs iso` (Screamer) and
+`imgmount d .\GAME.DAT -t iso` (Screamer 2), so the audio tracks come
+with it. The launcher does the same. Other copies keep the image in a
+folder of their own (`CD`, `ISO`, a rip's folder name), as CloneCD
+`.img`/`.ccd`/`.sub` without a cue sheet, or as a `.cue` + `.bin` pair;
+DOSBox Staging's `IMGMOUNT` reads a cue sheet, an `.iso`, or a raw
+2352-byte `.bin`/`.img` as a data-only disc (`LoadIsoFile` probes 2048,
+2352 and 2336-byte sectors). A Quiver player (2026-11-09, Windows, 0.8.2)
+had Screamer and Screamer Rally stop at "PLEASE INSERT … DISK" with the
+image in the game folder: 0.8.2 searched only a few fixed folders and
+started DOSBox with an empty CD drive otherwise. Reproduced with the
+0.8.4 Windows build under Wine and the owner's GOG/ISO files moved into
+an unsearched subfolder (`RUNTIME_NOTES.md` §17); fixed in the next
+release by searching every folder directly inside the game folder.
+
 ## Dead ends (recorded so nobody ships them)
 
 - **Frame-rate unlocks.** Every change to the 2-tick wait of the 100 Hz
