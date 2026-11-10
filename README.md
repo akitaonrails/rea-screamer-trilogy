@@ -277,6 +277,13 @@ of it too.
 - The games run at 50 frames per second. Every attempt to raise it broke
   their physics, so it stays. Frame generation shows 100 frames per second
   on top of that (measured in a Screamer race).
+- The games keep their own resolutions and textures: Screamer draws in
+  256 colours at 640×480 (`STARTH.EXE`) or 320×200 (`STARTL.EXE`) in
+  software, and Screamer 2's GOG copy, without Screamer Rally's 3dfx
+  driver beside it, uses its 640×480 software renderer. The launcher
+  enlarges the picture with DOSBox's shaders (Sharp, Smooth, FSR, CRT)
+  and draws the 3dfx builds at twice their resolution, but no shader can
+  add detail the games never had.
 - At the Enhanced and Steam Deck sizes, Screamer 2 and Screamer Rally
   draw their 3D at twice the original resolution in software and can
   show fewer frames: about 40 in Screamer 2 and 30 in Rally in a

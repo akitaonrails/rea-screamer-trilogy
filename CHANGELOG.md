@@ -17,6 +17,9 @@
   through the ANSI code page (under Wine it even ended at `IMGMOUNT`). The
   launcher now hands DOSBox Windows' short (8.3) name for such a path, and
   warns in `launcher.log` when the drive keeps no short names.
+- README, Known limitations: the games keep their own resolutions
+  (Screamer: 640×480 or 320×200 in 256 colours); the launcher's shaders
+  and the 3dfx builds' doubled resolution are what it can add.
 - Updated rea-launcher-sdk to v0.5.0, for its Windows short-path helper
   (below). The unknown-edition form no longer says a SHA-256 alone is
   enough (issue #1: a build that needs a byte fix needs the file read),

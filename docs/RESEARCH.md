@@ -39,6 +39,22 @@ started DOSBox with an empty CD drive otherwise. Reproduced with the
 an unsearched subfolder (`RUNTIME_NOTES.md` §17); fixed in the next
 release by searching every folder directly inside the game folder.
 
+## Picture quality (Quiver feedback, 2026-11-09)
+
+"Graphics is bad. Low res dos graphics." The programs set the
+resolution: Screamer's `STARTH.EXE` draws 640×480 in 256 colours and
+`STARTL.EXE` 320×200, in software; Screamer 2 and Rally reach 640×480
+16-bit or the 3dfx path. What DOSBox Staging offers on top is already in
+the launcher: its OpenGL shaders (`sharp`, `bilinear`,
+`interpolation/fsr`, `crt-auto`) and, through our patch, the 3dfx builds
+drawn at twice their resolution. No texture pack or higher-resolution
+renderer for these games was found. The one route to more 3D detail for
+Screamer 2 on GOG alone is a DOS `GLIDE2X.OVL` for DOSBox's Voodoo
+(today staged from Screamer Rally); building one from 3dfx's released
+Glide 2 sources is a proposal, not started. "OpenScreamer", named by the
+player as a better port, could not be found in a web search on
+2026-11-09; not evaluated.
+
 ## Dead ends (recorded so nobody ships them)
 
 - **Frame-rate unlocks.** Every change to the 2-tick wait of the 100 Hz
