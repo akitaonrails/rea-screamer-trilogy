@@ -254,8 +254,7 @@ impl<'a> Image<'a> {
         let first_p = (rel_start as u32 / self.page_size) as usize;
         let last_p = ((rel_end as u32).saturating_sub(1) / self.page_size) as usize;
 
-        for p_idx in first_p..=last_p.min(obj.pages.len().saturating_sub(1)) {
-            let entry = obj.pages[p_idx];
+        for (p_idx, &entry) in obj.pages.iter().enumerate().take(last_p + 1).skip(first_p) {
             if entry.flags != 0 || entry.physical_page == 0 {
                 continue;
             }
