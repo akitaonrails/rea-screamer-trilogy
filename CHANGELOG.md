@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.2 - 2026-11-21
+
 ### Fixed
 
 - Windows CI: link `synchronization` alongside `ntdll`/`userenv`/`bcrypt` in
