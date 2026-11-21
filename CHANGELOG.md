@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Replaced placeholder launcher icon with custom high-contrast 256×256 Screamer Trilogy supercar artwork for Windows executable and Linux AppImage shortcuts.
+
 ## 0.9.0 - 2026-11-09
 
 - Fix: Screamer and Screamer Rally asked for their CD although its image
