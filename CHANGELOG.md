@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Windows CI: link `synchronization` alongside `ntdll`/`userenv`/`bcrypt` in
+  `patches/dosbox-staging-screamer-hooks.patch` for Rust std's
+  `WakeByAddressSingle`/`WakeByAddressAll`.
+
 ## 0.9.1 - 2026-11-21
 
 ### Changed

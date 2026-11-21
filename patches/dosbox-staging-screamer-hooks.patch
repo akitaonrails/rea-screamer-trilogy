@@ -365,7 +365,7 @@ index 565f06e..a696b27 100644
  # A list of DOSBox's bundled 3rd party dependencies,
  # as defined by the above subdir includes. Used for
  # both the executable and libdosbox (unit testing).
-@@ -1281,7 +1291,15 @@ third_party_deps = [
+@@ -1281,7 +1291,16 @@ third_party_deps = [
      tracy_dep,
      libwhereami_dep,
      libtalchorus_dep,
@@ -376,6 +376,7 @@ index 565f06e..a696b27 100644
 +        cxx.find_library('ntdll', required: true),
 +        cxx.find_library('userenv', required: true),
 +        cxx.find_library('bcrypt', required: true),
++        cxx.find_library('synchronization', required: true),
 +    ]
 +endif
  
